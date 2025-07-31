@@ -1,5 +1,11 @@
 import json
 import os
+import sys
+
+# Add project root to Python path
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
+from objectLocalization.objectDectection.DrinkShelfLocator import DrinkShelfLocator
 
 class ObjectLocalization:
     def __init__(self):
@@ -12,6 +18,14 @@ class ObjectLocalization:
             "雪碧": [4,0,130],
             "可乐": [5,0,450]
         }
+
+        base_path = os.path.join("objectLocalization", "objectDectection")
+        self.locator = DrinkShelfLocator(
+            model_path=os.path.join(base_path, "weights/yoloe-11s-seg.pt"),
+            reference_dir=os.path.join(base_path, "reference_images"),
+            template_dir=os.path.join(base_path, "position_templates"),
+            camera_id=0
+        )
     
     def get_layer_number(self, json_file_path):
         """
@@ -54,11 +68,22 @@ class ObjectLocalization:
             print(f"读取文件时发生错误：{e}")
             return None
     
-    def observe(self):
+    def observe(self, obj_name, quantity):
         """
-        观测方法
+        观测方法，查找指定类型的饮料。
+        该方法利用DrinkShelfLocator来定位饮料。
+        :param obj_name: 要查找的饮料类型 (例如: "雪碧")
+        :param quantity: 要查找的数量
+        :return: 包含推荐位置编号的列表，如果查找失败则返回None
         """
-        pass
+        search_result = self.locator.find_drinks(obj_name, quantity)
+        
+        if search_result and search_result.get("success"):
+            return search_result.get("positions")
+        else:
+            # message = search_result.get("message", "未知错误")
+            # print(f"查找失败: {message}")
+            return []
 
 def main():
     """测试ObjectLocalization类的功能"""
@@ -71,13 +96,11 @@ def main():
     json_file_path = "/home/tanyz/Project/Pr_Stage1/objectLocalization/test_data.json"
     
     # 测试
-    layer_number,head_angle,body_distance = obj_loc.get_layer_number(json_file_path)
-    print(f"{obj_loc.obj_name}所在的层数：{layer_number}, 机器人头部俯仰角：{head_angle}, 机器人身躯高度：{body_distance}")
+    # layer_number,head_angle,body_distance = obj_loc.get_layer_number(json_file_path)
+    # print(f"{obj_loc.obj_name}所在的层数：{layer_number}, 机器人头部俯仰角：{head_angle}, 机器人身躯高度：{body_distance}")
     #print()
 
-    obj_loc.observe()
-    print("观测方法执行完成（pass）")
-    print()
+    obj_loc.observe("雪碧", 3)
     
 
 if __name__ == "__main__":
