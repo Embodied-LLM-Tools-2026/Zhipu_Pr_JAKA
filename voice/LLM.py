@@ -34,14 +34,14 @@ class RobotCommandProcessor:
 
         可能的意图包括：
         1. 聊天 - 普通对话内容（关键词：你好、天气、新闻、笑话等）
-        2. 指令 - 控制机器人执行动作（关键词：待机、倒咖啡、左右、摇头）
-        请先判断用户的意图
+        2. 指令 - 控制机器人执行动作（支持的动作类型：打招呼/摆手、摇头、点头、鞠躬、其他）
+        请先判断用户的意图（特别地，如果用户说的话询问机器人是否能执行动作，也请判断为对应的指令）
         如果你判断意图为聊天，请正常输出回答，intent设置为chat，action设置为unknown，confidence设置为1.0，description设置为识别到的意图或动作
-        如果你判断意图为指令，请输出JSON格式，intent设置为command，action设置为识别到的动作，confidence设置为1.0，description设置为识别到的意图或动作，用户的指令意图只会让机器人执行waiting, coffee, left_right, rotate这四种动作，其他的类似指令的说法请默认设置意图为聊天
+        如果你判断意图为指令，请输出JSON格式，intent设置为command，action设置为识别到的动作，confidence设置为1.0，description设置为识别到的意图或动作，指令对应的动作类型只包括greet, shake_head, nod, bow,others这五种动作，前面四种就是具体的动作，而others就是除了前面四种动作之外的所有动作。另外打招呼这个动作和摆摆手这个动作是等价的，所以打招呼和摆摆手都对应greet动作类型。
         如果你判断意图为指令，输出的标准格式如下：
         {{
             "intent": "command"或"chat",
-            "action": "动作类型（仅当intent为command时有效，使用英文描述，动作类型只有可能是：waiting, coffee, left_right, rotate）",
+            "action": "动作类型（仅当intent为command时有效，使用英文描述，动作类型只有可能是：greet, shake_head, nod, bow, others）",
             "confidence": 0.0到1.0之间的置信度,
             "description": "意图或动作描述"
         }}

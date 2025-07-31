@@ -17,20 +17,20 @@ class ActionExecuter:
         if robot_available: #调试时要模拟执行动作就改为False
             from robot_controller import (
                 X1Interface, 
-                go_to_waiting_location,
-                action_up_and_down, 
-                action_left_and_right,
-                action_rotate
+                greet,
+                shake_head,
+                nod,
+                bow
             )
             
             self.robot_lock = mp.Lock()
             self.robot = X1Interface(self.robot_lock, robot_ip, robot_port)
             
             # 导入动作函数
-            self.go_to_waiting_location = go_to_waiting_location
-            self.action_up_and_down = action_up_and_down
-            self.action_left_and_right = action_left_and_right
-            self.action_rotate = action_rotate
+            self.greeting = greet
+            self.shaking_head = shake_head
+            self.nodding = nod
+            self.bowing = bow
             
             print(f"已连接到机器人: {robot_ip}:{robot_port}")
         else:
@@ -40,25 +40,35 @@ class ActionExecuter:
         """执行动作"""
         if not self.robot:
             print("机器人不可用，模拟执行动作")
-            print(f"模拟执行: {Config.ACTION_MAP.get(action, '未知动作')}")
-            time.sleep(2)
+            if action == "greet":
+                print("执行：打招呼")
+            elif action == "shake_head":
+                print("执行：摇头")
+            elif action == "nod":
+                print("执行：点头")
+            elif action == "bow":
+                print("执行：鞠躬")
+            # elif action == "others":
+            #     return True
+            else:
+                return False
             return True
         
         try:
-            if action == "waiting":
-                print("执行：回到待机位置")
-                result = self.go_to_waiting_location(self.robot)
-            elif action == "up_down":
-                print("执行：上下摆动")
-                result = self.action_up_and_down(self.robot)
-            elif action == "left_right":
-                print("执行：左右摆动")
-                result = self.action_left_and_right(self.robot)
-            elif action == "rotate":
-                print("执行：摇头动作")
-                result = self.action_rotate(self.robot)
-            elif action == "unknown":
-                return False
+            if action == "greet":
+                print("执行：打招呼")
+                result = self.greet(self.robot)
+            elif action == "shake_head":
+                print("执行：摇头")
+                result = self.shake_head(self.robot)
+            elif action == "nod":
+                print("执行：点头")
+                result = self.nod(self.robot)
+            elif action == "bow":
+                print("执行：鞠躬")
+                result = self.bow(self.robot)
+            # elif action == "others":
+            #     return True
             else:
                 return False
             

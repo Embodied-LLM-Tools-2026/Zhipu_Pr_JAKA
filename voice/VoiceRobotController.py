@@ -606,9 +606,9 @@ class VoiceRobotController:
                 self._play_cached_audio(response)
                 
                 # 如果唤醒词后面还有指令，立即处理
-                if remaining_text.strip():
-                    print(f"💬 检测到后续指令: {remaining_text}")
-                    return self._process_action_command(remaining_text)
+                # if remaining_text.strip():
+                #     print(f"💬 检测到后续指令: {remaining_text}")
+                #     return self._process_action_command(remaining_text)
                 
                 return True
         
@@ -698,7 +698,7 @@ class VoiceRobotController:
         if command_result.get("intent", "unknown") == "command":
             print(f"🎯 识别动作: {description} (置信度: {confidence:.2f})")
             print("🎵 开始异步TTS生成和播放（同时预热VAD）...")
-            audio_file_path = self._play_cached_audio("好的", tts_ready_callback=tts_ready_callback)
+            
         else:
             print(f"小智说：{description}")
             print("🎵 开始异步TTS生成和播放（同时预热VAD）...")
@@ -728,15 +728,20 @@ class VoiceRobotController:
 
         # 执行动作
         if command_result.get("intent", "unknown") == "command":
-            success = self.robot_controller.execute_action(action)
-            
-            if success:
-                print("✅ 动作执行成功")
-                
-                if self.robot_state == "awake":
-                    print("👂 等待下一个指令...")
+            if action not in Config.ACTION_MAP.keys():
+                print("💬 这个动作我还不会哦，不过我会抓紧学习的")
+                error_audio_path = self._play_cached_audio("这个动作我还不会哦，不过我会抓紧学习的")
+                success = True
             else:
-                print("❌ 动作执行失败")
+                audio_file_path = self._play_cached_audio("好的", tts_ready_callback=tts_ready_callback)
+                success = self.robot_controller.execute_action(action)
+                if success:
+                    print("✅ 动作执行成功")
+                    
+                    if self.robot_state == "awake":
+                        print("👂 等待下一个指令...")
+                else:
+                    print("❌ 动作执行失败")
         else:
             # 聊天对话不需要执行机器人动作
             print("💬 聊天对话，跳过机器人动作执行")
@@ -889,14 +894,14 @@ def main():
     
     use_voice_input = None
     while True:
-        choice = input("请选择 (1/2/3，默认为3): ").strip()
-        if choice == "1":
+        choice = input("请选择 (1/2/3，默认为1): ").strip()
+        if choice == "1"  or choice == "":
             use_voice_input = True
             break
         elif choice == "2":
             use_voice_input = False
             break
-        elif choice == "3" or choice == "":
+        elif choice == "3":
             use_voice_input = None
             break
         else:

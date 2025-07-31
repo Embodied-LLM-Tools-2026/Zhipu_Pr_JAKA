@@ -37,7 +37,9 @@ class Config:
         "我在听，请说",
         "嗯，我在",
         "请说",
-        "好的，请继续"
+        "好的，请继续",
+        # 未知动作指令
+        "这个动作我还不会哦，不过我会抓紧学习的"
     ]
     
     # 拖延语备选
@@ -51,10 +53,11 @@ class Config:
     
     # 动作映射
     ACTION_MAP = {
-        "waiting": "回到待机位置",
-        "left_right": "左右摆动", 
-        "rotate": "摇头动作",
-        "coffee": "准备咖啡",
+        "greet": "打招呼",
+        "shake_head": "摇头",
+        "nod": "点头",
+        "bow": "鞠躬",
+        "others": "其他",
     }
     
     @classmethod
