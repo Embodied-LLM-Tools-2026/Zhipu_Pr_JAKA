@@ -38,6 +38,9 @@ zarr==2.13.3
 silero-vad==5.1.2
 webrtcvad==2.0.10
 
+# 语音合成依赖
+edge-tts
+
 # 可选依赖
 # openai>=1.0.0   # OpenAI (备选)
 # openai-whisper>=20231117  # Whisper (备选)
