@@ -1,7 +1,6 @@
-import time
-from config import Config
 import multiprocessing as mp
-
+import xapi.api as x5
+import copy
 # ================================
 # 根据文本指令控制机器人执行固定动作
 # ================================
@@ -9,36 +8,34 @@ import multiprocessing as mp
 class ActionExecuter:
     """机器人控制器"""
     
-    def __init__(self, robot_ip: str, robot_port: int, robot_available: bool):
-        self.robot = None
-        self.robot_lock = None
+    def __init__(self, robot_ip_left: str, robot_ip_right: str, robot_available: bool):
+        self.handle_l = None
+        self.handle_r = None
         
         # if deps.robot_available:
         if robot_available: #调试时要模拟执行动作就改为False
-            from robot_controller import (
-                X1Interface, 
-                greet,
-                shake_head,
-                nod,
-                bow
-            )
+            from action_sequence.execute_action import init_robot, wave, bow, Nod, Shake_head
             
-            self.robot_lock = mp.Lock()
-            self.robot = X1Interface(self.robot_lock, robot_ip, robot_port)
+            self.handle_l = x5.connect(robot_ip_left)
+            self.handle_r = x5.connect(robot_ip_right)
+            self.add_data_1 = x5.MovPointAdd(vel=100, acc=100)
+            self.add_data_2 = x5.MovPointAdd(vel=100, cnt=100, acc=100, dec=100, offset =-1, offset_data=(10,0,0,0,0,0,0,0,0))
             
             # 导入动作函数
-            self.greeting = greet
-            self.shaking_head = shake_head
-            self.nodding = nod
+            self.init_robot = init_robot
+            self.greeting = wave
+            self.shaking_head = Shake_head
+            self.nodding = Nod
             self.bowing = bow
             
-            print(f"已连接到机器人: {robot_ip}:{robot_port}")
+            print(f"已连接到机器人: {robot_ip_left} 和 {robot_ip_right}")
+            self.init_robot(self.handle_l, self.handle_r, self.add_data_1)
         else:
             print("机器人控制不可用")
     
     def execute_action(self, action: str) -> bool:
         """执行动作"""
-        if not self.robot:
+        if not self.handle_l or not self.handle_r:
             print("机器人不可用，模拟执行动作")
             if action == "greet":
                 print("执行：打招呼")
@@ -57,16 +54,16 @@ class ActionExecuter:
         try:
             if action == "greet":
                 print("执行：打招呼")
-                result = self.greet(self.robot)
+                result = self.greeting(self.handle_l, self.handle_r,self.add_data_1)
             elif action == "shake_head":
                 print("执行：摇头")
-                result = self.shake_head(self.robot)
+                result = self.shaking_head(self.handle_l, self.handle_r,self.add_data_2)
             elif action == "nod":
                 print("执行：点头")
-                result = self.nod(self.robot)
+                result = self.nodding(self.handle_l, self.handle_r,self.add_data_2)
             elif action == "bow":
                 print("执行：鞠躬")
-                result = self.bow(self.robot)
+                result = self.bowing(self.handle_l, self.handle_r,self.add_data_1)
             # elif action == "others":
             #     return True
             else:

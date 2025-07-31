@@ -11,7 +11,7 @@ INIT_POS_L = x5.Pose(x=-200, y=245, z=5, a=120, b=5, c=115, e1=-90, e2=0, e3=0)
 INIT_POINT_L = x5.Point(pose=INIT_POS_L, uf=0, tf=0, cfg=(0,0,0,7))
 INIT_JOINT_L = x5.Joint(j1=4.927, j2=-80.496, j3=-97.021, j4=-87.812, j5=22.909, j6=-79.830, e1=-20.340, e2=0, e3=0)
 
-def wave(handle_l, handle_r, INIT_POINT_L, INIT_POINT_R, add_data):
+def wave(handle_l, handle_r, add_data):
     """
     挥手
     """
@@ -59,7 +59,7 @@ def wave(handle_l, handle_r, INIT_POINT_L, INIT_POINT_R, add_data):
     x5.movj(handle_r, INIT_JOINT_R, add_data)
     x5.wait_move_done(handle_r)
 
-def bow(handle_l, handle_r, INIT_POINT_L, INIT_POINT_R,add_data):
+def bow(handle_l, handle_r,add_data):
     """
     鞠躬
     """
@@ -77,7 +77,7 @@ def bow(handle_l, handle_r, INIT_POINT_L, INIT_POINT_R,add_data):
     x5.movj(handle_r, INIT_JOINT_R, add_data)
     x5.wait_move_done(handle_r)
 
-def Nod(handle_L,handle_R,INIT_POINT_L,INIT_POINT_R,add_data):
+def Nod(handle_L,handle_R,add_data):
     """
     点头
     """
@@ -99,7 +99,7 @@ def Nod(handle_L,handle_R,INIT_POINT_L,INIT_POINT_R,add_data):
     x5.movl(handle_L, INIT_POINT_L, add_data)
     x5.wait_move_done(handle_L)
 
-def Shake_head(handle_L,handle_R,INIT_POINT_L,INIT_POINT_R,add_data):
+def Shake_head(handle_L,handle_R,add_data):
     """
     摇头
     """
@@ -135,10 +135,10 @@ def main():
     init_robot(handle_l, handle_r, add_data_1)
 
     # 点头
-    Nod(handle_l, handle_r, INIT_POINT_L, INIT_POINT_R,add_data_2)
+    Nod(handle_l, handle_r,add_data_2)
     # 摇头
-    Shake_head(handle_l, handle_r, INIT_POINT_L, INIT_POINT_R,add_data_2)
+    Shake_head(handle_l, handle_r,add_data_2)
     # 挥手
-    wave(handle_l, handle_r, INIT_POINT_L, INIT_POINT_R,add_data_1)
+    wave(handle_l, handle_r,add_data_1)
     # 鞠躬
-    bow(handle_l, handle_r, INIT_POINT_L, INIT_POINT_R,add_data_1)
+    bow(handle_l, handle_r,add_data_1)
