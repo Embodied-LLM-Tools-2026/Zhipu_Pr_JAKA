@@ -192,7 +192,7 @@ def main():
     # 使用新的控制类
     print("=== 使用AGVClient控制类 ===")
     with AGVClient(ip='192.168.192.5') as agv:
-        response = agv.send_message(1110)
+        response = agv.send_message(1004)
         if response:
             print("任务发送成功，响应内容：")
             print(response)
