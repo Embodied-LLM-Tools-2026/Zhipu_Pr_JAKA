@@ -1,7 +1,10 @@
+from math import fabs
 import socket
 import json
 import time
 import struct
+import signal
+import sys
 
 PACK_FMT_STR = '!BBHLH6s'
 
@@ -9,6 +12,8 @@ class AGVClient:
     """AGV客户端控制类"""
     
     def __init__(self, ip='192.168.192.5', timeout=5):
+        # 设置信号处理器
+        self._setup_signal_handler()
         """
         初始化AGV客户端
         
@@ -23,6 +28,26 @@ class AGVClient:
         self.socket_controller = None
         self.socket_navigator = None
         self.connected = False
+        self._navigation_active = False  # 标记导航是否正在进行
+    
+    def _setup_signal_handler(self):
+        """设置信号处理器"""
+        def signal_handler(signum, frame):
+            if self._navigation_active:
+                print("\n检测到Ctrl+C，正在取消导航...")
+                try:
+                    self.cancel_navigation()
+                except Exception as e:
+                    print(f"取消导航时出错: {e}")
+                finally:
+                    print("程序退出")
+                    sys.exit(0)
+            else:
+                print("\n程序退出")
+                sys.exit(0)
+        
+        # 注册信号处理器
+        signal.signal(signal.SIGINT, signal_handler)
     
     def connect(self):
         """连接到AGV服务器"""
@@ -143,12 +168,15 @@ class AGVClient:
         try:
             packed_msg = self._pack_message(req_id, msg_type, msg_data)
             if socket_type == 0:
+                print("发送状态获取消息", packed_msg)
                 self.socket_stater.send(packed_msg)
                 response_header = self.socket_stater.recv(16)
             elif socket_type == 1:
+                print("发送控制消息", packed_msg)
                 self.socket_controller.send(packed_msg)
                 response_header = self.socket_controller.recv(16)
             elif socket_type == 2:
+                print("发送导航消息", packed_msg)
                 self.socket_navigator.send(packed_msg)
                 response_header = self.socket_navigator.recv(16)
             else:
@@ -159,7 +187,7 @@ class AGVClient:
             return response_json
             
         except Exception as e:
-            print(f"发送自定义消息失败: {e}")
+            print(f"发送消息失败: {e}")
             return None
     
     def __enter__(self):
@@ -170,84 +198,216 @@ class AGVClient:
     def __exit__(self, exc_type, exc_val, exc_tb):
         """上下文管理器出口"""
         self.disconnect()
-
-
-# def packMasg(reqId, msgType, msg={}):
-#     msgLen = 0
-#     jsonStr = json.dumps(msg)
-#     if (msg != {}):
-#         msgLen = len(jsonStr)
-#     rawMsg = struct.pack(PACK_FMT_STR, 0x5A, 0x01, reqId, msgLen,msgType, b'\x00\x00\x00\x00\x00\x00')
-#     print("{:02X} {:02X} {:04X} {:08X} {:04X}"
-#     .format(0x5A, 0x01, reqId, msgLen, msgType))
-
-#     if (msg != {}):
-#         rawMsg += bytearray(jsonStr,'ascii')
-#         print(msg)
-
-#     return rawMsg
-
-
-def main():
-    # 使用新的控制类
-    print("=== 使用AGVClient控制类 ===")
-    with AGVClient(ip='192.168.192.5') as agv:
-        response = agv.send_message(1004)
+    
+    def get_pose(self):
+        """
+        获取AGV当前在世界坐标系下的位置
+        Returns:
+            tuple: (x, y, angle)
+        """
+        response = self.send_message(1004,socket_type=0)
         if response:
-            print("任务发送成功，响应内容：")
+            return response['x'], response['y'], response['angle']
+        else:
+            return None
+    
+    def get_velocity(self):
+        """
+        获取AGV当前速度
+        Returns:
+            tuple: (vx, vy, vw)
+        """
+        response = self.send_message(1005,socket_type=0)
+        if response:
+            return response['vx'], response['vy'], response['w']
+        else:
+            return None
+    
+    def get_blocked(self):
+        """
+        获取AGV当前块信息
+        Returns:
+            tuple: (blocked, block_x, block_y)
+        """
+        response = self.send_message(1006,socket_type=0)
+        if response:
+            return response['blocked'], response['block_x'], response['block_y']
+        else:
+            return None
+    
+    def get_pointcloud(self, return_beams3D=False):
+        """
+        获取激光雷达的点云
+        """
+        if return_beams3D:
+            msg_data = {'return_beams3D': True}
+            response = self.send_message(1009, msg_data, socket_type=0)
+        else:
+            response = self.send_message(1009, socket_type=0)
+        if response:
+            return response['lasers']
+        else:
+            return None
+    
+    def get_navigation_status(self,simple=True):
+        """
+        获取导航状态
+        """
+        if simple:
+            msg_data = {'simple': True}
+            response = self.send_message(1020, msg_data, socket_type=0)
+        else:
+            response = self.send_message(1020, socket_type=0)
+        if response:
+            if simple:
+                return response['status']
+            else:
+                return response['status'], response['task_type'], response['target_point']
+        else:
+            return None
+    
+    def get_relocalization_status(self):
+        response = self.send_message(1021, socket_type=0)
+        if response:
+            return response['reloc_status'] 
+        else:
+            return None
+
+    def get_map_status(self):
+        response = self.send_message(1022, socket_type=0)
+        if response:
+            return response['loadmap_status'] 
+        else:
+            return None
+    
+    def navigation_locker(self):
+        while True:
+            status = self.get_navigation_status()
+            if status == 0:
+                print("导航状态：agv未进行导航")
+                break
+            elif status == 2:
+                print("导航状态：agv正在导航,按ctrl+c终止")
+                time.sleep(1)  # 添加延时避免过于频繁的查询
+            elif status == 3:
+                print("导航状态：agv暂停导航")
+                break
+            elif status == 4:
+                print("导航状态：agv完成导航")
+                break
+            elif status == 5:
+                print("导航状态：agv导航失败")
+                break
+            elif status == 6:
+                print("导航状态：agv取消导航")
+                break
+            else:
+                print("导航状态：未知")
+                break
+        print("退出导航")
+
+    def go_to_point_in_robot(self, x, y, theta):
+        msg_data = {
+            "script_name": "syspy/goPath.py",
+            "script_args": {
+                "x": x,
+                "y": y,
+                "theta": theta,
+                "reachAngle": 0.001,
+                "reachDist": 0.001,
+                "coordinate": "robot"
+            },
+            "operation": "Script",
+            "id": "SELF_POSITION",
+            "source_id": "SELF_POSITION",
+            "task_id": "12344321"
+        }
+        response = self.send_message(3051, msg_data, socket_type=2)
+        if response:
+            print(f"导航指令({x,y})发送成功，响应内容：")
+            print(response)
+            # 等待导航完成
+            self._navigation_active = True
+            try:
+                self.navigation_locker
+            finally:
+                self._navigation_active = False
+        else:
+            print("任务发送失败")
+        return 
+    
+    def go_to_point_in_world(self, x, y, theta):
+        msg_data = {
+        "script_name": "syspy/goPath.py",
+        "script_args": {
+            "x": x,
+            "y": y,
+            "theta": theta,
+            "reachAngle": 0.001,
+            "reachDist": 0.001,
+            "coordinate": "world"
+        },
+        "operation": "Script",
+        "id": "SELF_POSITION",
+        "source_id": "SELF_POSITION",
+        "task_id": "12344321"
+        }
+        response = self.send_message(3051, msg_data, socket_type=2)
+        if response:
+            print(f"导航指令({x,y})发送成功，响应内容：")
+            print(response)
+            # 等待导航完成
+            self._navigation_active = True
+            try:
+                self.navigation_locker()
+            finally:
+                self._navigation_active = False
+        else:
+            print("任务发送失败")
+        return 
+    
+    def cancel_navigation(self):
+        response = self.send_message(3003, socket_type=2)
+        if response:
+            print("取消导航指令发送成功，响应内容：")
             print(response)
         else:
             print("任务发送失败")
-    
-    # print("\n=== 原始代码测试 ===")
-    # so = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    # so.connect((IP, Port))
-    # so.settimeout(5)
-    # test_msg = packMasg(1,1110,{"task_ids":["SEER78914"]})
-    # print("\n\nreq:")
-    # print(' '.join('{:02X}'.format(x) for x in test_msg))
-    # so.send(test_msg)
+        return 
 
-    # dataall = b''
-    # # while True:
-    # print('\n\n\n')
-    # try:
-    #     data = so.recv(16)
-    # except socket.timeout:
-    #     print('timeout')
-    #     so.close
-    # jsonDataLen = 0
-    # backReqNum = 0
-    # if(len(data) < 16):
-    #     print('pack head error')
-    #     print(data)
-    #     so.close()
-    # else:
-    #     header = struct.unpack(PACK_FMT_STR, data)
-    #     print("{:02X} {:02X} {:04X} {:08X} {:04X} {:02X} {:02X} {:02X} {:02X} {:02X} {:02X}       length: {}"
-    #     .format(header[0], header[1], header[2], header[3], header[4],
-    #     header[5][0], header[5][1], header[5][2], header[5][3], header[5][4], header[5][5],
-    #     header[3]))
-    #     jsonDataLen = header[3]
-    #     backReqNum = header[4]
-    # dataall += data
-    # data = b''
-    # readSize = 1024
-    # try:
-    #     while (jsonDataLen > 0):
-    #         recv = so.recv(readSize)
-    #         data += recv
-    #         jsonDataLen -= len(recv)
-    #         if jsonDataLen < readSize:
-    #             readSize = jsonDataLen
-    #     print(json.dumps(json.loads(data), indent=1))
-    #     dataall += data
-    #     print(' '.join('{:02X}'.format(x) for x in dataall))
-    # except socket.timeout:
-    #     print('timeout')
+def main():
+    # 使用新的控制类
+    with AGVClient(ip='192.168.192.5') as agv:
+        # ==========获取当前机器人的建图与定位状态==========
+        map_status = agv.get_map_status()
+        if map_status == 0:
+            print("建图状态：agv未载入地图")
+        elif map_status == 1:
+            print("建图状态：agv已载入地图")
+        elif map_status == 2:
+            print("建图状态：agv正在载入地图")
+        
+        localization_status = agv.get_relocalization_status()
+        if localization_status == 0:
+            print("定位状态：agv未进行定位")
+        elif localization_status == 1:
+            print("定位状态：agv已进行定位")
+        elif localization_status == 2:
+            print("定位状态：agv正在定位")
 
-    # so.close()
+        # ==========读取位置信息==========
+        pose_result = agv.get_pose()
+        if pose_result:
+            x, y, angle = pose_result
+            print(f"agv在世界坐标系下的位置为:({x},{y}), 旋转角为:{angle}")
 
+        # ==========导航==========
+        # 回到地图0点，请确认0点位置安全后运行
+        #agv.go_to_point_in_world(0,0,0)
+        # 移动到固定流程的点位，请确认位置安全后运行
+        #agv.go_to_point_in_world(-0.8328,-0.0176,3.1252)
+        # 向前移动1m，请确认目标安全后运行
+        #agv.go_to_point_in_robot(1,0,0)
 
 if __name__ == '__main__':
     main()
