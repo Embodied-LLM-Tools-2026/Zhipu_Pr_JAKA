@@ -316,21 +316,21 @@ class VoiceRobotController:
         t = threading.Thread(target=tts_task)
         t.start()
         
-        # 3秒后播放拖延语（无论TTS是否完成）
-        delay_timer = threading.Timer(3.0, lambda: self._play_delay_phrase_and_set_flag(delay_played))
-        delay_timer.start()
+        # # 3秒后播放拖延语（无论TTS是否完成）
+        # delay_timer = threading.Timer(3.0, lambda: self._play_delay_phrase_and_set_flag(delay_played))
+        # delay_timer.start()
         
-        # 等待TTS完成
-        tts_done.wait()
+        # # 等待TTS完成
+        # tts_done.wait()
         
-        # 取消延迟定时器（如果TTS在3秒内完成）
-        delay_timer.cancel()
+        # # 取消延迟定时器（如果TTS在3秒内完成）
+        # delay_timer.cancel()
         
-        # 如果拖延语已播放，等待其播放完成
-        if delay_played.is_set():
-            print("⏳ 等待拖延语播放完成...")
-            # 等待拖延语播放完成（大约2-3秒）
-            time.sleep(2.5)
+        # # 如果拖延语已播放，等待其播放完成
+        # if delay_played.is_set():
+        #     print("⏳ 等待拖延语播放完成...")
+        #     # 等待拖延语播放完成（大约2-3秒）
+        #     time.sleep(2.5)
         
         if tts_ready_callback:
             tts_ready_callback()
@@ -696,29 +696,29 @@ class VoiceRobotController:
             return False
         
         # 在唤醒状态下检测到唤醒词时，快速响应
-        if self.wake_matcher:
-            wake_detected, remaining_text = self.wake_matcher.detect_wake_word(text)
-            if wake_detected:
-                print("🎯 检测到唤醒词，快速响应中...")
+        # if self.wake_matcher:
+        #     wake_detected, remaining_text = self.wake_matcher.detect_wake_word(text)
+        #     if wake_detected:
+        #         print("🎯 检测到唤醒词，快速响应中...")
                 
-                # 随机选择快速响应短语，让响应更自然
-                import random
-                quick_responses = [
-                    "我在听，请说",
-                    "嗯，我在",
-                    "请说"
-                ]
-                response = random.choice(quick_responses)
+        #         # 随机选择快速响应短语，让响应更自然
+        #         import random
+        #         quick_responses = [
+        #             "我在听，请说",
+        #             "嗯，我在",
+        #             "请说"
+        #         ]
+        #         response = random.choice(quick_responses)
                 
-                # 快速播放响应音频（使用缓存）
-                self._play_cached_audio(response)
+        #         # 快速播放响应音频（使用缓存）
+        #         self._play_cached_audio(response)
                 
-                # 如果唤醒词后面还有指令，立即处理
-                # if remaining_text.strip():
-                #     print(f"💬 检测到后续指令: {remaining_text}")
-                #     return self._process_action_command(remaining_text)
+        #         # 如果唤醒词后面还有指令，立即处理
+        #         # if remaining_text.strip():
+        #         #     print(f"💬 检测到后续指令: {remaining_text}")
+        #         #     return self._process_action_command(remaining_text)
                 
-                return True
+        #         return True
         
         # 检测退下指令
         if self.wake_matcher and self.wake_matcher.detect_dismiss_command(text):
