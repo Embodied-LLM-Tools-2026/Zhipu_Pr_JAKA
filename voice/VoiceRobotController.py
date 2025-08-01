@@ -163,7 +163,7 @@ class VoiceRobotController:
         self.recognizer = SenseVoiceRecognizer(device=device)
         print("✅ SenseVoice语音识别已启用")
         
-        self.processor = RobotCommandProcessor(api_key=zhipuai_api_key)
+        self.processor = RobotCommandProcessor()
         self.tts_engine = TextToSpeechEngine()
         self.audio_player = SimplifiedAudioPlayer()
         
