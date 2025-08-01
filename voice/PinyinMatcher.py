@@ -18,7 +18,7 @@ class PinyinMatcher:
             'zh': 'z', 'ch': 'c', 'sh': 's'
         }
         
-        self.wake_word = "小智同学"
+        self.wake_word = "小拓同学"
         self.wake_pinyin_variants = self._get_pinyin_variants(self.wake_word)
         
         print(f"唤醒词 '{self.wake_word}' 已初始化")
@@ -131,7 +131,7 @@ class PinyinMatcher:
         dismiss_keywords = [
             "退下", "休息", "睡觉", "回去休息", "去休息", 
             "暂停", "停止", "结束", "再见", "拜拜",
-            "你可以休息了", "没事了", "辛苦了"
+            "你可以休息了", "你可以去休息了", "没事了", "辛苦了"
         ]
         
         text_cleaned = text.strip().replace(" ", "")
