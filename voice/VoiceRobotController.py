@@ -724,16 +724,32 @@ class VoiceRobotController:
         if self.wake_matcher and self.wake_matcher.detect_dismiss_command(text):
             print("🤖 好的，我去休息了。需要时请叫我！")
 
-            # 播放退下音频
-            self._play_cached_audio("好的，我去休息了。需要时请叫我！")
+            # 同时执行语音播放和打招呼动作
+            import threading
             
-            # 同时执行打招呼（挥挥手）动作
-            print("👋 执行打招呼动作...")
-            greet_success = self.robot_controller.execute_action("greet")
-            if greet_success:
-                print("✅ 打招呼动作执行成功")
-            else:
-                print("❌ 打招呼动作执行失败")
+            # 创建音频播放线程
+            def play_dismiss_audio_thread():
+                self._play_cached_audio("好的，我去休息了。需要时请叫我！")
+            
+            # 创建打招呼动作线程
+            def execute_greet_action_thread():
+                print("👋 执行打招呼动作...")
+                greet_success = self.robot_controller.execute_action("greet")
+                if greet_success:
+                    print("✅ 打招呼动作执行成功")
+                else:
+                    print("❌ 打招呼动作执行失败")
+            
+            # 启动两个线程同时执行
+            audio_thread = threading.Thread(target=play_dismiss_audio_thread)
+            action_thread = threading.Thread(target=execute_greet_action_thread)
+            
+            audio_thread.start()
+            action_thread.start()
+            
+            # 等待两个线程都完成
+            audio_thread.join()
+            action_thread.join()
             
             # 切换到休眠状态
             self.robot_state = "sleeping"
@@ -745,9 +761,9 @@ class VoiceRobotController:
             #     print("⚠️ 回到待机位置失败，但不影响休眠状态")
             
             return True
-        
-        # 处理动作指令
-        return self._process_action_command(text)
+        else:
+            # 处理其他指令（动作指令或聊天）
+            return self._process_action_command(text)
     
     def _process_action_command(self, text: str) -> bool:
         """处理动作指令（带拖延语机制，LLM+TTS整体流程超时1.5秒自动插入拖延语）"""
@@ -871,8 +887,29 @@ class VoiceRobotController:
                             # self._play_cached_audio("不好意思，饮料不够了哦")
                         success = True
                 else:
-                    audio_file_path = self._play_cached_audio("好的", tts_ready_callback=tts_ready_callback)
-                    success = self.robot_controller.execute_action(action)
+                    # 同时执行语音播放和机器人动作
+                    import threading
+                    
+                    # 创建音频播放线程
+                    def play_audio_thread():
+                        nonlocal audio_file_path
+                        audio_file_path = self._play_cached_audio("好的", tts_ready_callback=tts_ready_callback)
+                    
+                    # 创建动作执行线程
+                    def execute_action_thread():
+                        nonlocal success
+                        success = self.robot_controller.execute_action(action)
+                    
+                    # 启动两个线程同时执行
+                    audio_thread = threading.Thread(target=play_audio_thread)
+                    action_thread = threading.Thread(target=execute_action_thread)
+                    
+                    audio_thread.start()
+                    action_thread.start()
+                    
+                    # 等待两个线程都完成
+                    audio_thread.join()
+                    action_thread.join()
                 # 动作成功或失败后的处理
                 if success:
                     print("✅ 动作执行成功")
