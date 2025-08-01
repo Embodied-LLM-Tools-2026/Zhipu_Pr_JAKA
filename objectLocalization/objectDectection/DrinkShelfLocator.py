@@ -342,7 +342,16 @@ class DrinkFinder:
             sorted_positions = sorted(occupied_positions)
             
             # 返回前N个位置
-            selected_positions = sorted_positions[:quantity]
+            M = len(occupied_positions)
+            if quantity > M:
+                return {
+                    "success": False,
+                    "positions": [],
+                    "found_count": M,
+                    "message": f"当前货架上只有{M}个{drink_type}"
+                }
+            else:
+                selected_positions = sorted_positions[:quantity]
             
             return {
                 "success": True,
@@ -842,7 +851,7 @@ class DrinkFinder:
         translation_std = 30.0  # 平移标准差（像素）
         
         # 执行100次蒙特卡洛采样
-        for iteration in range(200):
+        for iteration in range(50):
             
             # 随机采样变换参数
             # 角度：正态分布，均值0，标准差15度
@@ -1061,12 +1070,14 @@ class DrinkShelfLocator:
                 "message": error_msg
             }
     
-    def find_drinks(self, drink_type: str, quantity: int) -> Dict:
+    def find_drinks(self, drink_type: str, quantity: int, grabbing_direction: Optional[str] = None, total_drinks: Optional[int] = None) -> Dict:
         """
         饮料查找接口
         Args:
             drink_type: 饮料类型
             quantity: 需要数量
+            grabbing_direction: (可选) 夹取方向 ("left" or "right")
+            total_drinks: (可选) 货架总饮料数
         Returns:
             查找结果
         """
@@ -1096,6 +1107,59 @@ class DrinkShelfLocator:
                     "message": f"当前货架上未检测到{drink_type}"
                 }
             
+            # 如果提供了夹取方向和总数，则使用新策略
+            if grabbing_direction and total_drinks is not None:
+                print(f"使用新策略查找饮料，夹取方向: {grabbing_direction}, 总数: {total_drinks}")
+                
+                # 将当前检测到的mask分解为独立的个体位置
+                individual_positions, _ = self.finder._decompose_current_mask(current_masks)
+                M = len(individual_positions)
+                
+                if M == 0:
+                    return {
+                        "success": True,
+                        "positions": [],
+                        "found_count": 0,
+                        "total_available": 0,
+                        "message": f"当前货架上未检测到{drink_type}"
+                    }
+
+                occupied_positions = []
+                if grabbing_direction.lower() == 'left':
+                    # 占用位置列表为[N-M+1,N-M+2,...,N-1,N]
+                    occupied_positions = list(range(total_drinks - M + 1, total_drinks + 1))
+                elif grabbing_direction.lower() == 'right':
+                    # 占用位置列表为[1,2,...,M-1,M]
+                    occupied_positions = list(range(1, M + 1))
+                else:
+                    # Invalid direction
+                    error_msg = f"无效的夹取方向: {grabbing_direction}。请使用 'left' 或 'right'。"
+                    print(error_msg)
+                    return {
+                        "success": False,
+                        "positions": [],
+                        "found_count": 0,
+                        "message": error_msg
+                    }
+                if quantity > M:
+                    return {
+                        "success": False,
+                        "positions": [],
+                        "found_count": M,
+                        "message": f"当前货架上只有{M}个{drink_type}"
+                    }
+                else:
+                    selected_positions = occupied_positions[:quantity]
+                
+                result = {
+                    "success": True,
+                    "positions": selected_positions,
+                    "found_count": len(selected_positions),
+                    "message": f"找到{len(selected_positions)}个位置: {selected_positions}"
+                }
+                print(f"查找完成: {result['message']}")
+                return result
+
             # 3. 加载该饮料的位置模板
             position_template = self.calibrator.load_position_template(drink_type)
             
