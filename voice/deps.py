@@ -1,6 +1,10 @@
 import os
 import sys
 import contextlib
+# 将父目录临时注册为系统路径，方便python导入模块
+parent_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+if parent_dir not in sys.path:
+    sys.path.insert(0, parent_dir)
 
 # ================================
 # 工具函数
@@ -113,14 +117,9 @@ class DependencyManager:
     def _check_robot(self):
         """检测机器人控制模块"""
         try:
-            from robot_controller import (
-                X1Interface, 
-                go_to_waiting_location,
-                action_up_and_down, 
-                action_left_and_right,
-                action_rotate
-            )
-            self.robot_available = False
+            from action_sequence.execute_action import init_robot, wave, bow, Nod, Shake_head
+            self.robot_available = True
+            print("✅ 机器人控制模块可用")
         except ImportError:
             self.robot_available = False
             print("警告: robot_controller模块不可用")
@@ -223,3 +222,4 @@ class DependencyManager:
         if not self.funasr_available:
             return False
         return True 
+        

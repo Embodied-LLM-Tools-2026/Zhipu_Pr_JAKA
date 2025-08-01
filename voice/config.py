@@ -14,8 +14,8 @@ class Config:
     ZHIPUAI_API_KEY = os.getenv("ZHIPUAI_API_KEY")
     
     # 机器人默认配置
-    ROBOT_IP_DEFAULT = "192.168.1.6"
-    ROBOT_PORT_DEFAULT = 2000
+    ROBOT_IP_LEFT = "192.168.1.7"
+    ROBOT_IP_RIGHT = "192.168.1.8"
     
     # 音频配置
     AUDIO_SAMPLE_RATE = 16000
@@ -57,7 +57,7 @@ class Config:
         "shake_head": "摇头",
         "nod": "点头",
         "bow": "鞠躬",
-        "others": "其他",
+        # "others": "其他",
     }
     
     @classmethod

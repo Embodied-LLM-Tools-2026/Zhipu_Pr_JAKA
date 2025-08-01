@@ -88,8 +88,8 @@ class VoiceRobotController:
     """语音机器人控制器主类"""
     
     def __init__(self, 
-                 robot_ip: str = Config.ROBOT_IP_DEFAULT,
-                 robot_port: int = Config.ROBOT_PORT_DEFAULT,
+                 robot_ip_left: str = Config.ROBOT_IP_LEFT,
+                 robot_ip_right: str = Config.ROBOT_IP_RIGHT,
                  zhipuai_api_key: Optional[str] = os.getenv("ZHIPUAI_API_KEY"),
                  device: str = "cpu",
                  use_voice_input: Optional[bool] = None):
@@ -124,7 +124,7 @@ class VoiceRobotController:
             self._preload_common_audio()
         
         # 初始化机器人控制器
-        self.robot_controller = ActionExecuter(robot_ip, robot_port, deps.robot_available)
+        self.robot_controller = ActionExecuter(robot_ip_left, robot_ip_right, deps.robot_available)
         self.delay_phrase_cache = {}
         self._preload_delay_phrases()
         
@@ -566,6 +566,8 @@ class VoiceRobotController:
 
             # 播放唤醒音频
             self._play_cached_audio("你好，我是小智同学，很高兴见到你！")
+
+            self.robot_controller.execute_action("greet")
             
             # 切换到唤醒状态
             self.robot_state = "awake"
@@ -882,9 +884,11 @@ def main():
             return
     
     # 获取机器人IP
-    robot_ip = input(f"请输入机器人IP地址 (默认{Config.ROBOT_IP_DEFAULT}): ").strip()
-    if not robot_ip:
-        robot_ip = Config.ROBOT_IP_DEFAULT
+    # robot_ip = input(f"请输入机器人IP地址 (默认{Config.ROBOT_IP_DEFAULT}): ").strip()
+    # if not robot_ip:
+    robot_ip_left = Config.ROBOT_IP_LEFT
+    robot_ip_right = Config.ROBOT_IP_RIGHT
+
     
     # 选择输入模式
     print("\n🎛️ 请选择输入模式:")
@@ -919,8 +923,8 @@ def main():
         
         # 初始化控制器
         controller = VoiceRobotController(
-            robot_ip=robot_ip,
-            robot_port=Config.ROBOT_PORT_DEFAULT,
+            robot_ip_left=robot_ip_left,
+            robot_ip_right=robot_ip_right,
             zhipuai_api_key=api_key,
             device="cpu",
             use_voice_input=use_voice_input
@@ -946,7 +950,7 @@ def main():
         else:
             print("⌨️ 输入模式: 文本输入")
         
-        print(f"🔗 机器人地址: {robot_ip}:{Config.ROBOT_PORT_DEFAULT}")
+        print(f"🔗 机器人地址: {robot_ip_left} 和 {robot_ip_right}")
         print("="*60)
         
         # 启动说明

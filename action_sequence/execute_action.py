@@ -136,9 +136,12 @@ def main():
 
     # 点头
     Nod(handle_l, handle_r,add_data_2)
-    # 摇头
-    Shake_head(handle_l, handle_r,add_data_2)
-    # 挥手
-    wave(handle_l, handle_r,add_data_1)
-    # 鞠躬
-    bow(handle_l, handle_r,add_data_1)
+    # # 摇头
+    # Shake_head(handle_l, handle_r,add_data_2)
+    # # 挥手
+    # wave(handle_l, handle_r,add_data_1)
+    # # 鞠躬
+    # bow(handle_l, handle_r,add_data_1)
+
+if __name__ == "__main__":
+    main()

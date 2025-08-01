@@ -1,10 +1,14 @@
 import multiprocessing as mp
 import xapi.api as x5
 import copy
+import os, sys
 # ================================
 # 根据文本指令控制机器人执行固定动作
 # ================================
-
+# 将父目录临时注册为系统路径，方便python导入模块
+parent_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+if parent_dir not in sys.path:
+    sys.path.insert(0, parent_dir)
 class ActionExecuter:
     """机器人控制器"""
     
@@ -30,12 +34,16 @@ class ActionExecuter:
             
             print(f"已连接到机器人: {robot_ip_left} 和 {robot_ip_right}")
             self.init_robot(self.handle_l, self.handle_r, self.add_data_1)
+            print("handle_l:", self.handle_l)
+            print("handle_r:", self.handle_r)
         else:
             print("机器人控制不可用")
     
     def execute_action(self, action: str) -> bool:
         """执行动作"""
-        if not self.handle_l or not self.handle_r:
+        print("handle_l:", self.handle_l)
+        print("handle_r:", self.handle_r)
+        if self.handle_l is None or self.handle_r is None:
             print("机器人不可用，模拟执行动作")
             if action == "greet":
                 print("执行：打招呼")
