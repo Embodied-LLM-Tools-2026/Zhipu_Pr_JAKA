@@ -12,6 +12,7 @@ class Config:
     
     # 环境变量配置
     ZHIPUAI_API_KEY = os.getenv("ZHIPUAI_API_KEY")
+    ZAI_API_KEY = os.getenv("ZAI_API_KEY")
     
     # 机器人默认配置
     ROBOT_IP_LEFT = "192.168.1.7"

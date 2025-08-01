@@ -11,7 +11,7 @@ class RobotCommandProcessor:
     
     def __init__(self, api_key: Optional[str] = "", model: str = "glm-4-airx"):
         """初始化指令处理器"""
-        self.api_key = api_key or Config.ZHIPUAI_API_KEY
+        self.api_key = api_key or Config.ZAI_API_KEY
         self.model = model
         
         if not self.api_key:
@@ -21,7 +21,9 @@ class RobotCommandProcessor:
         #     raise ImportError("请先安装智谱AI SDK: pip install zhipuai")
             
         from zhipuai import ZhipuAI
-        self.client = ZhipuAI(api_key=self.api_key)
+        # self.client = ZhipuAI(api_key=self.api_key)
+        from zai import ZhipuAiClient
+        self.client = ZhipuAiClient(api_key=self.api_key)
         
         self.action_map = Config.ACTION_MAP
         self.drink_list = Config.drink_list
@@ -62,6 +64,9 @@ class RobotCommandProcessor:
                 messages=[
                     {"role": "user", "content": prompt}
                 ],
+                thinking={
+                    "type": "disabled",  
+                },
                 max_tokens=200,
                 temperature=0.05,
                 response_format={"type": "json_object"}
@@ -90,6 +95,9 @@ class RobotCommandProcessor:
                             messages=[
                                 {"role": "user", "content": chat_prompt}
                             ],
+                            thinking={
+                                "type": "disabled",  
+                            },
                             max_tokens=150,
                             temperature=0.3
                         )
