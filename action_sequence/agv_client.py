@@ -123,7 +123,7 @@ class AGVClient:
         return header, json_data
     
     
-    def send_message(self, msg_type, msg_data=None, req_id=1, socket_type=0):
+    def send_message(self, msg_type, msg_data={}, req_id=1, socket_type=0):
         """
         发送自定义消息
         
