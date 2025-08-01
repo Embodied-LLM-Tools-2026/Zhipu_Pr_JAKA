@@ -49,6 +49,12 @@ load_dotenv()
 
 os.environ['TORCH_HUB_OFFLINE'] = '1'  # 强制torch hub离线模式,silero-vad模型就不需要联网加载权重
 import torch
+import sys
+
+# 将父目录临时注册为系统路径，方便python导入模块
+parent_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+if parent_dir not in sys.path:
+    sys.path.insert(0, parent_dir)
 
 print("VRC (流式,VAD,win) running...")
 
@@ -76,7 +82,7 @@ else:
     from PinyinMatcher import PinyinMatcher
     from utils import SimplifiedVoiceRecorder, SimplifiedAudioPlayer
     from ActionExecuter import ActionExecuter
-
+# from objectLocalization.objLocalization import ObjectLocalization
 
 
 
@@ -132,6 +138,9 @@ class VoiceRobotController:
         self.intro_keywords = [
             "介绍一下你自己", "你是谁", "自我介绍", "请介绍你自己", "你能做什么", "你的功能", "你的作用", "你是做什么的"
         ]
+
+        # 初始化饮料货架定位器
+        # self.obj_locater = ObjectLocalization()
     
     def _init_components(self, use_voice_input: Optional[bool], device: str, zhipuai_api_key: Optional[str]):
         """初始化各个组件"""
@@ -735,8 +744,31 @@ class VoiceRobotController:
                 error_audio_path = self._play_cached_audio("这个动作我还不会哦，不过我会抓紧学习的")
                 success = True
             else:
-                audio_file_path = self._play_cached_audio("好的", tts_ready_callback=tts_ready_callback)
-                success = self.robot_controller.execute_action(action)
+                # 区分拿饮料和非拿饮料
+                if action == "get_drink":
+                    obj_name = command_result.get("obj_name", "unknown")
+                    num = int(command_result.get("num", "0"))
+                    if obj_name not in Config.drink_list:   
+                        print("💬 我们这里没有这种饮料哦")
+                        error_audio_path = self._play_cached_audio("我们这里没有这种饮料哦")
+                        success = True
+                    else:
+                        # # 获取饮料层数
+                        # layer_number,head_angle,body_distance = self.obj_locater.get_layer_number(obj_name=obj_name,num=num)
+                        # # 获取饮料位置
+                        # pos_list = self.obj_locater.observe(obj_name, num)
+                        # print(f"💬 所在的层数：{layer_number}, 机器人头部俯仰角：{head_angle}, 机器人身躯高度：{body_distance}")
+                        # print(f"💬 饮料位置: {pos_list}")
+                        # if pos_list is not None:
+                            # self.robot_controller.execute_action(action, pos_list)
+                        # else:
+                            # print("💬 不好意思，饮料不够了哦")
+                            # self._play_cached_audio("不好意思，饮料不够了哦")
+                        success = True
+                else:
+                    audio_file_path = self._play_cached_audio("好的", tts_ready_callback=tts_ready_callback)
+                    success = self.robot_controller.execute_action(action)
+                # 动作成功或失败后的处理
                 if success:
                     print("✅ 动作执行成功")
                     

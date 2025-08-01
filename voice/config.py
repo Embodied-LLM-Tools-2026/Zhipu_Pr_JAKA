@@ -39,7 +39,11 @@ class Config:
         "请说",
         "好的，请继续",
         # 未知动作指令
-        "这个动作我还不会哦，不过我会抓紧学习的"
+        "这个动作我还不会哦，不过我会抓紧学习的",
+        # 未知饮料指令
+        "我们这里没有这种饮料哦",
+        # 饮料不够
+        "不好意思，饮料不够了哦",
     ]
     
     # 拖延语备选
@@ -57,8 +61,15 @@ class Config:
         "shake_head": "摇头",
         "nod": "点头",
         "bow": "鞠躬",
+        "get_drink": "拿饮料",
         # "others": "其他",
     }
+
+    # 饮料
+    drink_list = ["可乐", "雪碧", "柠檬茶", "奶茶"]
+
+    # 实机还是模拟
+    ROBOT_AVAILABLE = False #调试时要模拟执行动作就改为False
     
     @classmethod
     def setup_environment(cls):
