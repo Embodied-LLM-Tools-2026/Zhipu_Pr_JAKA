@@ -670,10 +670,21 @@ class VoiceRobotController:
             print("🎉 机器人被唤醒！")
             print("🤖 你好！我已准备好接受您的指令。")
 
+            def play_greet_audio_thread():
+                self._play_cached_audio("你好，我是小拓同学，很高兴见到你！")
+            
+            def execute_greet_action_thread():
+                self.robot_controller.execute_action("greet")
+            
             # 播放唤醒音频
-            self._play_cached_audio("你好，我是小拓同学，很高兴见到你！")
+            audio_thread = threading.Thread(target=play_greet_audio_thread)
+            action_thread = threading.Thread(target=execute_greet_action_thread)
 
-            self.robot_controller.execute_action("greet")
+            audio_thread.start()
+            action_thread.start()
+            
+            audio_thread.join()
+            action_thread.join()
             
             # 切换到唤醒状态
             self.robot_state = "awake"
@@ -732,17 +743,17 @@ class VoiceRobotController:
                 self._play_cached_audio("好的，我去休息了。需要时请叫我！")
             
             # 创建打招呼动作线程
-            def execute_greet_action_thread():
-                print("👋 执行打招呼动作...")
-                greet_success = self.robot_controller.execute_action("greet")
-                if greet_success:
-                    print("✅ 打招呼动作执行成功")
+            def execute_nod_action_thread():
+                print("👋 执行点头动作...")
+                nod_success = self.robot_controller.execute_action("nod")
+                if nod_success:
+                    print("✅ 点头动作执行成功")
                 else:
                     print("❌ 打招呼动作执行失败")
             
             # 启动两个线程同时执行
             audio_thread = threading.Thread(target=play_dismiss_audio_thread)
-            action_thread = threading.Thread(target=execute_greet_action_thread)
+            action_thread = threading.Thread(target=execute_nod_action_thread)
             
             audio_thread.start()
             action_thread.start()
@@ -887,29 +898,31 @@ class VoiceRobotController:
                             # self._play_cached_audio("不好意思，饮料不够了哦")
                         success = True
                 else:
-                    # 同时执行语音播放和机器人动作
-                    import threading
+                    audio_file_path = self._play_cached_audio("好的", tts_ready_callback=tts_ready_callback)
+                    success = self.robot_controller.execute_action(action)
+                    # # 同时执行语音播放和机器人动作
+                    # import threading
                     
-                    # 创建音频播放线程
-                    def play_audio_thread():
-                        nonlocal audio_file_path
-                        audio_file_path = self._play_cached_audio("好的", tts_ready_callback=tts_ready_callback)
+                    # # 创建音频播放线程
+                    # def play_audio_thread():
+                    #     nonlocal audio_file_path
+                    #     audio_file_path = self._play_cached_audio("好的", tts_ready_callback=tts_ready_callback)
                     
-                    # 创建动作执行线程
-                    def execute_action_thread():
-                        nonlocal success
-                        success = self.robot_controller.execute_action(action)
+                    # # 创建动作执行线程
+                    # def execute_action_thread():
+                    #     nonlocal success
+                    #     success = self.robot_controller.execute_action(action)
                     
-                    # 启动两个线程同时执行
-                    audio_thread = threading.Thread(target=play_audio_thread)
-                    action_thread = threading.Thread(target=execute_action_thread)
+                    # # 启动两个线程同时执行
+                    # audio_thread = threading.Thread(target=play_audio_thread)
+                    # action_thread = threading.Thread(target=execute_action_thread)
                     
-                    audio_thread.start()
-                    action_thread.start()
+                    # audio_thread.start()
+                    # action_thread.start()
                     
-                    # 等待两个线程都完成
-                    audio_thread.join()
-                    action_thread.join()
+                    # # 等待两个线程都完成
+                    # audio_thread.join()
+                    # action_thread.join()
                 # 动作成功或失败后的处理
                 if success:
                     print("✅ 动作执行成功")

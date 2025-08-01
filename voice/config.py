@@ -62,7 +62,7 @@ class Config:
         "shake_head": "摇头",
         "nod": "点头",
         "bow": "鞠躬",
-        "get_drink": "拿饮料",
+        # "get_drink": "拿饮料",
         # "others": "其他",
     }
 
