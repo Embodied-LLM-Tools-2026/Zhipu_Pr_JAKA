@@ -42,6 +42,8 @@ import time
 import multiprocessing as mp
 import tempfile
 import threading
+import signal
+import glob
 from typing import Optional, Dict, Any
 import random
 from dotenv import load_dotenv
@@ -125,6 +127,10 @@ class VoiceRobotController:
         # 机器人状态管理
         self.robot_state = "sleeping"  # sleeping: 休眠状态, awake: 唤醒状态
         
+        # 音频文件管理
+        self.session_audio_files = set()  # 本次运行生成的音频文件
+        self.persistent_audio_files = set()  # 持久化的预制音频文件
+        
         # 性能优化：预缓存常用音频
         if Config.PRELOAD_COMMON_AUDIO:
             self._preload_common_audio()
@@ -138,9 +144,74 @@ class VoiceRobotController:
         self.intro_keywords = [
             "介绍一下你自己", "你是谁", "自我介绍", "请介绍你自己", "你能做什么", "你的功能", "你的作用", "你是做什么的"
         ]
-
+        
         # 初始化饮料货架定位器
         # self.obj_locater = ObjectLocalization()
+
+            # 注册信号处理器
+        signal.signal(signal.SIGINT, self._signal_handler)
+    
+    def _signal_handler(self, signum, frame):
+        """处理Ctrl+C信号，清理运行时音频文件"""
+        print("\n🛑 收到退出信号，正在清理音频文件...")
+        self._cleanup_session_audio()
+        print("✅ 音频文件清理完成")
+        exit(0)
+    
+    def _cleanup_session_audio(self):
+        """清理本次运行生成的音频文件，保留预制音频"""
+        if not self.session_audio_files:
+            print("📁 没有需要清理的运行时音频文件")
+            return
+        
+        cleaned_count = 0
+        failed_count = 0
+        
+        for audio_file in self.session_audio_files:
+            try:
+                if os.path.exists(audio_file):
+                    os.remove(audio_file)
+                    cleaned_count += 1
+                    print(f"🗑️ 已删除: {os.path.basename(audio_file)}")
+            except Exception as e:
+                failed_count += 1
+                print(f"❌ 删除失败: {os.path.basename(audio_file)} - {e}")
+        
+        print(f"📊 清理完成: 成功删除 {cleaned_count} 个文件，失败 {failed_count} 个文件")
+        self.session_audio_files.clear()
+    
+    def _get_persistent_audio_path(self, text: str, category: str = "common") -> str:
+        """获取持久化音频文件路径"""
+        import hashlib
+        
+        # 使用文本内容的哈希值作为文件名，确保相同文本生成相同文件名
+        text_hash = hashlib.md5(text.encode('utf-8')).hexdigest()[:8]
+        filename = f"persistent_{category}_{text_hash}.wav"
+        
+        # 确保recordings目录存在
+        recordings_dir = os.path.join(os.getcwd(), "recordings")
+        os.makedirs(recordings_dir, exist_ok=True)
+        
+        return os.path.join(recordings_dir, filename)
+    
+    def _check_persistent_audio(self, text: str, category: str = "common") -> Optional[str]:
+        """检查是否存在持久化的音频文件"""
+        audio_path = self._get_persistent_audio_path(text, category)
+        if os.path.exists(audio_path) and os.path.getsize(audio_path) > 0:
+            self.persistent_audio_files.add(audio_path)
+            return audio_path
+        return None
+    
+    def _save_persistent_audio(self, text: str, audio_path: str, category: str = "common"):
+        """保存音频文件为持久化文件"""
+        persistent_path = self._get_persistent_audio_path(text, category)
+        try:
+            import shutil
+            shutil.copy2(audio_path, persistent_path)
+            self.persistent_audio_files.add(persistent_path)
+            print(f"💾 已保存持久化音频: {os.path.basename(persistent_path)}")
+        except Exception as e:
+            print(f"❌ 保存持久化音频失败: {e}")
     
     def _init_components(self, use_voice_input: Optional[bool], device: str, zhipuai_api_key: Optional[str]):
         """初始化各个组件"""
@@ -172,25 +243,47 @@ class VoiceRobotController:
         print("✅ 唤醒词功能已启用")
     
     def _preload_common_audio(self):
-        """预加载常用音频，提高响应速度"""
+        """预加载常用音频，优先使用持久化文件"""
         print("🔄 预加载常用音频...")
         
         for phrase in Config.COMMON_PHRASES:
             try:
-                self._get_cached_tts(phrase)
+                # 首先检查是否有持久化的音频文件
+                persistent_path = self._check_persistent_audio(phrase, "common")
+                if persistent_path:
+                    self.tts_cache[phrase] = persistent_path
+                    print(f"📁 使用持久化音频: {phrase[:20]}...")
+                else:
+                    # 如果没有持久化文件，生成新的音频文件
+                    audio_path = self.tts_engine.text_to_speech(phrase)
+                    if audio_path:
+                        self.tts_cache[phrase] = audio_path
+                        self.session_audio_files.add(audio_path)
+                        # 保存为持久化文件
+                        self._save_persistent_audio(phrase, audio_path, "common")
             except Exception as e:
                 print(f"⚠️ 预加载音频失败: {phrase[:10]}... - {e}")
         
         print(f"✅ 预加载完成，缓存了 {len(self.tts_cache)} 个音频")
     
     def _preload_delay_phrases(self):
-        """预生成所有拖延语音频"""
+        """预生成所有拖延语音频，优先使用持久化文件"""
         print("🔄 预生成拖延语音频...")
         for phrase in Config.DELAY_PHRASES:
             try:
-                audio_path = self.tts_engine.text_to_speech(phrase)
-                if audio_path:
-                    self.delay_phrase_cache[phrase] = audio_path
+                # 首先检查是否有持久化的音频文件
+                persistent_path = self._check_persistent_audio(phrase, "delay")
+                if persistent_path:
+                    self.delay_phrase_cache[phrase] = persistent_path
+                    print(f"📁 使用持久化拖延语: {phrase[:20]}...")
+                else:
+                    # 如果没有持久化文件，生成新的音频文件
+                    audio_path = self.tts_engine.text_to_speech(phrase)
+                    if audio_path:
+                        self.delay_phrase_cache[phrase] = audio_path
+                        self.session_audio_files.add(audio_path)
+                        # 保存为持久化文件
+                        self._save_persistent_audio(phrase, audio_path, "delay")
             except Exception as e:
                 print(f"⚠️ 拖延语音频生成失败: {phrase[:10]}... - {e}")
         print(f"✅ 拖延语音频缓存: {len(self.delay_phrase_cache)} 条")
@@ -205,6 +298,8 @@ class VoiceRobotController:
         audio_path = self.tts_engine.text_to_speech(text)
         if audio_path:
             self.tts_cache[text] = audio_path
+            # 将运行时生成的音频文件添加到清理列表
+            self.session_audio_files.add(audio_path)
         return audio_path
     
     def _play_cached_audio_with_delay(self, text: str, tts_ready_callback=None, tts_timeout=2.0):
@@ -359,6 +454,8 @@ class VoiceRobotController:
                 
                 # 验证音频文件是否真正生成成功
                 if audio_path and os.path.exists(audio_path) and os.path.getsize(audio_path) > 0:
+                    # 将生成的音频文件添加到清理列表
+                    self.session_audio_files.add(audio_path)
                     with lock:
                         audio_paths.append((index, audio_path))
                     print(f"✅ 音频 {index+1} 生成完成: {os.path.basename(audio_path)}")
@@ -483,7 +580,7 @@ class VoiceRobotController:
         if not self.recorder:
             # 文本输入模式
             if self.robot_state == "sleeping":
-                prompt = "请输入唤醒词（小智同学）或输入'stats'查看计时统计: "
+                prompt = "请输入唤醒词（小拓同学）或输入'stats'查看计时统计: "
             else:
                 prompt = "请输入动作指令或退下指令，或输入'stats'查看计时统计: "
             text = input(prompt).strip()
@@ -500,7 +597,7 @@ class VoiceRobotController:
             try:
                 if self.robot_state == "sleeping":
                     print("😴 机器人休眠中，请说唤醒词...")
-                    print("🎤 请说：小智同学")
+                    print("🎤 请说：小拓同学")
                 else:
                     print("👂 机器人等待指令中...")
                     print("🎤 请说动作指令：回到待机位置、上下摆动、左右摆动、摇头")
@@ -574,7 +671,7 @@ class VoiceRobotController:
             print("🤖 你好！我已准备好接受您的指令。")
 
             # 播放唤醒音频
-            self._play_cached_audio("你好，我是小智同学，很高兴见到你！")
+            self._play_cached_audio("你好，我是小拓同学，很高兴见到你！")
 
             self.robot_controller.execute_action("greet")
             
@@ -585,7 +682,7 @@ class VoiceRobotController:
             
             return True
         else:
-            print("😴 机器人还在休眠中，请说唤醒词：小智同学")
+            print("😴 机器人还在休眠中，请说唤醒词：小拓同学")
             return False
     
     def _handle_awake_state(self, text: str) -> bool:
@@ -629,6 +726,14 @@ class VoiceRobotController:
 
             # 播放退下音频
             self._play_cached_audio("好的，我去休息了。需要时请叫我！")
+            
+            # 同时执行打招呼（挥挥手）动作
+            print("👋 执行打招呼动作...")
+            greet_success = self.robot_controller.execute_action("greet")
+            if greet_success:
+                print("✅ 打招呼动作执行成功")
+            else:
+                print("❌ 打招呼动作执行失败")
             
             # 切换到休眠状态
             self.robot_state = "sleeping"
@@ -711,7 +816,7 @@ class VoiceRobotController:
             print("🎵 开始异步TTS生成和播放（同时预热VAD）...")
             
         else:
-            print(f"小智说：{description}")
+            print(f"小拓说：{description}")
             print("🎵 开始异步TTS生成和播放（同时预热VAD）...")
             audio_file_path = self._play_cached_audio(description, tts_ready_callback=tts_ready_callback)
         
@@ -814,6 +919,8 @@ class VoiceRobotController:
                 print("\n🛑 语音机器人控制器已停止")
                 # 显示计时统计
                 self._show_timing_stats()
+                # 清理运行时音频文件
+                self._cleanup_session_audio()
                 break
             except Exception as e:
                 print(f"❌ 运行时错误: {e}")
@@ -988,7 +1095,7 @@ def main():
         # 启动说明
         print("\n📖 使用说明:")
         if controller.wake_matcher:
-            print("1. 机器人处于休眠状态，请先说唤醒词：'小智同学'")
+            print("1. 机器人处于休眠状态，请先说唤醒词：'小拓同学'")
             print("2. 唤醒后可以说动作指令或进行聊天")
             print("3. 说退下指令让机器人重新进入休眠：'退下'、'休息'等")
         else:

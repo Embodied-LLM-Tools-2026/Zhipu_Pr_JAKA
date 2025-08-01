@@ -88,7 +88,7 @@ class Config:
     
     # 常用音频短语
     COMMON_PHRASES = [
-        "你好，我是小智同学，很高兴见到你！",
+        "你好，我是小拓同学，很高兴见到你！",
         "好的，我去休息了。需要时请叫我！",
         "抱歉，我不理解这个指令，请重新说一遍",
         # 新增自我介绍
@@ -2528,7 +2528,7 @@ class RobotCommandProcessor:
                 if result.get("intent") == "chat":
                     chat_prompt = f"""
                     用户说："{text}"
-                    你的名字叫小智。请生成一个自然简洁的对话响应，不用特别简短但字数不要超过100字，你生成的回答会被TTS模型念出来，所以不要使用表情，也不要以"小智同学说："这样的东西开头。回答不要以"好的"或"当然可以"这类语句开头。
+                    你的名字叫小拓。请生成一个自然简洁的对话响应，不用特别简短但字数不要超过100字，你生成的回答会被TTS模型念出来，所以不要使用表情，也不要以"小拓同学说："这样的东西开头。回答不要以"好的"或"当然可以"这类语句开头。
                     """
                     try:
                         chat_response = self.client.chat.completions.create(
@@ -2607,7 +2607,7 @@ class PinyinMatcher:
             'zh': 'z', 'ch': 'c', 'sh': 's'
         }
         
-        self.wake_word = "小智同学"
+        self.wake_word = "小拓同学"
         self.wake_pinyin_variants = self._get_pinyin_variants(self.wake_word)
         
         print(f"唤醒词 '{self.wake_word}' 已初始化")
@@ -3203,7 +3203,7 @@ class VoiceRobotController:
         if not self.recorder:
             # 文本输入模式
             if self.robot_state == "sleeping":
-                prompt = "请输入唤醒词（小智同学）或输入'stats'查看计时统计: "
+                prompt = "请输入唤醒词（小拓同学）或输入'stats'查看计时统计: "
             else:
                 prompt = "请输入动作指令或退下指令，或输入'stats'查看计时统计: "
             text = input(prompt).strip()
@@ -3220,7 +3220,7 @@ class VoiceRobotController:
             try:
                 if self.robot_state == "sleeping":
                     print("😴 机器人休眠中，请说唤醒词...")
-                    print("🎤 请说：小智同学")
+                    print("🎤 请说：小拓同学")
                 else:
                     print("👂 机器人等待指令中...")
                     print("🎤 请说动作指令：回到待机位置、上下摆动、左右摆动、摇头")
@@ -3294,7 +3294,7 @@ class VoiceRobotController:
             print("🤖 你好！我已准备好接受您的指令。")
 
             # 播放唤醒音频
-            self._play_cached_audio("你好，我是小智同学，很高兴见到你！")
+            self._play_cached_audio("你好，我是小拓同学，很高兴见到你！")
             
             # 切换到唤醒状态
             self.robot_state = "awake"
@@ -3303,7 +3303,7 @@ class VoiceRobotController:
             
             return True
         else:
-            print("😴 机器人还在休眠中，请说唤醒词：小智同学")
+            print("😴 机器人还在休眠中，请说唤醒词：小拓同学")
             return False
     
     def _handle_awake_state(self, text: str) -> bool:
@@ -3429,7 +3429,7 @@ class VoiceRobotController:
             print("🎵 开始异步TTS生成和播放（同时预热VAD）...")
             audio_file_path = self._play_cached_audio("好的", tts_ready_callback=tts_ready_callback)
         else:
-            print(f"小智说：{description}")
+            print(f"小拓说：{description}")
             print("🎵 开始异步TTS生成和播放（同时预热VAD）...")
             audio_file_path = self._play_cached_audio(description, tts_ready_callback=tts_ready_callback)
         
@@ -3674,7 +3674,7 @@ def main():
         # 启动说明
         print("\n📖 使用说明:")
         if controller.wake_matcher:
-            print("1. 机器人处于休眠状态，请先说唤醒词：'小智同学'")
+            print("1. 机器人处于休眠状态，请先说唤醒词：'小拓同学'")
             print("2. 唤醒后可以说动作指令或进行聊天")
             print("3. 说退下指令让机器人重新进入休眠：'退下'、'休息'等")
         else:

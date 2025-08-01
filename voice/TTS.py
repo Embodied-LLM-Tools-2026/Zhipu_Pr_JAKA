@@ -9,6 +9,7 @@ class TextToSpeechEngine:
     """文本转语音引擎"""
     
     def __init__(self):
+        # 确保recordings目录在正确的位置
         self.recordings_dir = os.path.join(os.getcwd(), "recordings")
         os.makedirs(self.recordings_dir, exist_ok=True)
         
