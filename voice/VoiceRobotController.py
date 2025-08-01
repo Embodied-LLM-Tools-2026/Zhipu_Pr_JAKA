@@ -320,8 +320,8 @@ class VoiceRobotController:
         # delay_timer = threading.Timer(3.0, lambda: self._play_delay_phrase_and_set_flag(delay_played))
         # delay_timer.start()
         
-        # # 等待TTS完成
-        # tts_done.wait()
+        # 等待TTS完成
+        tts_done.wait()
         
         # # 取消延迟定时器（如果TTS在3秒内完成）
         # delay_timer.cancel()
