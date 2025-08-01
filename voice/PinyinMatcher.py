@@ -18,7 +18,7 @@ class PinyinMatcher:
             'zh': 'z', 'ch': 'c', 'sh': 's'
         }
         
-        self.wake_word = "小拓同学"
+        self.wake_word = "小拓"
         self.wake_pinyin_variants = self._get_pinyin_variants(self.wake_word)
         
         print(f"唤醒词 '{self.wake_word}' 已初始化")
