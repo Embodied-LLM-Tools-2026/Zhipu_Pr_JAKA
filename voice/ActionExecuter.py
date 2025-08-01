@@ -1,7 +1,7 @@
 import multiprocessing as mp
-import xapi.api as x5
 import copy
 import os, sys
+from config import Config
 # ================================
 # 根据文本指令控制机器人执行固定动作
 # ================================
@@ -17,7 +17,8 @@ class ActionExecuter:
         self.handle_r = None
         
         # if deps.robot_available:
-        if robot_available: #调试时要模拟执行动作就改为False
+        if robot_available and Config.ROBOT_AVAILABLE: 
+            import xapi.api as x5
             from action_sequence.execute_action import init_robot, wave, bow, Nod, Shake_head
             
             self.handle_l = x5.connect(robot_ip_left)
@@ -53,6 +54,8 @@ class ActionExecuter:
                 print("执行：点头")
             elif action == "bow":
                 print("执行：鞠躬")
+            elif action == "get_drink":
+                print("执行：拿饮料")
             # elif action == "others":
             #     return True
             else:
@@ -72,6 +75,9 @@ class ActionExecuter:
             elif action == "bow":
                 print("执行：鞠躬")
                 result = self.bowing(self.handle_l, self.handle_r,self.add_data_1)
+            elif action == "get_drink":
+                print("执行：拿饮料")
+                # result = self.get_drink(self.handle_l, self.handle_r,self.add_data_1)
             # elif action == "others":
             #     return True
             else:

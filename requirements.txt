@@ -1,6 +1,6 @@
 # 基础依赖
 python-dotenv==1.1.1
-numpy==1.22.0
+numpy==1.23.0
 
 # 音频处理依赖
 pyaudio==0.2.14
@@ -44,3 +44,44 @@ edge-tts
 # 可选依赖
 # openai>=1.0.0   # OpenAI (备选)
 # openai-whisper>=20231117  # Whisper (备选)
+
+# 物体确定依赖
+certifi
+charset-normalizer
+colorama
+contourpy
+cycler
+filelock
+fonttools
+fsspec
+idna
+importlib-resources
+jinja2
+joblib
+kiwisolver
+markupsafe
+mpmath
+networkx
+opencv-python
+packaging
+pandas
+pillow
+psutil
+py-cpuinfo
+pyparsing
+python-dateutil
+pytz
+pyyaml
+requests
+scikit-learn
+six
+sympy
+threadpoolctl
+torchvision
+tqdm
+typing-extensions
+tzdata
+ultralytics==8.3.170
+ultralytics-thop==2.0.14
+urllib3
+zipp
