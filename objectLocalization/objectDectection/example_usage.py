@@ -11,9 +11,14 @@
 
 3. 实际使用：调用 find_drinks() 方法查找饮料位置
 """
-
-from DrinkShelfLocator import DrinkShelfLocator
+import sys
+import os
 import time
+
+# Add project root to Python path
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
+
+from objectLocalization.objectDectection.DrinkShelfLocator import DrinkShelfLocator
 
 
 def main():
@@ -22,9 +27,9 @@ def main():
     # 1. 初始化系统
     print("=== 初始化智能货架饮料定位系统 ===")
     locator = DrinkShelfLocator(
-        model_path="weights/yoloe-11s-seg.pt",  # 模型路径
-        reference_dir="reference_images",       # 参考图片目录
-        template_dir="position_templates",      # 位置模板目录
+        model_path="objectLocalization/objectDectection/weights/yoloe-11s-seg.pt",  # 模型路径
+        reference_dir="objectLocalization/objectDectection/reference_images",       # 参考图片目录
+        template_dir="objectLocalization/objectDectection/position_templates",      # 位置模板目录
         camera_id=0                             # 相机ID，0为默认相机
     )
     
@@ -86,7 +91,12 @@ def main():
 def batch_calibration_example():
     """批量标定示例 - 适用于多种饮料的标定"""
     
-    locator = DrinkShelfLocator()
+    locator = DrinkShelfLocator(
+        model_path="objectLocalization/objectDectection/weights/yoloe-11s-seg.pt",  # 模型路径
+        reference_dir="objectLocalization/objectDectection/reference_images",       # 参考图片目录
+        template_dir="objectLocalization/objectDectection/position_templates",      # 位置模板目录
+        camera_id=0
+    )
     
     # 定义要标定的饮料类型
     drink_types = ["可乐", "雪碧", "柠檬茶", "奶茶"]
@@ -112,7 +122,12 @@ def batch_calibration_example():
 def interactive_mode():
     """交互式使用模式"""
     
-    locator = DrinkShelfLocator()
+    locator = DrinkShelfLocator(
+        model_path="objectLocalization/objectDectection/weights/yoloe-11s-seg.pt",
+        reference_dir="objectLocalization/objectDectection/reference_images",
+        template_dir="objectLocalization/objectDectection/position_templates",
+        camera_id=0
+    )
     
     while True:
         print("\n=== 智能货架饮料定位系统 ===")
