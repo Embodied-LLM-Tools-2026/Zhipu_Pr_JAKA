@@ -873,7 +873,16 @@ class VoiceRobotController:
         if command_result.get("intent", "unknown") == "command":
             if action not in Config.ACTION_MAP.keys():
                 print("💬 这个动作我还不会哦，不过我会抓紧学习的")
-                error_audio_path = self._play_cached_audio("这个动作我还不会哦，不过我会抓紧学习的")
+                def play_audio_thread():
+                    self._play_cached_audio("这个动作我还不会哦，不过我会抓紧学习的")
+                def execute_action_thread():
+                    self.robot_controller.execute_action("shake_head")
+                audio_thread = threading.Thread(target=play_audio_thread)
+                action_thread = threading.Thread(target=execute_action_thread)
+                audio_thread.start()
+                action_thread.start()
+                audio_thread.join()
+                action_thread.join()
                 success = True
             else:
                 # 区分拿饮料和非拿饮料

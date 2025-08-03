@@ -17,7 +17,7 @@ class ActionExecuter:
         self.handle_r = None
         
         # if deps.robot_available:
-        if robot_available and Config.ROBOT_AVAILABLE: 
+        if Config.ROBOT_AVAILABLE: 
             import xapi.api as x5
             from action_sequence.execute_action import init_robot, wave, bow, Nod, Shake_head
             

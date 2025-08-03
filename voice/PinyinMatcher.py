@@ -18,10 +18,14 @@ class PinyinMatcher:
             'zh': 'z', 'ch': 'c', 'sh': 's'
         }
         
-        self.wake_word = "小拓"
-        self.wake_pinyin_variants = self._get_pinyin_variants(self.wake_word)
+        # 支持多个唤醒词
+        self.wake_words = ["小拓", "小兔"]
+        self.wake_pinyin_variants = {}
         
-        print(f"唤醒词 '{self.wake_word}' 已初始化")
+        for wake_word in self.wake_words:
+            self.wake_pinyin_variants[wake_word] = self._get_pinyin_variants(wake_word)
+        
+        print(f"唤醒词已初始化: {', '.join(self.wake_words)}")
     
     def _get_pinyin_variants(self, text: str) -> list:
         """获取文本的拼音变体"""
@@ -104,22 +108,24 @@ class PinyinMatcher:
         input_pinyin = pinyin(cleaned_text, style=Style.NORMAL, heteronym=False)
         input_pinyin_str = ''.join([p[0].lower() for p in input_pinyin])
         
-        # 生成目标拼音的所有组合
-        wake_combinations = self._generate_pinyin_combinations(self.wake_pinyin_variants)
-        
-        # 检查是否匹配
-        for wake_combo in wake_combinations:
-            if wake_combo in input_pinyin_str:
-                print(f"🎯 检测到唤醒词: '{self.wake_word}'")
-                
-                # 找到唤醒词在原文本中的位置
-                wake_word_index = cleaned_text.find(self.wake_word)
-                if wake_word_index != -1:
-                    remaining_text = cleaned_text[wake_word_index + len(self.wake_word):].strip('，。！？、')
-                    print(f"剩余指令文本: '{remaining_text}'")
-                    return True, remaining_text
-                else:
-                    return True, cleaned_text
+        # 检查每个唤醒词
+        for wake_word in self.wake_words:
+            # 生成目标拼音的所有组合
+            wake_combinations = self._generate_pinyin_combinations(self.wake_pinyin_variants[wake_word])
+            
+            # 检查是否匹配
+            for wake_combo in wake_combinations:
+                if wake_combo in input_pinyin_str:
+                    print(f"🎯 检测到唤醒词: '{wake_word}'")
+                    
+                    # 找到唤醒词在原文本中的位置
+                    wake_word_index = cleaned_text.find(wake_word)
+                    if wake_word_index != -1:
+                        remaining_text = cleaned_text[wake_word_index + len(wake_word):].strip('，。！？、')
+                        print(f"剩余指令文本: '{remaining_text}'")
+                        return True, remaining_text
+                    else:
+                        return True, cleaned_text
         
         return False, text
 
@@ -131,7 +137,7 @@ class PinyinMatcher:
         dismiss_keywords = [
             "退下", "休息", "睡觉", "回去休息", "去休息", 
             "暂停", "停止", "结束", "再见", "拜拜",
-            "你可以休息了", "你可以去休息了", "没事了", "辛苦了"
+            "你可以休息了", "你可以去休息了", "没事了", "辛苦了","退一下"
         ]
         
         text_cleaned = text.strip().replace(" ", "")
