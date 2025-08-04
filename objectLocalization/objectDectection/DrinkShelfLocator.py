@@ -1149,7 +1149,10 @@ class DrinkShelfLocator:
                         "message": f"当前货架上只有{M}个{drink_type}"
                     }
                 else:
-                    selected_positions = occupied_positions[:quantity]
+                    if grabbing_direction.lower() == 'left':
+                        selected_positions = occupied_positions[:quantity]
+                    elif grabbing_direction.lower() == 'right':   
+                        selected_positions = occupied_positions[total_drinks - quantity:]
                 
                 result = {
                     "success": True,
