@@ -749,7 +749,7 @@ class VoiceRobotController:
                 if nod_success:
                     print("✅ 点头动作执行成功")
                 else:
-                    print("❌ 打招呼动作执行失败")
+                    print("❌ 点头动作执行失败")
             
             # 启动两个线程同时执行
             audio_thread = threading.Thread(target=play_dismiss_audio_thread)

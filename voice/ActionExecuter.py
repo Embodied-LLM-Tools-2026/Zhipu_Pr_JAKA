@@ -83,7 +83,7 @@ class ActionExecuter:
             else:
                 return False
             
-            return result == 0
+            return True
             
         except Exception as e:
             print(f"执行动作失败: {e}")
