@@ -77,11 +77,17 @@ def pick_1_5(handle_L,handle_R,hand_l, hand_r, add_data):
 
     # 计算新的调整后的抓取点位
     new_pick_2_point = copy.deepcopy(pick_2_point)
-    new_pick_2_point.pose.z = 152.984 + delta_x
-    new_pick_2_point.pose.y = -622.309 - delta_y
+    new_pick_2_point.pose.z = 152.984 - delta_x
+    new_pick_2_point.pose.y = -622.309 + delta_y
+    print(new_pick_2_point)
     # 逆解，求笛卡尔点位p1的对应关节坐标
+    # jp1 = x5.cnvrt_j(handle_R, new_pick_2_point, 0, pick_2)
+    # jp2 = x5.cnvrt_j(handle_R, new_pick_2_point, 1, pick_2)
+
     jp1 = x5.cnvrt_j(handle_R, new_pick_2_point, 0, pick_2)
-    x5.movj(handle_R, jp1, add_data)
+
+    # # print(jp3)
+    x5.movj(handle_R, pick_2, add_data)
     x5.wait_move_done(handle_R)
     # grasp
     hand_r.setpos(472,509,589,670,736,0)
@@ -127,6 +133,20 @@ def pick_1_5(handle_L,handle_R,hand_l, hand_r, add_data):
     x5.movj(handle_R, pick_8, add_data)
     x5.wait_move_done(handle_R)
 
+def move_to_pick_height_pitch_angle(handle_L,handle_R,hand_l, hand_r, add_data, height, pitch_angle):
+    """
+    到达抓取的高度和头的俯仰角
+    """
+    joint_r = copy.copy(INIT_JOINT_R)
+    joint_r.e3 = height
+    x5.movj(handle_R, joint_r, add_data)
+    x5.wait_move_done(handle_R)
+    joint_l = copy.copy(INIT_JOINT_L)
+    joint_l.e3 = pitch_angle
+    x5.movj(handle_L, joint_l, add_data)
+    x5.wait_move_done(handle_L)
+
+
 
 def main():
     hand_l = InspireHandR(port="COM11", baudrate=115200, hand_id=1)
@@ -146,17 +166,19 @@ def main():
     handle_l = x5.connect("192.168.1.7")
     handle_r = x5.connect("192.168.1.8")
 
-    # # # safe_robot(handle_l, handle_r, add_data_1)
-    # with AGVClient(ip='192.168.192.5') as agv:
-    #     # agv.go_to_target_LM("LM1", "LM2")
-    #     agv.go_to_target_LM("LM2", "LM1")
+    # # safe_robot(handle_l, handle_r, add_data_1)
+    with AGVClient(ip='192.168.192.5') as agv:
+        # agv.go_to_target_LM("LM1", "LM2")
+        # agv.go_to_target_LM("LM2", "LM1")
+        print(agv.get_pose())
     # time.sleep(35)
 
-    init_robot(handle_l, handle_r, add_data_1)
+    # init_robot(handle_l, handle_r, add_data_1)
 
-    pick_1_5(handle_l, handle_r, hand_l, hand_r, add_data_1)
-    
-    init_robot(handle_l, handle_r, add_data_1)
+    # pick_1_5(handle_l, handle_r, hand_l, hand_r, add_data_1)
+    # move_to_pick_height_pitch_angle(handle_l, handle_r, hand_l, hand_r, add_data_1, 200, 0)
+    # init_robot(handle_l, handle_r, add_data_1)
+
 
 if __name__ == "__main__":
     main()
