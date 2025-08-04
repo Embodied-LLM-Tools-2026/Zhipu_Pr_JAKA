@@ -329,7 +329,7 @@ class AGVClient:
             # 等待导航完成
             self._navigation_active = True
             try:
-                self.navigation_locker
+                self.navigation_locker()
             finally:
                 self._navigation_active = False
         else:
@@ -373,7 +373,344 @@ class AGVClient:
             print(response)
         else:
             print("任务发送失败")
-        return 
+        return
+    
+    # ========== 建图控制方法 ==========
+    def start_slam(self, slam_type=1, real_time=False, screen_width=None, screen_height=None):
+        """
+        开始扫描地图
+        
+        Args:
+            slam_type (int): 扫图类型：1=2D扫图, 2=2D实时扫图, 3=3D扫图, 4=3D实时扫图
+            real_time (bool): 是否开启实时扫图数据传输
+            screen_width (int): 屏幕宽(像素)
+            screen_height (int): 屏幕高(像素)
+        
+        Returns:
+            bool: 是否成功
+        """
+        msg_data = {}
+        if slam_type != 1:
+            msg_data['slam_type'] = slam_type
+        if real_time:
+            msg_data['real_time'] = real_time
+        if screen_width is not None:
+            msg_data['screen_width'] = screen_width
+        if screen_height is not None:
+            msg_data['screen_height'] = screen_height
+            
+        response = self.send_message(6100, msg_data, socket_type=1)
+        if response and response.get('ret_code') == 0:
+            print("开始扫描地图指令发送成功")
+            return True
+        else:
+            print(f"扫描地图指令发送失败: {response}")
+            return False
+    
+    def stop_slam(self):
+        """
+        停止扫描地图
+        
+        Returns:
+            bool: 是否成功
+        """
+        response = self.send_message(6101, socket_type=1)
+        if response and response.get('ret_code') == 0:
+            print("停止扫描地图指令发送成功")
+            return True
+        else:
+            print(f"停止扫描地图指令发送失败: {response}")
+            return False
+    
+    def get_slam_status(self, return_resultmap=False):
+        """
+        获取扫图状态
+        
+        Args:
+            return_resultmap (bool): 是否返回构建完的地图
+            
+        Returns:
+            int or tuple: 扫图状态 (0=没有扫图, 1=正在扫图(离线), 2=正在实时扫图, 3=正在3D扫图, 4=正在实时3D扫图)
+                         如果return_resultmap=True，返回(status, resultmap)
+        """
+        msg_data = {}
+        if return_resultmap:
+            msg_data['return_resultmap'] = True
+            
+        response = self.send_message(1025, msg_data, socket_type=0)
+        if response:
+            if return_resultmap:
+                return response.get('slam_status'), response.get('resultmap')
+            else:
+                return response.get('slam_status')
+        else:
+            return None
+    
+    # ========== 定位控制方法 ==========
+    def relocalize(self, x=None, y=None, angle=None, length=None, is_auto=False, home=False):
+        """
+        重定位
+        
+        Args:
+            x (float): 世界坐标系中的x坐标，单位m
+            y (float): 世界坐标系中的y坐标，单位m
+            angle (float): 世界坐标系中的角度，单位rad
+            length (float): 重定位区域半径，单位m
+            is_auto (bool): 是否为自动重定位
+            home (bool): 在RobotHome重定位
+            
+        Returns:
+            bool: 是否成功
+        """
+        msg_data = {}
+        
+        if is_auto:
+            msg_data['isAuto'] = True
+        elif home:
+            msg_data['home'] = True
+        else:
+            if x is not None:
+                msg_data['x'] = x
+            if y is not None:
+                msg_data['y'] = y
+            if angle is not None:
+                msg_data['angle'] = angle
+            if length is not None:
+                msg_data['length'] = length
+                
+        response = self.send_message(2002, msg_data, socket_type=1)
+        if response and response.get('ret_code') == 0:
+            print("重定位指令发送成功")
+            return True
+        else:
+            print(f"重定位指令发送失败: {response}")
+            return False
+    
+    # ========== 基础运动控制方法 ==========
+    def translate(self, dist, vx=None, vy=None, mode=1):
+        """
+        平动控制
+        
+        Args:
+            dist (float): 直线运动距离，绝对值，单位m
+            vx (float): 机器人坐标系下X方向运动速度，正为向前，负为向后，单位m/s
+            vy (float): 机器人坐标系下Y方向运动速度，正为向左，负为向右，单位m/s
+            mode (int): 0=里程模式, 1=定位模式
+            
+        Returns:
+            bool: 是否成功
+        """
+        msg_data = {'dist': dist}
+        if vx is not None:
+            msg_data['vx'] = vx
+        if vy is not None:
+            msg_data['vy'] = vy
+        if mode != 0:
+            msg_data['mode'] = mode
+            
+        response = self.send_message(3055, msg_data, socket_type=1)
+        if response and response.get('ret_code') == 0:
+            print(f"平动指令发送成功，距离：{dist}m")
+            return True
+        else:
+            print(f"平动指令发送失败: {response}")
+            return False
+    
+    def rotate(self, angle, vw, mode=1):
+        """
+        转动控制
+        
+        Args:
+            angle (float): 转动的角度，绝对值，单位rad
+            vw (float): 转动的角速度，正为逆时针转，负为顺时针转，单位rad/s
+            mode (int): 0=里程模式, 1=定位模式
+            
+        Returns:
+            bool: 是否成功
+        """
+        msg_data = {
+            'angle': angle,
+            'vw': vw
+        }
+        if mode != 0:
+            msg_data['mode'] = mode
+            
+        response = self.send_message(3056, msg_data, socket_type=1)
+        if response and response.get('ret_code') == 0:
+            print(f"转动指令发送成功，角度：{angle}rad，角速度：{vw}rad/s")
+            return True
+        else:
+            print(f"转动指令发送失败: {response}")
+            return False
+    
+    def rotate_in_place(self, turns=1.0, angular_velocity=1.0, mode=1):
+        """
+        原地转圈
+        
+        Args:
+            turns (float): 转圈数，正数为逆时针，负数为顺时针
+            angular_velocity (float): 角速度，单位rad/s
+            mode (int): 0=里程模式, 1=定位模式
+            
+        Returns:
+            bool: 是否成功
+        """
+        import math
+        angle = abs(turns) * 2 * math.pi
+        vw = angular_velocity if turns > 0 else -angular_velocity
+        
+        return self.rotate(angle, vw, mode)
+    
+    def spin_tray(self, increase_angle=None, robot_angle=None, global_angle=None, direction=0):
+        """
+        托盘旋转控制
+        
+        Args:
+            increase_angle (float): 在当前托盘角度基础上增加的角度，单位rad
+                                   正数=逆时针，负数=顺时针
+            robot_angle (float): 将托盘转到机器人坐标系下的目标角度，单位rad
+            global_angle (float): 将托盘转到世界坐标系下的目标角度，单位rad
+            direction (int): 旋转方向，0=就近，1=逆时针，-1=顺时针
+                            仅在使用robot_angle或global_angle时有效
+        
+        Returns:
+            bool: 是否成功
+            
+        Note:
+            - 三种角度参数只能指定一种
+            - 托盘旋转不能与平动(3055)、转动(3056)、其他托盘操作(3058)同时进行
+        """
+        msg_data = {}
+        
+        # 检查参数互斥性
+        angle_params = [increase_angle, robot_angle, global_angle]
+        non_none_params = [p for p in angle_params if p is not None]
+        
+        if len(non_none_params) == 0:
+            print("托盘旋转控制需要指定至少一个角度参数")
+            return False
+        elif len(non_none_params) > 1:
+            print("托盘旋转控制只能指定一种角度参数")
+            return False
+        
+        # 设置消息数据
+        if increase_angle is not None:
+            msg_data['increase_spin_angle'] = increase_angle
+            print(f"托盘增量旋转: {increase_angle}rad ({'逆时针' if increase_angle > 0 else '顺时针'})")
+        elif robot_angle is not None:
+            msg_data['robot_spin_angle'] = robot_angle
+            if direction != 0:
+                msg_data['spin_direction'] = direction
+            direction_str = {0: '就近', 1: '逆时针', -1: '顺时针'}.get(direction, '未知')
+            print(f"托盘转到机器人坐标系角度: {robot_angle}rad ({direction_str})")
+        elif global_angle is not None:
+            msg_data['global_spin_angle'] = global_angle
+            if direction != 0:
+                msg_data['spin_direction'] = direction
+            direction_str = {0: '就近', 1: '逆时针', -1: '顺时针'}.get(direction, '未知')
+            print(f"托盘转到世界坐标系角度: {global_angle}rad ({direction_str})")
+        
+        response = self.send_message(3057, msg_data, socket_type=1)
+        if response and response.get('ret_code') == 0:
+            print("托盘旋转指令发送成功")
+            return True
+        else:
+            print(f"托盘旋转指令发送失败: {response}")
+            return False
+    
+    # ========== 高级导航方法 ==========
+    def navigate_path(self, move_task_list):
+        """
+        指定路径导航
+        
+        Args:
+            move_task_list (list): 移动任务列表，每个任务包含id, source_id, task_id等
+            
+        Returns:
+            bool: 是否成功
+        """
+        msg_data = {'move_task_list': move_task_list}
+        response = self.send_message(3066, msg_data, socket_type=2)
+        if response and response.get('ret_code') == 0:
+            print("指定路径导航指令发送成功")
+            return True
+        else:
+            print(f"指定路径导航指令发送失败: {response}")
+            return False
+    
+    def get_path_between_points(self, source_id, target_id):
+        """
+        查询任意两点之间的路径
+        
+        Args:
+            source_id (str): 起点ID
+            target_id (str): 终点ID
+            
+        Returns:
+            list: 路径站点列表
+        """
+        msg_data = {
+            'source_id': source_id,
+            'target_id': target_id
+        }
+        response = self.send_message(1303, msg_data, socket_type=0)
+        if response and response.get('ret_code') == 0:
+            return response.get('list', [])
+        else:
+            print(f"查询路径失败: {response}")
+            return None
+    
+    # ========== 多种导航方法实现 ==========
+    def navigate_to_point_method1(self, x, y, theta):
+        """
+        导航方法1：使用现有的世界坐标导航
+        """
+        return self.go_to_point_in_world(x, y, theta)
+    
+    def navigate_to_point_method2(self, x, y, theta):
+        """
+        导航方法2：使用机器人坐标导航
+        """
+        current_pose = self.get_pose()
+        if current_pose is None:
+            print("无法获取当前位置")
+            return False
+            
+        current_x, current_y, current_angle = current_pose
+        # 转换为机器人坐标系
+        import math
+        dx = x - current_x
+        dy = y - current_y
+        robot_x = dx * math.cos(-current_angle) - dy * math.sin(-current_angle)
+        robot_y = dx * math.sin(-current_angle) + dy * math.cos(-current_angle)
+        robot_theta = theta - current_angle
+        
+        return self.go_to_point_in_robot(robot_x, robot_y, robot_theta)
+    
+    def navigate_to_point_method3(self, x, y, theta, intermediate_points=None):
+        """
+        导航方法3：分段导航，先到中间点再到目标点
+        """
+        if intermediate_points is None:
+            # 默认在中点设置一个中间点
+            current_pose = self.get_pose()
+            if current_pose is None:
+                return False
+            current_x, current_y, _ = current_pose
+            mid_x = (current_x + x) / 2
+            mid_y = (current_y + y) / 2
+            intermediate_points = [(mid_x, mid_y, theta)]
+        
+        # 逐个导航到中间点
+        for i, (ix, iy, itheta) in enumerate(intermediate_points):
+            print(f"导航到中间点{i+1}: ({ix}, {iy}, {itheta})")
+            if not self.go_to_point_in_world(ix, iy, itheta):
+                print(f"导航到中间点{i+1}失败")
+                return False
+        
+        # 最后导航到目标点
+        print(f"导航到目标点: ({x}, {y}, {theta})")
+        return self.go_to_point_in_world(x, y, theta) 
 
 def main():
     # 使用新的控制类

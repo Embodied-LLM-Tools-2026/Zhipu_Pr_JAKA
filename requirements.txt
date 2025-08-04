@@ -22,12 +22,13 @@ jieba==0.42.1
 pypinyin==0.55.0
 
 # LLM依赖
-zhipuai==2.1.5.20250717  # 智谱AI GLM-4-Air (V.py和V_sense.py使用)
+zhipuai==2.1.5.20250717  # 智谱AI GLM-4-Air
 
-# 深度学习依赖 (V.py和V_sense.py使用)
---find-links https://download.pytorch.org/whl/torch_stable.html
-torch==2.3.1+cpu
-torchaudio==2.3.1+cpu
+# 深度学习依赖
+--find-links https://download.pytorch.org/whl/cu128
+torch
+torchvision
+torchaudio
 
 # 科学计算依赖
 scipy==1.11.4
@@ -35,7 +36,7 @@ matplotlib==3.8.4
 zarr==2.13.3
 
 # VAD依赖 (V.py和V_sense.py使用)
-silero-vad==5.1.2
+# silero-vad==5.1.2
 # webrtcvad==2.0.10  # 已弃用，使用 silero-vad 替代
 
 # 语音合成依赖
@@ -77,7 +78,6 @@ scikit-learn
 six
 sympy
 threadpoolctl
-torchvision
 tqdm
 typing-extensions
 tzdata
