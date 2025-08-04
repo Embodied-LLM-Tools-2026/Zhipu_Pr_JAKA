@@ -366,6 +366,27 @@ class AGVClient:
             print("任务发送失败")
         return 
     
+    def go_to_target_LM(self, source_id, id):
+        msg_data = {
+            "source_id": source_id,
+            "id": id,
+            # "angle": 1.57,
+            "method": "backward",
+            "max_speed": 0.2,
+            "max_wspeed": 0.2,
+            "max_acc": 0.1,
+            "max_wacc": 0.1,
+            "duration": 100,
+            "orientation": 90,
+            "spin": True
+        }
+        response = self.send_message(3051, msg_data, socket_type=2)
+        if response:
+            print("导航指令发送成功，响应内容：")
+            print(response)
+        else:
+            print("任务发送失败")
+
     def cancel_navigation(self):
         response = self.send_message(3003, socket_type=2)
         if response:
@@ -408,6 +429,7 @@ def main():
         #agv.go_to_point_in_world(-0.8328,-0.0176,3.1252)
         # 向前移动1m，请确认目标安全后运行
         #agv.go_to_point_in_robot(1,0,0)
+        agv.go_to_target_LM("LM1", "LM2")
 
 if __name__ == '__main__':
     main()
