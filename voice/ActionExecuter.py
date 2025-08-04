@@ -28,7 +28,7 @@ class ActionExecuter:
             # 初始化手
             from controller.hand_controller import InspireHandR
             import time
-            from action_sequence.PP import init_robot, pick_1_5
+            from action_sequence.PP import init_robot, pick_1_5, move_to_pick_height_pitch_angle
             self.hand_l = InspireHandR(port="COM11", baudrate=115200, hand_id=1)
             self.hand_r = InspireHandR(port="COM12", baudrate=115200, hand_id=2)
             self.hand_l.set_default_speed(100,100,100,100,100,100)
@@ -41,7 +41,8 @@ class ActionExecuter:
             self.nodding = Nod
             self.bowing = bow
             self.get_drink = pick_1_5
-            
+            self.move_to_pick_height_pitch_angle = move_to_pick_height_pitch_angle
+
             print(f"已连接到机器人: {robot_ip_left} 和 {robot_ip_right}")
             self.init_robot(self.handle_l, self.handle_r, self.add_data_1, self.hand_l, self.hand_r)
             print("handle_l:", self.handle_l)
@@ -49,7 +50,7 @@ class ActionExecuter:
         else:
             print("机器人控制不可用")
     
-    def execute_action(self, action: str, pos_list: list = None) -> bool:
+    def execute_action(self, action: str) -> bool:
         """执行动作"""
         print("handle_l:", self.handle_l)
         print("handle_r:", self.handle_r)
@@ -99,10 +100,20 @@ class ActionExecuter:
             return False
 
     def execute_get_drink(self, pos_list: list = None, layer_number: int = None, head_angle: float = None, body_distance: float = None) -> bool:
-        if pos_list is None: # 到达对应层数
-            pass
-        else: # 到达对应位置
-            for pos in pos_list:
-                if pos == 5:
-                    self.get_drink(self.handle_l, self.handle_r, self.add_data_1, self.hand_l, self.hand_r)
-        return True
+        try:
+            if self.handle_l is None or self.handle_r is None:
+                print("机器人不可用")
+                return True
+                
+            if pos_list is None: # 到达对应层数
+                self.move_to_pick_height_pitch_angle(self.handle_l, self.handle_r, self.hand_l, self.hand_r, self.add_data_1, body_distance, head_angle)
+                print("到达对应层数")
+            else: # 到达对应位置
+                for pos in pos_list:
+                    if pos == 5:
+                        self.get_drink(self.handle_l, self.handle_r, self.add_data_1, self.hand_l, self.hand_r)
+                print("到达对应位置")
+            return True
+        except Exception as e:
+            print(f"执行失败: {e}")
+            return False
