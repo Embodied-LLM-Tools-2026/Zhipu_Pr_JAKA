@@ -158,6 +158,84 @@ class InspireHandR:
         # print('力传感器信息（依次为小指至大拇指的传感器的原始值）：(%.2f, %.2f, %.2f, %.2f, %.2f)'%(setpower[0], setpower[1], setpower[2], setpower[3], setpower[4]))
         return setpower
 
+    def set_default_speed(self, speed1, speed2, speed3, speed4, speed5, speed6):
+        '''功能：设置灵巧手六个自由度的上电初始速度（0-1000）。
+        寄存器地址：从1032开始。
+        '''
+        if speed1 < 0 or speed1 > 1000:
+            print('数据超出正确范围：0-1000')
+            return
+        if speed2 < 0 or speed2 > 1000:
+            print('数据超出正确范围：0-1000')
+            return
+        if speed3 < 0 or speed3 > 1000:
+            print('数据超出正确范围：0-1000')
+            return
+        if speed4 < 0 or speed4 > 1000:
+            print('数据超出正确范围：0-1000')
+            return
+        if speed5 < 0 or speed5 > 1000:
+            print('数据超出正确范围：0-1000')
+            return
+        if speed6 < 0 or speed6 > 1000:
+            print('数据超出正确范围：0-1000')
+            return
+        
+        datanum = 0x0C
+        b = [0]*(datanum + 8)
+        #包头
+        b[0] = 0xEB
+        b[1] = 0x90
+
+        #hand_id号
+        b[2] = self.hand_id
+
+        #数据体长度
+        b[3] = 0x0F
+        
+        #写操作
+        b[4] = 0x12
+
+        #寄存器地址
+        b[5] = 0xF2 # 低八位 (1032 = 0x0408)
+        b[6] = 0x05 # 高八位
+        
+        #数据
+        b[7] = self.data2bytes(speed1)[1]
+        b[8] = self.data2bytes(speed1)[0]
+        
+        b[9] = self.data2bytes(speed2)[1]
+        b[10] = self.data2bytes(speed2)[0]
+        
+        b[11] = self.data2bytes(speed3)[1]
+        b[12] = self.data2bytes(speed3)[0]
+        
+        b[13] = self.data2bytes(speed4)[1]
+        b[14] = self.data2bytes(speed4)[0]
+        
+        b[15] = self.data2bytes(speed5)[1]
+        b[16] = self.data2bytes(speed5)[0]
+        
+        b[17] = self.data2bytes(speed6)[1]
+        b[18] = self.data2bytes(speed6)[0]
+        
+        #校验和
+        b[19] = self.checknum(b,datanum+7)
+
+        
+        #向串口发送数据
+        putdata = b''
+        
+        for i in range(1 ,datanum+9):
+            putdata = putdata + self.num2str(b[i-1])
+        print("发送写入指令:", putdata.hex(" "))
+        self.ser.write(putdata)
+        time.sleep(0.5)
+        read_num = self.ser.inWaiting()
+        getdata= self.ser.read(read_num)
+        print("写入响应:", getdata.hex(" "))
+
+        return
     
     def setpos(self,pos1,pos2,pos3,pos4,pos5,pos6):
         '''功能：主控单元设置灵巧手中 6 个直线驱动器的目标位置，使灵巧手完成相应的手势
@@ -336,10 +414,11 @@ class InspireHandR:
         self.ser.close()
 
 if __name__ == "__main__":
-    hand = InspireHandR(port="COM11", baudrate=115200, hand_id=1)
+    hand = InspireHandR(port="COM12", baudrate=115200, hand_id=2)
+    hand.set_default_speed(100,100,100,100,100,100)
     time.sleep(3)
-    # hand.setpos(500,500,500,500,500,500)
-    # time.sleep(3)
+    hand.setpos(500,500,500,500,500,500)
+    time.sleep(3)
     # hand.get_joint_position()
     # hand.setpos(1000,0,0,1000,500,500)
     # hand.close()
