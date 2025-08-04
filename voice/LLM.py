@@ -24,6 +24,7 @@ class RobotCommandProcessor:
         self.client = ZhipuAI(api_key=self.api_key)
         
         self.action_map = Config.ACTION_MAP
+        self.drink_list = Config.drink_list
     
     def process_command(self, text: str) -> Dict[str, Any]:
         """处理语音识别的文本，返回机器人动作指令"""
@@ -38,13 +39,15 @@ class RobotCommandProcessor:
         2. 指令 - 控制机器人执行具体的动作（支持的动作类型：打招呼/摆手、摇头、点头、鞠躬、其他）
         请先判断用户的意图（特别地，如果用户说的话询问机器人是否能执行某个具体的动作，也请判断为对应的指令；但如果用户是询问能否做一些动作或者表演几个动作，请判断为聊天）
         如果你判断意图为聊天，请正常输出回答，intent设置为chat，action设置为unknown，confidence设置为1.0，description设置为识别到的意图或动作
-        如果你判断意图为指令，请输出JSON格式，intent设置为command，action设置为识别到的动作，confidence设置为1.0，description设置为识别到的意图或动作，指令对应的动作类型只包括greet, shake_head, nod, bow,others这五种动作，前面四种就是具体的动作，而others就是除了前面四种动作之外的所有动作，比如握手就属于others。
+        如果你判断意图为指令，请输出JSON格式，intent设置为command，action设置为识别到的动作，obj_name设置为识别到的饮料，num设置为要拿的饮料数量，confidence设置为1.0，description设置为识别到的意图或动作，指令对应的动作类型只包括greet, shake_head, nod, bow, get_drink, others这六种动作，前面五种就是具体的动作，而others就是除了前面五种动作之外的所有动作，比如握手就属于others。
         但是请注意让你讲一些东西不算动作，比如背诵、讲一个xx、介绍一个xx这种，这些要判断为chat。
         另外打招呼这个动作和摆摆手这个动作是等价的，所以打招呼和摆摆手都对应greet动作类型。
         如果你判断意图为指令，输出的标准格式如下：
         {{
             "intent": "command"或"chat",
-            "action": "动作类型（仅当intent为command时有效，使用英文描述，动作类型只有可能是：greet, shake_head, nod, bow, others）",
+            "action": "动作类型（仅当intent为command时有效，使用英文描述，动作类型只有可能是：greet, shake_head, nod, bow, get_drink, others）",
+            "obj_name": "饮料类型（仅当action为get_drink时有效，使用中文描述，饮料类型只有可能是：{self.drink_list}这四种）",
+            "num": "数量（仅当action为get_drink时有效，使用数字描述，如1，2，3，4，5，6，7，8，9，10）",
             "confidence": 0.0到1.0之间的置信度,
             "description": "意图或动作描述"
         }}
