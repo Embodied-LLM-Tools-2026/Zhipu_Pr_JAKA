@@ -1,11 +1,12 @@
 from math import fabs
+import re
 import socket
 import json
 import time
 import struct
 import signal
 import sys
-
+import numpy as np
 PACK_FMT_STR = '!BBHLH6s'
 
 class AGVClient:
@@ -353,17 +354,18 @@ class AGVClient:
         "task_id": "12344321"
         }
         response = self.send_message(3051, msg_data, socket_type=2)
-        if response:
-            print(f"导航指令({x,y})发送成功，响应内容：")
-            print(response)
-            # 等待导航完成
-            self._navigation_active = True
-            try:
-                self.navigation_locker()
-            finally:
-                self._navigation_active = False
-        else:
-            print("任务发送失败")
+        # if response:
+        #     print(f"导航指令({x,y})发送成功，响应内容：")
+        #     print(response)
+        #     # 等待导航完成
+        #     self._navigation_active = True
+        #     try:
+        #         self.navigation_locker()
+        #     finally:
+        #         self._navigation_active = False
+        # else:
+        #     print("任务发送失败")
+        print(response)
         return 
     
     def go_to_target_LM(self, source_id, id):
@@ -386,6 +388,22 @@ class AGVClient:
             print(response)
         else:
             print("任务发送失败")
+
+    def go_to_point_in_world_delta(self, delta_x, delta_y):
+        msg_data = {"dist":np.sqrt(delta_x*delta_x+delta_y*delta_y),"vx":delta_x/np.sqrt(delta_x*delta_x+delta_y*delta_y),"vy":delta_y/np.sqrt(delta_x*delta_x+delta_y*delta_y)}
+        response = self.send_message(3055, msg_data, socket_type=2)
+        if response:
+            print(f"导航指令({delta_x},{delta_y})发送成功，响应内容：")
+            print(response)
+            # 等待导航完成
+            self._navigation_active = True
+        #     try:
+        #         self.navigation_locker()
+        #     finally:
+        #         self._navigation_active = False
+        # else:
+        #     print("任务发送失败")
+        return 
 
     def cancel_navigation(self):
         response = self.send_message(3003, socket_type=2)
@@ -422,6 +440,16 @@ def main():
             x, y, angle = pose_result
             print(f"agv在世界坐标系下的位置为:({x},{y}), 旋转角为:{angle}")
 
+        # for i in range(1):
+        #     x, y, angle = agv.get_pose()
+        #     print(f"agv在世界坐标系下的位置为:({x},{y}), 旋转角为:{angle}")
+
+        #     delta_x = (x+0.08)
+        #     delta_y = (y+0.035)
+        #     agv.go_to_point_in_world_delta(delta_x, delta_y)
+        #     time.sleep(1)
+
+
         # ==========导航==========
         # 回到地图0点，请确认0点位置安全后运行
         #agv.go_to_point_in_world(0,0,0)
@@ -429,7 +457,9 @@ def main():
         #agv.go_to_point_in_world(-0.8328,-0.0176,3.1252)
         # 向前移动1m，请确认目标安全后运行
         #agv.go_to_point_in_robot(1,0,0)
-        agv.go_to_target_LM("LM1", "LM2")
-
+        # agv.go_to_target_LM("LM1", "LM2")
+        # agv.go_to_point_in_world(-0.080, -0.035, -0.0202458)
+        # while 
+        # agv.go_to_point_in_world_delta(0.0001, -0.0001)
 if __name__ == '__main__':
     main()
