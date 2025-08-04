@@ -14,7 +14,7 @@ if not cap.isOpened():
     exit()
 
 # 指定字典类型
-dict_type = cv2.aruco.DICT_4X4_1000
+dict_type = cv2.aruco.DICT_6X6_1000
 
 # 加载预定义字典
 dictionary = cv2.aruco.getPredefinedDictionary(dict_type)
@@ -33,6 +33,16 @@ aruco_params.minDistanceToBorder = 0
 
 # 创建Aruco检测器
 detector = cv2.aruco.ArucoDetector(dictionary, aruco_params)
+
+# 添加相机参数（实际校准值）
+camera_matrix = np.array([[547.5700824698947, 0.0, 314.70719414532533], 
+                          [0.0, 546.8945958211962, 242.9467184746241], 
+                          [0.0, 0.0, 1.0]], dtype=np.float32)
+                          
+dist_coeffs = np.zeros(5, dtype=np.float32)  # 畸变系数
+
+# ArUco标记的实际大小（米），用户提供的值
+marker_length = 0.1  # 实际大小：100mm x 100mm
 
 print("Press 'q' to quit")
 
@@ -98,6 +108,42 @@ while True:
             cv2.circle(frame, (cx, cy), 3, (0, 0, 255), -1)
             cv2.line(frame, (cx, cy), (int(c[0][0]), int(c[0][1])), (255, 0, 0), 2)
             cv2.line(frame, (cx, cy), (int(c[1][0]), int(c[1][1])), (0, 255, 0), 2)
+        
+        # 定义ArUco标记的3D对象点（假设标记是平面的，Z=0）
+        half_len = marker_length / 2.0
+        obj_points = np.array([
+            [-half_len, half_len, 0],
+            [half_len, half_len, 0],
+            [half_len, -half_len, 0],
+            [-half_len, -half_len, 0]
+        ], dtype=np.float32)
+
+        rvecs = []
+        tvecs = []
+        for i in range(len(ids)):
+            img_points = corners[i][0]  # 当前标记的四个角点
+            success, rvec, tvec = cv2.solvePnP(obj_points, img_points, camera_matrix, dist_coeffs)
+            if success:
+                rvecs.append(rvec)
+                tvecs.append(tvec)
+            else:
+                print(f"位姿估计失败 for marker ID: {ids[i][0]}")
+                continue
+
+        # 为每个标记绘制坐标轴并显示位姿
+        for i in range(len(rvecs)):
+            # 绘制坐标轴
+            cv2.drawFrameAxes(frame, camera_matrix, dist_coeffs, rvecs[i], tvecs[i], marker_length * 0.5)
+            
+            # 计算并显示位姿信息
+            pos_text = f"Pos: {tvecs[i][0][0]:.2f}, {tvecs[i][1][0]:.2f}, {tvecs[i][2][0]:.2f}"
+            rot_text = f"Rot: {rvecs[i][0][0]:.2f}, {rvecs[i][1][0]:.2f}, {rvecs[i][2][0]:.2f}"
+            
+            # 在图像上显示（调整位置以避免重叠）
+            cv2.putText(frame, pos_text, (int(corners[i][0][0][0]), int(corners[i][0][0][1]) + 55),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 255), 2)
+            cv2.putText(frame, rot_text, (int(corners[i][0][0][0]), int(corners[i][0][0][1]) + 75),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 255), 2)
         
         # 在右上角显示详细信息
         if len(detected_markers) > 0:
