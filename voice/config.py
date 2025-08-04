@@ -62,15 +62,21 @@ class Config:
         "shake_head": "摇头",
         "nod": "点头",
         "bow": "鞠躬",
-        # "get_drink": "拿饮料",
+        "get_drink": "拿饮料",
         # "others": "其他",
     }
 
     # 饮料
     drink_list = ["可乐", "雪碧", "柠檬茶", "奶茶"]
+    drink_layer_mapping = {
+        "奶茶": [2,28-5],
+        "柠檬茶": [3,0,-5],
+        "雪碧": [4,0,130],
+        "可乐": [5,0,450]
+    }
 
     # 实机还是模拟
-    ROBOT_AVAILABLE = True #调试时要模拟执行动作就改为False
+    ROBOT_AVAILABLE = False #调试时要模拟执行动作就改为False
     
     @classmethod
     def setup_environment(cls):
