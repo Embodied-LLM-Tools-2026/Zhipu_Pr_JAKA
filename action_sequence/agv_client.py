@@ -487,7 +487,7 @@ class AGVClient:
             return False
     
     # ========== 基础运动控制方法 ==========
-    def translate(self, dist, vx=None, vy=None, mode=0):
+    def translate(self, dist, vx=None, vy=None, mode=1):
         """
         平动控制
         
@@ -516,7 +516,7 @@ class AGVClient:
             print(f"平动指令发送失败: {response}")
             return False
     
-    def rotate(self, angle, vw, mode=0):
+    def rotate(self, angle, vw, mode=1):
         """
         转动控制
         
@@ -543,7 +543,7 @@ class AGVClient:
             print(f"转动指令发送失败: {response}")
             return False
     
-    def rotate_in_place(self, turns=1, angular_velocity=1.0, mode=0):
+    def rotate_in_place(self, turns=1.0, angular_velocity=1.0, mode=1):
         """
         原地转圈
         
@@ -560,6 +560,63 @@ class AGVClient:
         vw = angular_velocity if turns > 0 else -angular_velocity
         
         return self.rotate(angle, vw, mode)
+    
+    def spin_tray(self, increase_angle=None, robot_angle=None, global_angle=None, direction=0):
+        """
+        托盘旋转控制
+        
+        Args:
+            increase_angle (float): 在当前托盘角度基础上增加的角度，单位rad
+                                   正数=逆时针，负数=顺时针
+            robot_angle (float): 将托盘转到机器人坐标系下的目标角度，单位rad
+            global_angle (float): 将托盘转到世界坐标系下的目标角度，单位rad
+            direction (int): 旋转方向，0=就近，1=逆时针，-1=顺时针
+                            仅在使用robot_angle或global_angle时有效
+        
+        Returns:
+            bool: 是否成功
+            
+        Note:
+            - 三种角度参数只能指定一种
+            - 托盘旋转不能与平动(3055)、转动(3056)、其他托盘操作(3058)同时进行
+        """
+        msg_data = {}
+        
+        # 检查参数互斥性
+        angle_params = [increase_angle, robot_angle, global_angle]
+        non_none_params = [p for p in angle_params if p is not None]
+        
+        if len(non_none_params) == 0:
+            print("托盘旋转控制需要指定至少一个角度参数")
+            return False
+        elif len(non_none_params) > 1:
+            print("托盘旋转控制只能指定一种角度参数")
+            return False
+        
+        # 设置消息数据
+        if increase_angle is not None:
+            msg_data['increase_spin_angle'] = increase_angle
+            print(f"托盘增量旋转: {increase_angle}rad ({'逆时针' if increase_angle > 0 else '顺时针'})")
+        elif robot_angle is not None:
+            msg_data['robot_spin_angle'] = robot_angle
+            if direction != 0:
+                msg_data['spin_direction'] = direction
+            direction_str = {0: '就近', 1: '逆时针', -1: '顺时针'}.get(direction, '未知')
+            print(f"托盘转到机器人坐标系角度: {robot_angle}rad ({direction_str})")
+        elif global_angle is not None:
+            msg_data['global_spin_angle'] = global_angle
+            if direction != 0:
+                msg_data['spin_direction'] = direction
+            direction_str = {0: '就近', 1: '逆时针', -1: '顺时针'}.get(direction, '未知')
+            print(f"托盘转到世界坐标系角度: {global_angle}rad ({direction_str})")
+        
+        response = self.send_message(3057, msg_data, socket_type=1)
+        if response and response.get('ret_code') == 0:
+            print("托盘旋转指令发送成功")
+            return True
+        else:
+            print(f"托盘旋转指令发送失败: {response}")
+            return False
     
     # ========== 高级导航方法 ==========
     def navigate_path(self, move_task_list):
