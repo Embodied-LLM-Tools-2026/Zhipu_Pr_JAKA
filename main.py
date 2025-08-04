@@ -50,8 +50,8 @@ from dotenv import load_dotenv
 load_dotenv()
 
 os.environ['TORCH_HUB_OFFLINE'] = '1'  # 强制torch hub离线模式,silero-vad模型就不需要联网加载权重
-# import torch
-# import sys
+import torch
+import sys
 
 # 将父目录临时注册为系统路径，方便python导入模块
 # parent_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
@@ -137,6 +137,8 @@ class VoiceRobotController:
         
         # 初始化机器人控制器
         self.robot_controller = ActionExecuter(robot_ip_left, robot_ip_right, deps.robot_available)
+
+        # 性能优化：预缓存拖延语音频
         self.delay_phrase_cache = {}
         self._preload_delay_phrases()
         
@@ -530,6 +532,32 @@ class VoiceRobotController:
         # 所有音频播放完成，开始计时
         self._start_response_cycle_timing()
     
+    def _split_text_by_commas(self, text: str) -> list:
+        """按逗号分割文本，保持语义完整性（保留用于兼容性）"""
+        if not text:
+            return []
+        
+        # 中文标点符号
+        chinese_punctuation = ['，', '。', '！', '？', '；', '：']
+        
+        segments = []
+        current_segment = ""
+        
+        for char in text:
+            current_segment += char
+            
+            # 遇到逗号或其他标点符号时分割
+            if char in chinese_punctuation:
+                if current_segment.strip():
+                    segments.append(current_segment.strip())
+                current_segment = ""
+        
+        # 添加最后一个片段
+        if current_segment.strip():
+            segments.append(current_segment.strip())
+        
+        return segments
+    
     def process_voice_command(self) -> bool:
         """处理单次语音指令（状态机模式）"""
         # 时间统计
@@ -550,7 +578,7 @@ class VoiceRobotController:
             return False
     
     def _get_voice_input(self) -> str:
-        """获取语音输入或文本输入"""
+        """获取语音输入或文本输入并用ASR转换成文本"""
         if not self.recorder:
             # 文本输入模式
             if self.robot_state == "sleeping":
@@ -670,40 +698,26 @@ class VoiceRobotController:
             print("😴 机器人还在休眠中，请说唤醒词：小拓同学")
             return False
     
-    def _handle_awake_state(self, text: str) -> bool:
-        """处理唤醒状态的输入"""
-        return self._process_action_or_dismiss(text)
-    
-    # 一边播放音频，一边执行动作
-    def _play_audio_and_execute_action(self, audio_text: str, action: str) -> bool:
-        """一边播放音频，一边执行动作"""
-        # 创建音频播放线程
+    # 同时播放音频和执行动作
+    def _play_and_execute_action(self, audio_text: str, action: str) -> bool:
+        """同时播放音频和执行动作"""
         def play_audio_thread():
             self._play_cached_audio(audio_text)
-        
-        # 创建打招呼动作线程
         def execute_action_thread():
-            print(f"👋 执行动作: {action}")
-            nod_success = self.robot_controller.execute_action(action)
-            if nod_success:
-                print("✅ 动作执行成功")
+            success = self.robot_controller.execute_action(action)
+            if success:
+                print(f"✅ {action}动作执行成功")
             else:
-                print("❌ 动作执行失败")
-        
-        # 启动两个线程同时执行
+                print(f"❌ {action}动作执行失败")
         audio_thread = threading.Thread(target=play_audio_thread)
         action_thread = threading.Thread(target=execute_action_thread)
-        
         audio_thread.start()
         action_thread.start()
-        
-        # 等待两个线程都完成
         audio_thread.join()
         action_thread.join()
 
-    # 处理动作指令，接入后面的视觉模块和动作执行
-    def _process_action_or_dismiss(self, text: str) -> bool:
-        """处理动作指令或退下指令"""
+    def _handle_awake_state(self, text: str) -> bool:
+        """处理正常聊天或动作指令或退下指令"""
         if not text.strip():
             print("未识别到有效文本")
             return False
@@ -737,8 +751,7 @@ class VoiceRobotController:
         if self.wake_matcher and self.wake_matcher.detect_dismiss_command(text):
             print("🤖 好的，我去休息了。需要时请叫我！")
 
-            # 同时执行语音播放和打招呼动作
-            self._play_audio_and_execute_action("好的，我去休息了。需要时请叫我！", "nod")
+            self._play_and_execute_action("好的，我去休息了。需要时请叫我！", "nod")
             
             # 切换到休眠状态
             self.robot_state = "sleeping"
@@ -756,9 +769,6 @@ class VoiceRobotController:
     
     def _process_action_command(self, text: str) -> bool:
         """处理动作指令（带拖延语机制，LLM+TTS整体流程超时1.5秒自动插入拖延语）"""
-        
-        
-        
         # 性能监控 - 在函数最开头定义，确保所有代码路径都能访问
         total_start_time = time.time()
         print(f"⏱️ 开始处理指令: {text[:30]}...")
@@ -794,7 +804,8 @@ class VoiceRobotController:
         print("🧠 正在调用LLM处理指令...")
         llm_start_time = time.time()
         command_result = self.processor.process_command(text)
-        action = command_result.get("action", "unknown")
+        intent = command_result.get("intent", "unknown") # 意图
+        action = command_result.get("action", "unknown") # 具体动作
         confidence = command_result.get("confidence", 0.0)
         description = command_result.get("description", "未知")
         llm_end_time = time.time()
@@ -816,7 +827,7 @@ class VoiceRobotController:
         # 记录音频文件路径用于计算播放时长
         audio_file_path = None
         
-        if command_result.get("intent", "unknown") == "command":
+        if intent == "command":
             print(f"🎯 识别动作: {description} (置信度: {confidence:.2f})")
             print("🎵 开始异步TTS生成和播放（同时预热VAD）...")
             
@@ -829,7 +840,7 @@ class VoiceRobotController:
         tts_play_start_time = time.time()
         tts_prepare_duration = tts_play_start_time - tts_start_time
 
-        if command_result.get("intent", "unknown") == "command" and (action == "unknown" or confidence < 0.5):
+        if intent == "command" and (action == "unknown" or confidence < 0.5):
             print("❓ 抱歉，我不理解这个指令，请重新说一遍")
             error_audio_path = self._play_cached_audio("抱歉，我不理解这个指令，请重新说一遍")
             
@@ -848,10 +859,10 @@ class VoiceRobotController:
             return False
 
         # 执行动作
-        if command_result.get("intent", "unknown") == "command":
+        if intent == "command":
             if action not in Config.ACTION_MAP.keys():
                 print("💬 这个动作我还不会哦，不过我会抓紧学习的")
-                self._play_audio_and_execute_action("这个动作我还不会哦，不过我会抓紧学习的", "shake_head")
+                self._play_and_execute_action("这个动作我还不会哦，不过我会抓紧学习的", "shake_head")
                 success = True
             else:
                 # 区分拿饮料和非拿饮料
@@ -860,7 +871,7 @@ class VoiceRobotController:
                     num = int(command_result.get("num", "0"))
                     if obj_name not in Config.drink_list:   
                         print("💬 我们这里没有这种饮料哦")
-                        error_audio_path = self._play_cached_audio("我们这里没有这种饮料哦")
+                        self._play_and_execute_action("我们这里没有这种饮料哦", "shake_head")
                         success = True
                     else:
                         # # 获取饮料层数

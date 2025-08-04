@@ -5,6 +5,7 @@
 ```bash
 conda create --name pr python=3.10
 pip install -r requirements.txt
+python -c "import torch; torch.hub.load('snakers4/silero-vad', 'silero_vad')" #下载VAD模型
 ```
 ## windows 安装xapi
 ```bash
