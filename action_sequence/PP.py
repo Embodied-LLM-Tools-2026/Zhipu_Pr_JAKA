@@ -60,15 +60,21 @@ def pick_1_5(handle_L,handle_R,hand_l, hand_r, add_data):
     delta_y = (y+0.035)*1000 #-0.0376+0.035=-0.0026
 
     # 到达和货架同一高度
+    pick_0 = x5.Joint(j1 = 99.772, j2 = -11.213, j3 = 31.413, j4 = -85.976, 
+     j5 = -24.194, j6 = -57.412, e1 = -73.696, e2=0, e3=450)
+    x5.movj(handle_R, pick_0, add_data)
+    x5.wait_move_done(handle_R)
+
+    # 到达和货架同一高度
     pick_1 = x5.Joint(j1 = 101.021, j2 = 6.288, j3 = 14.716, j4 = -84.667, 
      j5 = -23.874, j6 = -27.920, e1 = 17.289-90, e2=0, e3=450)
     x5.movj(handle_R, pick_1, add_data)
     x5.wait_move_done(handle_R)
 
-    # 到达抓取点位（预设未调整）
-    pick_2 = x5.Joint(j1 =102.436,j2 = -66.410, j3 = 7.210, j4 = -9.507, 
-     j5 = -8.365, j6 = -22.865, e1 = -88.701, e2=0, e3=450)
-    pick_2_pose = x5.Pose(x=143.615, y=-622.309, z=152.984, a=98.703, b=0.221, c=13.085, e1=7.010, e2=0, e3=450)
+    # 到达抓取点位（预设未调整） new
+    pick_2 = x5.Joint(j1 =119.698,j2 = -39.530, j3 = -23.615, j4 = -59.361, 
+     j5 = 11.857, j6 = -6.561, e1 = -84.501, e2=0, e3=450)
+    pick_2_pose = x5.Pose(x=153.800, y=-528.378, z=174.374, a=102.804, b=-2.376, c=8.520, e1=-16.605, e2=0, e3=450)
     pick_2_point = x5.Point(pose=pick_2_pose, uf=0, tf=0, cfg=(0,0,0,7))
 
     # 计算新的调整后的抓取点位
@@ -82,16 +88,16 @@ def pick_1_5(handle_L,handle_R,hand_l, hand_r, add_data):
 
     jp1 = x5.cnvrt_j(handle_R, new_pick_2_point, 0, pick_2)
 
-    # # print(jp3)
+#     # # print(jp3)
     x5.movj(handle_R, pick_2, add_data)
     x5.wait_move_done(handle_R)
     # grasp
     hand_r.setpos(472,509,589,670,736,0)
     time.sleep(1)
 
-    # 升起
-    pick_3 = x5.Joint(j1 =106.506,j2 = -51.921, j3 = 8.036, j4 = -37.324, 
-     j5 = -23.874, j6 = -9.847, e1 = 17.289-90, e2=0, e3=450)
+    # 升起 new
+    pick_3 = x5.Joint(j1 =140.679,j2 = -24.452, j3 = -30.001, j4 = -56.009, 
+     j5 = -21.567, j6 = -29.905, e1 = -53.686, e2=0, e3=450)
     x5.movj(handle_R, pick_3, add_data)
     x5.wait_move_done(handle_R)
 
@@ -128,6 +134,10 @@ def pick_1_5(handle_L,handle_R,hand_l, hand_r, add_data):
      j5 = 117.431, j6 = -88.0, e1 = -137.357, e2=0, e3=160)
     x5.movj(handle_R, pick_8, add_data)
     x5.wait_move_done(handle_R)
+
+
+
+
 
 def move_to_pick_height_pitch_angle(handle_L,handle_R,hand_l, hand_r, add_data, height, pitch_angle):
     """
@@ -169,11 +179,11 @@ def main():
         print(agv.get_pose())
     # time.sleep(35)
 
-    # init_robot(handle_l, handle_r, add_data_1)
+    init_robot(handle_l, handle_r, add_data_1)
 
-    # pick_1_5(handle_l, handle_r, hand_l, hand_r, add_data_1)
+    pick_1_5(handle_l, handle_r, hand_l, hand_r, add_data_1)
     # move_to_pick_height_pitch_angle(handle_l, handle_r, hand_l, hand_r, add_data_1, 200, 0)
-    # init_robot(handle_l, handle_r, add_data_1)
+    init_robot(handle_l, handle_r, add_data_1)
 
 
 if __name__ == "__main__":
