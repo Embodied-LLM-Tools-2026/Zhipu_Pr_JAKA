@@ -30,13 +30,17 @@ INIT_POS_L = x5.Pose(x=-200, y=245, z=5, a=120, b=5, c=115, e1=-90, e2=0, e3=0)
 INIT_POINT_L = x5.Point(pose=INIT_POS_L, uf=0, tf=0, cfg=(0,0,0,7))
 INIT_JOINT_L = x5.Joint(j1=4.927, j2=-80.496, j3=-97.021, j4=-87.812, j5=22.909, j6=-79.830, e1=-20.340+90, e2=0, e3=0)
 
-def init_robot(handle_l, handle_r, add_data):
+def init_robot(handle_l, handle_r, add_data, hand_l, hand_r):
     # 初始化左臂
     x5.movj(handle_l, INIT_JOINT_L, add_data)
     x5.wait_move_done(handle_l)
     # 初始化右臂
     x5.movj(handle_r, INIT_JOINT_R, add_data)
     x5.wait_move_done(handle_r)
+    hand_r.setpos(1000,1000,1000,1000,1000,0)
+    time.sleep(1)
+    hand_l.setpos(1000,1000,1000,1000,1000,0)
+    time.sleep(1)
 
 def safe_robot(handle_l, handle_r, add_data):
     # 初始化左臂
