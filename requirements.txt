@@ -41,6 +41,7 @@ zarr==2.13.3
 
 # 语音合成依赖
 edge-tts
+kokoro
 
 # 可选依赖
 # openai>=1.0.0   # OpenAI (备选)

@@ -1,6 +1,10 @@
 import os
 import time
 from utils import CrossPlatformAudioManager
+from kokoro import KPipeline, KModel
+import soundfile as sf
+import torch
+from config import Config
 # ================================
 # 文本转语音模块
 # ================================
@@ -15,6 +19,26 @@ class TextToSpeechEngine:
         
         # 使用跨平台音频管理器
         self.audio_manager = CrossPlatformAudioManager()
+
+        repo_id = 'hexgrad/Kokoro-82M-v1.1-zh'
+        model_path = 'ckpts/kokoro-v1.1/kokoro-v1_1-zh.pth'
+        config_path = 'ckpts/kokoro-v1.1/config.json'
+        device = 'cuda' if torch.cuda.is_available() else 'cpu'
+        model = KModel(model=model_path, config=config_path, repo_id=repo_id).to(device).eval()
+        self.zh_pipeline = KPipeline(lang_code='z', repo_id=repo_id, model=model)
+        voice_zf = "zf_022" #音色，待选6、19、22
+        self.voice_zf_tensor = torch.load(f'ckpts/kokoro-v1.1/voices/{voice_zf}.pt', weights_only=True)
+
+    def speed_callable(self,len_ps):
+        """
+        根据文本长度调整语速
+        """
+        speed = 0.8
+        if len_ps <= 83:
+            speed = 1
+        elif len_ps < 183:
+            speed = 1 - (len_ps - 83) / 500
+        return speed * 1.1
     
     def text_to_speech(self, text: str) -> str:
         """文本转语音，返回音频文件路径"""
@@ -35,9 +59,15 @@ class TextToSpeechEngine:
             async def create_speech():
                 voice = "zh-CN-XiaoxiaoNeural"
                 temp_mp3_path = path.replace('.wav', '.mp3')
-                # 语速调整为正常速度
-                communicate = edge_tts.Communicate(text, voice, rate='+0%')
-                await communicate.save(temp_mp3_path)
+                if Config.TTS_ENGINE == "kokoro":
+                    generator = self.zh_pipeline(text, voice=self.voice_zf_tensor, speed=self.speed_callable)
+                    result = next(generator)
+                    wav = result.audio
+                    sf.write(temp_mp3_path, wav, 24000)
+                else:
+                    # edge_tts，语速调整为正常速度
+                    communicate = edge_tts.Communicate(text, voice, rate='+0%')
+                    await communicate.save(temp_mp3_path)
                 
                 # 转换MP3到WAV格式，使用soundfile
                 try:
