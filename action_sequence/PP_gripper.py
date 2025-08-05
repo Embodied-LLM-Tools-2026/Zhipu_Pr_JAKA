@@ -100,13 +100,17 @@ def wave(handle_l, handle_r, add_data):
     x5.movj(handle_r, INIT_JOINT_R, add_data)
     x5.wait_move_done(handle_r)
 
+def move_to_shelf():
+    with AGVClient(ip='192.168.1.51') as agv:
+        agv.go_to_point_in_world(-0.255,-0.039,0, 1)
+
 def pick_1_5(handle_L,handle_R,add_data):
     """
     抓取
     """
     # 计算与目标参考点位的差值
     with AGVClient(ip='192.168.1.51') as agv:
-        agv.go_to_point_in_world(-0.255,-0.039,0, 1)
+        # agv.go_to_point_in_world(-0.255,-0.039,0, 1)
         pose_result = agv.get_pose()
         x, y, angle = pose_result
     delta_x = (x-0.019)*1000  #-0.0874+0.08=-0.0074
@@ -203,7 +207,7 @@ def pick_1_5(handle_L,handle_R,add_data):
 
 
 
-def move_to_pick_height_pitch_angle(handle_L,handle_R,hand_l, hand_r, add_data, height, pitch_angle):
+def move_to_pick_height_pitch_angle(handle_L,handle_R,add_data, height, pitch_angle):
     """
     到达抓取的高度和头的俯仰角
     """

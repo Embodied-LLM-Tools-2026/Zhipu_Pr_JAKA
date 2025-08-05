@@ -15,8 +15,8 @@ class Config:
     ZAI_API_KEY = os.getenv("ZAI_API_KEY")
     
     # 机器人默认配置
-    ROBOT_IP_LEFT = "192.168.1.7"
-    ROBOT_IP_RIGHT = "192.168.1.8"
+    ROBOT_IP_LEFT = "192.168.1.9"
+    ROBOT_IP_RIGHT = "192.168.1.10"
     
     # 音频配置
     AUDIO_SAMPLE_RATE = 16000
@@ -76,7 +76,7 @@ class Config:
     }
 
     # 实机还是模拟
-    ROBOT_AVAILABLE = True #调试时要模拟执行动作就改为False
+    ROBOT_AVAILABLE = False #调试时要模拟执行动作就改为False
     
     @classmethod
     def setup_environment(cls):
