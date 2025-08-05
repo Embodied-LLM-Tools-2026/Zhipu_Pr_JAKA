@@ -6,6 +6,8 @@
 conda create --name pr python=3.10
 pip install -r requirements.txt
 python -c "import torch; torch.hub.load('snakers4/silero-vad', 'silero_vad')" #下载VAD模型
+export HF_ENDPOINT=https://hf-mirror.com
+huggingface-cli download --resume-download hexgrad/Kokoro-82M-v1.1-zh --local-dir ./ckpts/kokoro-v1.1
 ```
 ## windows 安装xapi
 ```bash

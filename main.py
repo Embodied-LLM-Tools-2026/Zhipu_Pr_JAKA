@@ -851,8 +851,8 @@ class VoiceRobotController:
         # 执行动作
         if intent == "command":
             if action not in Config.ACTION_MAP.keys():
-                print("💬 这个动作我还不会哦，不过我会抓紧学习的")
-                self._play_and_execute_action("这个动作我还不会哦，不过我会抓紧学习的", "shake_head")
+                print("💬 这个动作我还不会，不过我会抓紧学习的")
+                self._play_and_execute_action("这个动作我还不会，不过我会抓紧学习的", "shake_head")
                 success = True
             else:
                 # 区分拿饮料和非拿饮料
@@ -860,8 +860,8 @@ class VoiceRobotController:
                     obj_name = command_result.get("obj_name", "unknown")
                     num = int(command_result.get("num", "0"))
                     if obj_name not in Config.drink_list:   
-                        print("💬 我们这里没有这种饮料哦")
-                        self._play_and_execute_action("我们这里没有这种饮料哦", "shake_head")
+                        print("💬 我们这里没有这种饮料")
+                        self._play_and_execute_action("我们这里没有这种饮料", "shake_head")
                         success = True
                     else:
                         # 获取饮料层数及对应的机器人头部俯仰角和身躯高度
@@ -877,8 +877,8 @@ class VoiceRobotController:
                             audio_file_path = self._play_cached_audio("好的", tts_ready_callback=tts_ready_callback)
                             self.robot_controller.execute_get_drink(pos_list=pos_list,layer_number=layer_number)
                         else:
-                            print("💬 不好意思，饮料不够了哦")
-                            self._play_cached_audio("不好意思，饮料不够了哦")
+                            print("💬 不好意思，饮料不够了")
+                            self._play_cached_audio("不好意思，饮料不够了")
                         success = True
                 else:
                     audio_file_path = self._play_cached_audio("好的", tts_ready_callback=tts_ready_callback)
