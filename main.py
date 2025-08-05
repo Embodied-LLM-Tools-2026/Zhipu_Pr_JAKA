@@ -872,7 +872,7 @@ class VoiceRobotController:
                         pos_list = self.obj_locater.observe(obj_name, num)
                         print(f"💬 所在的层数：{layer_number}, 机器人头部俯仰角：{head_angle}, 机器人身躯高度：{body_distance}")
                         print(f"💬 饮料位置: {pos_list}")
-                        if pos_list is not None:
+                        if len(pos_list) > 0:
                             audio_file_path = self._play_cached_audio("好的", tts_ready_callback=tts_ready_callback)
                             self.robot_controller.execute_get_drink(pos_list=pos_list,layer_number=layer_number)
                         else:
