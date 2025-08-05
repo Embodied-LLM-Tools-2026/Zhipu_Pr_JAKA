@@ -315,7 +315,10 @@ class AGVClient:
                 "theta": theta,
                 "reachAngle": 0.001,
                 "reachDist": 0.001,
-                "coordinate": "robot"
+                "coordinate": "robot",
+                "backMode": 0,
+                "useOdo": 0,
+                "hold_dir": 0
             },
             "operation": "Script",
             "id": "SELF_POSITION",
@@ -345,7 +348,10 @@ class AGVClient:
             "theta": theta,
             "reachAngle": 0.001,
             "reachDist": 0.001,
-            "coordinate": "world"
+            "coordinate": "world",
+            "backMode": 0,
+            "useOdo": 0,
+            "hold_dir": 0
         },
         "operation": "Script",
         "id": "SELF_POSITION",
