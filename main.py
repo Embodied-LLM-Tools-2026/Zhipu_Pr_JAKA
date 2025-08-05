@@ -870,6 +870,7 @@ class VoiceRobotController:
                         self.robot_controller.execute_get_drink(head_angle=head_angle, body_distance=body_distance)
                         # 获取饮料位置
                         pos_list = self.obj_locater.observe(obj_name, num)
+                        pos_list = [5]
                         print(f"💬 所在的层数：{layer_number}, 机器人头部俯仰角：{head_angle}, 机器人身躯高度：{body_distance}")
                         print(f"💬 饮料位置: {pos_list}")
                         if len(pos_list) > 0:
