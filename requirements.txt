@@ -1,46 +1,46 @@
-# # 基础依赖
-# python-dotenv==1.1.1
-# numpy==1.23.0
+# 基础依赖
+python-dotenv==1.1.1
+numpy
 
-# # 音频处理依赖
-# pyaudio==0.2.14
-# sounddevice==0.5.2
-# soundfile==0.13.1
-# librosa==0.10.0
-# resampy==0.4.3
-# soxr==0.5.0.post1
+# 音频处理依赖
+pyaudio==0.2.14
+sounddevice==0.5.2
+soundfile==0.13.1
+librosa==0.10.0
+resampy==0.4.3
+soxr==0.5.0.post1
 
-# # 大模型方案依赖 (V_sense.py使用)
-# funasr==1.2.6
-# modelscope==1.28.1
+# 大模型方案依赖 (V_sense.py使用)
+funasr==1.2.6
+modelscope==1.28.1
 
-# # 传统方案依赖
-# SpeechRecognition==3.14.3
+# 传统方案依赖
+SpeechRecognition==3.14.3
 
-# # 中文NLP依赖
-# jieba==0.42.1
-# pypinyin==0.55.0
+# 中文NLP依赖
+jieba==0.42.1
+pypinyin==0.55.0
 
-# # LLM依赖
-# zhipuai==2.1.5.20250717  # 智谱AI GLM-4-Air
+# LLM依赖
+zhipuai==2.1.5.20250717  # 智谱AI GLM-4-Air
 
-# # 深度学习依赖
-# --find-links https://download.pytorch.org/whl/cu128
-# torch
-# torchvision
-# torchaudio
+# 深度学习依赖
+--find-links https://download.pytorch.org/whl/cu128
+torch
+torchvision
+torchaudio
 
-# # 科学计算依赖
-# scipy==1.11.4
-# matplotlib==3.8.4
-# zarr==2.13.3
+# 科学计算依赖
+scipy==1.11.4
+matplotlib==3.8.4
+zarr==2.13.3
 
-# # VAD依赖 (V.py和V_sense.py使用)
-# # silero-vad==5.1.2
-# # webrtcvad==2.0.10  # 已弃用，使用 silero-vad 替代
+# VAD依赖 (V.py和V_sense.py使用)
+# silero-vad==5.1.2
+# webrtcvad==2.0.10  # 已弃用，使用 silero-vad 替代
 
-# # 语音合成依赖
-# edge-tts
+# 语音合成依赖
+edge-tts
 
 # 可选依赖
 # openai>=1.0.0   # OpenAI (备选)
