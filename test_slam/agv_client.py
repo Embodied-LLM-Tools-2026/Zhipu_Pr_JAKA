@@ -5,6 +5,7 @@ import time
 import struct
 import signal
 import sys
+import numpy as np
 
 PACK_FMT_STR = '!BBHLH6s'
 
@@ -785,6 +786,349 @@ class AGVClient:
         # 最后导航到目标点
         print(f"导航到目标点: ({x}, {y}, {theta})")
         return self.go_to_point_in_world(x, y, theta) 
+
+    def get_station_info(self):
+        """
+        获取地图中所有站点信息
+        Returns:
+            list: 站点信息列表，每个站点包含 id, type, x, y, r, desc
+        """
+        response = self.send_message(1301, socket_type=0)
+        if response and response.get('ret_code') == 0:
+            return response.get('stations', [])
+        else:
+            print(f"获取站点信息失败: {response}")
+            return []
+
+    def find_station_coordinates(self, station_id):
+        """
+        查询指定站点的坐标
+        Args:
+            station_id (str): 站点ID
+        Returns:
+            tuple: (x, y, r) 或 None
+        """
+        stations = self.get_station_info()
+        for station in stations:
+            if station['id'] == station_id:
+                return station['x'], station['y'], station['r']
+        print(f"未找到站点 {station_id}")
+        return None
+
+    def navigate_between_stations_method1(self, source_id, target_id):
+        """
+        第一种方法：基于go_to_target_LM的监控导航
+        直接调用go_to_target_LM，并时刻查询导航状态来打印当前target_point
+        
+        Args:
+            source_id (str): 起始站点ID
+            target_id (str): 目标站点ID
+        Returns:
+            bool: 导航是否成功
+        """
+        print(f"========== 开始站点导航（方法1）：{source_id} -> {target_id} ==========")
+        
+        # 调用原有的go_to_target_LM方法
+        msg_data = {
+            "source_id": source_id,
+            "id": target_id,
+            "method": "backward",
+            "max_speed": 0.2,
+            "max_wspeed": 0.2,
+            "max_acc": 0.1,
+            "max_wacc": 0.1,
+            "duration": 100,
+            # "orientation": 90,
+            "spin": True
+        }
+        
+        response = self.send_message(3051, msg_data, socket_type=2)
+        if not response:
+            print("导航指令发送失败")
+            return False
+        
+        print(f"导航指令发送成功，开始监控导航状态...")
+        print(f"响应内容: {response}")
+        
+        # 开始监控导航状态和目标点
+        self._navigation_active = True
+        try:
+            while True:
+                # 获取详细导航状态（包含target_point）
+                status_result = self.get_navigation_status(simple=False)
+                
+                if status_result is None:
+                    print("无法获取导航状态")
+                    break
+                
+                status, task_type, target_point = status_result
+                
+                # 打印当前导航状态和目标点
+                print(f"导航状态: {status}, 任务类型: {task_type}")
+                if target_point:
+                    print(f"当前目标点坐标: x={target_point[0]:.4f}, y={target_point[1]:.4f}, θ={target_point[2]:.4f}")
+                
+                # 判断导航状态
+                if status == 0:
+                    print("导航状态：AGV未进行导航")
+                    break
+                elif status == 2:
+                    print("导航状态：AGV正在导航中...")
+                elif status == 3:
+                    print("导航状态：AGV暂停导航")
+                    break
+                elif status == 4:
+                    print("导航状态：AGV完成导航")
+                    print(f"✅ 成功到达目标站点 {target_id}")
+                    return True
+                elif status == 5:
+                    print("导航状态：AGV导航失败")
+                    return False
+                elif status == 6:
+                    print("导航状态：AGV取消导航")
+                    return False
+                else:
+                    print(f"导航状态：未知状态 {status}")
+                    break
+                
+                time.sleep(1)  # 每秒查询一次状态
+                
+        except KeyboardInterrupt:
+            print("\n用户中断导航")
+            self.cancel_navigation()
+            return False
+        finally:
+            self._navigation_active = False
+        
+        print("导航监控结束")
+        return False
+
+    def navigate_between_stations_method2(self, source_id, target_id):
+        """
+        第二种方法：分步导航
+        先查询目标站点坐标，然后先直线运动到位置，再旋转到角度
+        
+        Args:
+            source_id (str): 起始站点ID  
+            target_id (str): 目标站点ID
+        Returns:
+            bool: 导航是否成功
+        """
+        print(f"========== 开始站点导航（方法2）：{source_id} -> {target_id} ==========")
+        
+        # 1. 查询目标站点坐标
+        print(f"正在查询目标站点 {target_id} 的坐标...")
+        target_coords = self.find_station_coordinates(target_id)
+        if target_coords is None:
+            print(f"❌ 无法找到目标站点 {target_id} 的坐标")
+            return False
+        
+        target_x, target_y, target_r = target_coords
+        print(f"目标站点坐标: x={target_x:.4f}, y={target_y:.4f}, r={target_r:.4f}")
+        
+        # 2. 获取当前位置
+        current_pose = self.get_pose()
+        if current_pose is None:
+            print("❌ 无法获取当前位置")
+            return False
+        
+        current_x, current_y, current_angle = current_pose
+        print(f"当前位置: x={current_x:.4f}, y={current_y:.4f}, angle={current_angle:.4f}")
+        
+        # 3. 计算移动距离和角度差异
+        distance = np.sqrt((target_x - current_x)**2 + (target_y - current_y)**2)
+        angle_diff = abs(target_r - current_angle)
+        
+        print(f"需要移动距离: {distance:.4f}m, 角度调整: {angle_diff:.4f}rad")
+        
+        try:
+            # 4. 第一步：先移动到目标位置（只到达x,y，暂时不考虑角度）
+            print(f"步骤1: 移动到目标位置 ({target_x:.4f}, {target_y:.4f})")
+            
+            # 使用世界坐标导航，但保持当前角度
+            self.go_to_point_in_world(target_x, target_y, current_angle)
+            
+            # 等待第一步移动完成
+            print("等待位置移动完成...")
+            move_success = self._wait_for_navigation_complete()
+            
+            if not move_success:
+                print("❌ 移动到目标位置失败")
+                return False
+            
+            print("✅ 成功移动到目标位置")
+            
+            # 5. 第二步：旋转到目标角度
+            if angle_diff > 0.01:  # 只有角度差异大于0.01弧度才进行旋转
+                print(f"步骤2: 旋转到目标角度 {target_r:.4f}rad")
+                
+                # 计算需要旋转的角度
+                rotation_angle = target_r - current_angle
+                # 规范化角度到[-π, π]
+                while rotation_angle > np.pi:
+                    rotation_angle -= 2 * np.pi
+                while rotation_angle < -np.pi:
+                    rotation_angle += 2 * np.pi
+                
+                print(f"需要旋转角度: {rotation_angle:.4f}rad")
+                
+                # 使用delta移动进行最终的精确旋转定位
+                final_success = self.go_to_point_in_world(target_x, target_y, target_r)
+                
+                print("等待角度调整完成...")
+                rotation_success = self._wait_for_navigation_complete()
+                
+                if not rotation_success:
+                    print("❌ 角度调整失败")
+                    return False
+                
+                print("✅ 成功调整到目标角度")
+            else:
+                print("角度差异很小，无需调整")
+            
+            # 6. 验证最终位置
+            final_pose = self.get_pose()
+            if final_pose:
+                final_x, final_y, final_angle = final_pose
+                position_error = np.sqrt((final_x - target_x)**2 + (final_y - target_y)**2)
+                angle_error = abs(final_angle - target_r)
+                
+                print(f"最终位置: x={final_x:.4f}, y={final_y:.4f}, angle={final_angle:.4f}")
+                print(f"位置误差: {position_error:.4f}m, 角度误差: {angle_error:.4f}rad")
+                
+                # 判断是否到达目标精度
+                if position_error < 0.1 and angle_error < 0.1:
+                    print(f"✅ 成功到达目标站点 {target_id}（分步导航）")
+                    return True
+                else:
+                    print(f"⚠️  到达目标但精度不够，位置误差: {position_error:.4f}m, 角度误差: {angle_error:.4f}rad")
+                    return True  # 仍然算作成功，但精度不够
+            
+            return True
+            
+        except KeyboardInterrupt:
+            print("\n用户中断导航")
+            self.cancel_navigation()
+            return False
+        except Exception as e:
+            print(f"❌ 分步导航过程中出现异常: {e}")
+            return False
+
+    def _wait_for_navigation_complete(self, timeout=60):
+        """
+        等待导航完成的辅助方法
+        Args:
+            timeout (int): 超时时间（秒）
+        Returns:
+            bool: 导航是否成功完成
+        """
+        start_time = time.time()
+        
+        while time.time() - start_time < timeout:
+            status = self.get_navigation_status(simple=True)
+            
+            if status == 0:  # 未进行导航
+                return True
+            elif status == 4:  # 完成导航
+                return True
+            elif status == 5:  # 导航失败
+                print("导航失败")
+                return False
+            elif status == 6:  # 取消导航
+                print("导航被取消")
+                return False
+            elif status == 2:  # 正在导航
+                time.sleep(0.5)
+                continue
+            else:
+                time.sleep(0.5)
+                continue
+        
+        print("导航超时")
+        return False 
+
+def test_station_navigation():
+    """测试两种站点间导航方法"""
+    print("AGV站点导航方法测试")
+    print("=" * 50)
+    print("1. 基于go_to_target_LM的监控导航")
+    print("2. 分步导航（查询坐标+分步移动）")
+    print("3. 查看所有站点信息")
+    print("4. 对比两种方法")
+    print("0. 退出")
+    
+    try:
+        choice = input("\n请选择测试方法 (0-4): ").strip()
+        
+        # 创建AGV客户端
+        agv = AGVClient(ip='192.168.192.5')
+        if not agv.connect():
+            print("连接AGV失败")
+            return
+        
+        try:
+            if choice == '1':
+                print("\n========== 测试方法1：基于go_to_target_LM的监控导航 ==========")
+                source_id = input("请输入起始站点ID (如 LM1): ").strip() or "LM1"
+                target_id = input("请输入目标站点ID (如 LM2): ").strip() or "LM2"
+                
+                success = agv.navigate_between_stations_method1(source_id, target_id)
+                print(f"方法1导航结果: {'✅ 成功' if success else '❌ 失败'}")
+                
+            elif choice == '2':
+                print("\n========== 测试方法2：分步导航 ==========")
+                source_id = input("请输入起始站点ID (如 LM1): ").strip() or "LM1"
+                target_id = input("请输入目标站点ID (如 LM2): ").strip() or "LM2"
+                
+                success = agv.navigate_between_stations_method2(source_id, target_id)
+                print(f"方法2导航结果: {'✅ 成功' if success else '❌ 失败'}")
+                
+            elif choice == '3':
+                print("\n========== 查看所有站点信息 ==========")
+                stations = agv.get_station_info()
+                if stations:
+                    print(f"共找到 {len(stations)} 个站点:")
+                    for station in stations:
+                        print(f"  ID: {station['id']:<10} 类型: {station['type']:<15} "
+                              f"坐标: ({station['x']:.3f}, {station['y']:.3f}, {station['r']:.3f})")
+                else:
+                    print("未找到任何站点信息")
+                    
+            elif choice == '4':
+                print("\n========== 对比两种导航方法 ==========")
+                source_id = input("请输入起始站点ID (如 LM1): ").strip() or "LM1"
+                target_id = input("请输入目标站点ID (如 LM2): ").strip() or "LM2"
+                
+                print("\n--- 开始方法1测试 ---")
+                start_time = time.time()
+                success1 = agv.navigate_between_stations_method1(source_id, target_id)
+                time1 = time.time() - start_time
+                
+                time.sleep(2)  # 短暂等待
+                
+                print("\n--- 开始方法2测试 ---")
+                start_time = time.time()
+                success2 = agv.navigate_between_stations_method2(source_id, target_id)
+                time2 = time.time() - start_time
+                
+                # 结果对比
+                print(f"\n========== 导航方法对比结果 ==========")
+                print(f"方法1（监控导航）: {'✅ 成功' if success1 else '❌ 失败'}, 耗时: {time1:.1f}秒")
+                print(f"方法2（分步导航）: {'✅ 成功' if success2 else '❌ 失败'}, 耗时: {time2:.1f}秒")
+                
+            elif choice == '0':
+                print("退出测试")
+                
+            else:
+                print("无效选择")
+                
+        finally:
+            agv.disconnect()
+            
+    except KeyboardInterrupt:
+        print("\n用户中断测试")
+    except Exception as e:
+        print(f"\n测试异常: {e}")
 
 def main():
     # 使用新的控制类
