@@ -675,21 +675,7 @@ class VoiceRobotController:
             print("🎉 机器人被唤醒！")
             print("🤖 你好！我已准备好接受您的指令。")
 
-            def play_greet_audio_thread():
-                self._play_cached_audio("你好，我是小拓同学，很高兴见到你！")
-            
-            def execute_greet_action_thread():
-                self.robot_controller.execute_action("greet")
-            
-            # 播放唤醒音频
-            audio_thread = threading.Thread(target=play_greet_audio_thread)
-            action_thread = threading.Thread(target=execute_greet_action_thread)
-
-            audio_thread.start()
-            action_thread.start()
-            
-            audio_thread.join()
-            action_thread.join()
+            self._play_and_execute_action("你好，我是小拓同学，很高兴见到你！", "greet")
             
             # 切换到唤醒状态
             self.robot_state = "awake"

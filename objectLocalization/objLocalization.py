@@ -27,7 +27,7 @@ class ObjectLocalization:
             camera_id=0
         )
     
-    def get_layer_number(self, json_file_path, obj_name=None, num=None):
+    def get_layer_number(self, json_file_path=None, obj_name=None, num=None):
         """
         获取层数方法
         输入：json文件路径，包含obj_name和num两个键

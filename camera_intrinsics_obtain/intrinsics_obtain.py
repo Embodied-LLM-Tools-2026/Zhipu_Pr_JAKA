@@ -32,6 +32,9 @@ def main(
     for fname in images:
         # 读取图像
         img = cv2.imread(fname)
+
+        print('--------------------------------')
+        print(img.shape)
         gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
 
         # 查找棋盘格角点

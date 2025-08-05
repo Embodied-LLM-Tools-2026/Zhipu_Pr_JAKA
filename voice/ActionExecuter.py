@@ -111,7 +111,8 @@ class ActionExecuter:
             else: # 到达对应位置
                 for pos in pos_list:
                     if pos == 5:
-                        self.get_drink(self.handle_l, self.handle_r, self.add_data_1, self.hand_l, self.hand_r)
+                        self.get_drink(self.handle_l, self.handle_r, self.hand_l, self.hand_r, self.add_data_1)
+                        self.init_robot(self.handle_l, self.handle_r, self.add_data_1, self.hand_l, self.hand_r)
                 print("到达对应位置")
             return True
         except Exception as e:

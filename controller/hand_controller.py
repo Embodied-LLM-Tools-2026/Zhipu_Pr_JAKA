@@ -14,7 +14,7 @@ class InspireHandR:
         self.ser = serial.Serial(port, baudrate)
         self.ser.isOpen()
         self.hand_id = hand_id
-        self.reset() # 手部复原
+        # self.reset() # 手部复原
         #self.instrument = minimalmodbus.Instrument(self.port, 1)
     
     #把十六进制或十进制的数转成bytes
@@ -415,9 +415,10 @@ class InspireHandR:
 
 if __name__ == "__main__":
     hand = InspireHandR(port="COM12", baudrate=115200, hand_id=2)
-    hand.set_default_speed(100,100,100,100,100,100)
+    hand.set_default_speed(200,200,200,200,200,200)
+    hand.setpos(1000,1000,1000,1000,1000,0)
     time.sleep(3)
-    hand.setpos(500,500,500,500,500,500)
+    hand.setpos(472,509,589,670,736,0)
     time.sleep(3)
     # hand.get_joint_position()
     # hand.setpos(1000,0,0,1000,500,500)

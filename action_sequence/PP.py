@@ -60,8 +60,9 @@ def pick_1_5(handle_L,handle_R,hand_l, hand_r, add_data):
     with AGVClient(ip='192.168.192.5') as agv:
         pose_result = agv.get_pose()
         x, y, angle = pose_result
-    delta_x = (x+0.08)*1000  #-0.0874+0.08=-0.0074
-    delta_y = (y+0.035)*1000 #-0.0376+0.035=-0.0026
+    delta_x = (x-0.019)*1000  #-0.0874+0.08=-0.0074
+    delta_y = (y+0.028)*1000 #-0.0376+0.035=-0.0026
+
 
     # 到达和货架同一高度
     pick_0 = x5.Joint(j1 = 99.772, j2 = -11.213, j3 = 31.413, j4 = -85.976, 
@@ -83,17 +84,14 @@ def pick_1_5(handle_L,handle_R,hand_l, hand_r, add_data):
 
     # 计算新的调整后的抓取点位
     new_pick_2_point = copy.deepcopy(pick_2_point)
-    new_pick_2_point.pose.z = 152.984 - delta_x
-    new_pick_2_point.pose.y = -622.309 + delta_y
+    new_pick_2_point.pose.z = 174.374 - delta_x
+    new_pick_2_point.pose.y = -528.378 + delta_y
     print(new_pick_2_point)
     # 逆解，求笛卡尔点位p1的对应关节坐标
-    # jp1 = x5.cnvrt_j(handle_R, new_pick_2_point, 0, pick_2)
-    # jp2 = x5.cnvrt_j(handle_R, new_pick_2_point, 1, pick_2)
-
-    jp1 = x5.cnvrt_j(handle_R, new_pick_2_point, 0, pick_2)
+    jp1 = x5.cnvrt_j(handle_R, new_pick_2_point, 1, pick_2)
 
 #     # # print(jp3)
-    x5.movj(handle_R, pick_2, add_data)
+    x5.movj(handle_R, jp1, add_data)
     x5.wait_move_done(handle_R)
     # grasp
     hand_r.setpos(472,509,589,670,736,0)
@@ -156,7 +154,16 @@ def move_to_pick_height_pitch_angle(handle_L,handle_R,hand_l, hand_r, add_data, 
     x5.movj(handle_L, joint_l, add_data)
     x5.wait_move_done(handle_L)
 
-
+def move_to_LM():
+    """
+    到达LM点位
+    """
+    with AGVClient(ip='192.168.192.5') as agv:
+        # agv.go_to_target_LM("LM1", "LM2")
+        agv.go_to_target_LM("LM2", "LM4")
+        time.sleep(20)
+        agv.go_to_target_LM("LM4", "LM3")
+        time.sleep(15)
 
 def main():
     hand_l = InspireHandR(port="COM11", baudrate=115200, hand_id=1)
@@ -177,17 +184,20 @@ def main():
     handle_r = x5.connect("192.168.1.8")
 
     # # safe_robot(handle_l, handle_r, add_data_1)
-    with AGVClient(ip='192.168.192.5') as agv:
-        # agv.go_to_target_LM("LM1", "LM2")
-        # agv.go_to_target_LM("LM2", "LM1")
-        print(agv.get_pose())
+    # with AGVClient(ip='192.168.192.5') as agv:
+    #     # agv.go_to_target_LM("LM1", "LM2")
+    #     agv.go_to_target_LM("LM2", "LM4")
+    #     time.sleep(15)
+    #     agv.go_to_target_LM("LM4", "LM3")
+    #     time.sleep(15)
+    #     # print(agv.get_pose())
     # time.sleep(35)
-
-    init_robot(handle_l, handle_r, add_data_1)
+    move_to_LM()
+    init_robot(handle_l, handle_r, add_data_1, hand_l, hand_r)
 
     pick_1_5(handle_l, handle_r, hand_l, hand_r, add_data_1)
     # move_to_pick_height_pitch_angle(handle_l, handle_r, hand_l, hand_r, add_data_1, 200, 0)
-    init_robot(handle_l, handle_r, add_data_1)
+    init_robot(handle_l, handle_r, add_data_1, hand_l, hand_r)
 
 
 if __name__ == "__main__":
