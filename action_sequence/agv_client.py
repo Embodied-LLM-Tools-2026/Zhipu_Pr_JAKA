@@ -260,9 +260,9 @@ class AGVClient:
             response = self.send_message(1020, socket_type=0)
         if response:
             if simple:
-                return response['status']
+                return response['task_status']
             else:
-                return response['status'], response['task_type'], response['target_point']
+                return response['task_status'], response['task_type'], response['target_point']
         else:
             return None
     
@@ -339,7 +339,7 @@ class AGVClient:
             print("任务发送失败")
         return 
     
-    def go_to_point_in_world(self, x, y, theta):
+    def go_to_point_in_world(self, x, y, theta, backMode=0):
         msg_data = {
         "script_name": "syspy/goPath.py",
         "script_args": {
@@ -349,7 +349,7 @@ class AGVClient:
             "reachAngle": 0.001,
             "reachDist": 0.001,
             "coordinate": "world",
-            "backMode": 0,
+            "backMode": backMode,
             "useOdo": 0,
             "hold_dir": 0
         },
@@ -748,7 +748,7 @@ class AGVClient:
 
 def main():
     # 使用新的控制类
-    with AGVClient(ip='192.168.192.5') as agv:
+    with AGVClient(ip='192.168.1.51') as agv:
         # ==========获取当前机器人的建图与定位状态==========
         map_status = agv.get_map_status()
         if map_status == 0:
@@ -774,7 +774,7 @@ def main():
 
         # ==========导航==========
         # 回到地图0点，请确认0点位置安全后运行
-        #agv.go_to_point_in_world(0,0,0)
+        agv.go_to_point_in_world(-0.779,-0.037,-3.14,1)
         # 移动到固定流程的点位，请确认位置安全后运行
         #agv.go_to_point_in_world(-0.8328,-0.0176,3.1252)
         # 向前移动1m，请确认目标安全后运行
