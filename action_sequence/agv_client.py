@@ -1,4 +1,4 @@
-from math import fabs
+from math import e, fabs
 import socket
 import json
 import time
@@ -355,6 +355,34 @@ class AGVClient:
         response = self.send_message(3051, msg_data, socket_type=2)
         if response:
             print(f"导航指令({x,y})发送成功，响应内容：")
+            print(response)
+            # 等待导航完成
+            self._navigation_active = True
+            try:
+                self.navigation_locker()
+            finally:
+                self._navigation_active = False
+        else:
+            print("任务发送失败")
+        return 
+    
+    def go_to_point_in_world_by_id(self, source_id, id, angle=None):
+        if angle:
+            msg_data = {
+                "source_id": source_id,  
+                "id": id,
+                "angle": angle,
+                "method": "forward",
+            }
+        else:
+            msg_data = {
+                "source_id": source_id,  
+                "id": id,
+                "method": "forward",
+            }
+        response = self.send_message(3051, msg_data, socket_type=2)
+        if response:
+            print(f"导航指令({source_id,id})发送成功，响应内容：")
             print(response)
             # 等待导航完成
             self._navigation_active = True
