@@ -25,10 +25,54 @@ class RobotCommandProcessor:
         
         self.action_map = Config.ACTION_MAP
         self.drink_list = Config.drink_list
+
+
+    def needs_web_search(self, text: str) -> bool:
+        """判断用户输入是否需要联网搜索"""
+        search_keywords = [
+            "天气", "新闻", "股票", "价格", "汇率", "时间", "日期", "今天", "明天", "昨天",
+            "现在", "实时", "最新", "当前", "今天天气", "明天天气", "天气预报",
+            "股市", "基金", "黄金", "油价", "房价", "机票", "火车票", "电影票",
+            "演唱会", "比赛", "比分", "赛程", "排名", "热搜", "热门", "趋势"
+        ]
+        
+        # 检查是否包含搜索关键词
+        for keyword in search_keywords:
+            if keyword in text:
+                return True
+        
+        # 检查是否是时间相关的问题
+        time_patterns = [
+            "几点", "什么时候", "多久", "多长时间", "什么时候开始", "什么时候结束"
+        ]
+        for pattern in time_patterns:
+            if pattern in text:
+                return True
+                
+        return False
     
+    def web_search(self, query: str) -> str:
+        """执行联网搜索"""
+        try:
+            # 使用智谱AI的web_search工具
+            response = self.client.web_search.web_search(
+                search_engine="search_std",
+                search_query=query,
+                count=1,  # 返回结果的条数，范围1-50，默认10
+                search_domain_filter="www.sohu.com",  # 只访问指定域名的内容
+                search_recency_filter="noLimit",  # 搜索指定日期范围内的内容
+                content_size="medium"  # 控制网页摘要的字数，默认medium
+            )
+            return response.search_result[0].content
+            
+        except Exception as e:
+            print(f"联网搜索出错: {e}")
+            return f"搜索时出现错误: {str(e)}"
+        
     def process_command(self, text: str) -> Dict[str, Any]:
         """处理语音识别的文本，返回机器人动作指令"""
         text = self.replace_zhusu(text)
+
         prompt = f"""
         请分析以下中文语音文本，判断用户的意图。
 
@@ -83,6 +127,16 @@ class RobotCommandProcessor:
                 
                 # 优化：如果意图是聊天，直接在这里一次性生成响应
                 if result.get("intent") == "chat":
+                    
+                    # 判断是否需要联网搜索
+                    needs_search = self.needs_web_search(text)
+                    search_result = ""
+                    
+                    if needs_search:
+                        print(f"检测到需要搜索的内容: {text}")
+                        search_result = self.web_search(text)
+                        print(f"搜索结果: {search_result}")
+
                     chat_prompt = f"""
                     用户的输入是："{text}"
                     你的名字是“小拓”，你是拓斯达的一台人型机器人，你目前会执行的动作包括：打招呼、摇头、点头、鞠躬。
@@ -139,6 +193,10 @@ class RobotCommandProcessor:
 
                     【能力边界】
                     - 如果用户提出你目前无法完成的请求（例如让你炒饭），你可以委婉拒绝，并说你以后会继续学习改进，但不要说你没有实体，也不要说你只是个语音助手，因为我是把你部署到一个人形机器人上的，就说你还没学会。
+
+                    【关于联网搜索】
+                    为了帮助你回答问题，如果用户的问题是需要联网找的，我已经帮你得到了搜索结果如下，你可以作为参考，如果没得到搜索结果，代表这个问题不需要联网搜索，那你不用管。
+                    联网搜索结果："{search_result}"
                 """
                     try:
                         chat_response = self.client.chat.completions.create(
