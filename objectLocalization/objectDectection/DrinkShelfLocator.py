@@ -316,7 +316,7 @@ class DrinkFinder:
         self.overlap_threshold = overlap_threshold
         self.alignment_enabled = alignment_enabled
     
-    def find_drinks(self, current_mask: np.ndarray, position_template: Dict, quantity: int) -> Dict:
+    def find_drinks(self, current_mask: np.ndarray, position_template: Dict, quantity: int, grabbing_direction: Optional[str] = "left") -> Dict:
         """
         查找指定数量的饮料位置
         Args:
@@ -351,7 +351,10 @@ class DrinkFinder:
                     "message": f"当前货架上只有{M}个{drink_type}"
                 }
             else:
-                selected_positions = sorted_positions[:quantity]
+                if grabbing_direction == "left":
+                    selected_positions = sorted_positions[:quantity]
+                else:
+                    selected_positions = sorted_positions[:quantity:-1]
             
             return {
                 "success": True,
@@ -1151,8 +1154,8 @@ class DrinkShelfLocator:
                 else:
                     if grabbing_direction.lower() == 'left':
                         selected_positions = occupied_positions[:quantity]
-                    elif grabbing_direction.lower() == 'right':   
-                        selected_positions = occupied_positions[total_drinks - quantity:]
+                    else:   
+                        selected_positions = occupied_positions[:quantity:-1]
                 
                 result = {
                     "success": True,
@@ -1167,7 +1170,7 @@ class DrinkShelfLocator:
             position_template = self.calibrator.load_position_template(drink_type)
             
             # 4. 查找饮料位置
-            result = self.finder.find_drinks(current_masks, position_template, quantity)
+            result = self.finder.find_drinks(current_masks, position_template, quantity, grabbing_direction)
             
             print(f"查找完成: {result['message']}")
             return result
