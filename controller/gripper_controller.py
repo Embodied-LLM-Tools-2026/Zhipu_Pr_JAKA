@@ -1,731 +1,556 @@
-import minimalmodbus
-import serial.tools.list_ports
-from enum import IntEnum
+#!/usr/bin/env python
+# -*- coding:utf-8 -*-
+#SHIJIANGAN
+
 import time
-import threading
-import queue
+import serial
+import numpy as np
 
-class GripperCommand(IntEnum):
-    """夹具命令枚举"""
-    DISABLE = 0
-    ENABLE = 1
+## 功能码
+"""
+0x03 读取寄存器
+0x06 写入寄存器
+0x10 写多个寄存器
+"""
 
-class FingerIndex(IntEnum):
-    """手指索引枚举"""
-    FINGER_1 = 0
-    FINGER_2 = 1
+class GripperController:
+    def __init__(self, port: str = "COM11", baudrate: int = 115200, gripper_id: int = 1):
 
-class CTAG2F120Gripper:
-    """CTAG2F120 两指夹具控制类 - 基于真实协议的连续控制"""
+        self.ser = serial.Serial(port, baudrate)
+        self.ser.isOpen()
+        self.gripper_id = gripper_id
+
+    #把十六进制或十进制的数转成bytes
+    def num2str(self,num):
+        str = hex(num)
+        str = str[2:4]
+        if(len(str) == 1):
+            str = '0'+ str
+        # str = bytes.fromhex(str)
+        str = bytes.fromhex(str)     
+        #print(str)
+        return str
     
-    def __init__(self, port=None, slave_id=1):
+    def data2bytes(self, data):
+        # 将角度值转换为4位十六进制字符串，不足4位前面补0
+        hex_str = f"{data:04X}"
+        # 转换为bytes
+        bytes_data = bytes.fromhex(hex_str)
+        return bytes_data
+   
+    #求校验和
+    def crc16_modbus(self, data, length=None):
         """
-        初始化两指夹具控制器
+        CRC16 Modbus校验函数
+        使用多项式 0x8005 (x^16 + x^15 + x^2 + 1)
+        初始值: 0xFFFF
+        异或值: 0x0000
         
         Args:
-            port: 串口端口，如果为None则自动检测
-            slave_id: 设备ID，默认为1
-        """
-        self.port = port or self._detect_port()
-        self.slave_id = slave_id
-        self.instrument = minimalmodbus.Instrument(self.port, slave_id)
-        
-        # 串口配置
-        self.instrument.serial.baudrate = 115200
-        self.instrument.serial.bytesize = 8
-        self.instrument.serial.parity = minimalmodbus.serial.PARITY_NONE
-        self.instrument.serial.stopbits = 1
-        self.instrument.serial.timeout = 0.5
-        self.instrument.close_port_after_each_call = True
-        
-        # 基础控制寄存器
-        self.REG_CLOSE = 0x0028     # 闭合指令寄存器
-        self.REG_OPEN = 0x0029      # 张开指令寄存器  
-        self.REG_SYNC = 0x002A      # 同步寄存器
-        self.REG_MOVING = 0x002B    # 移动状态寄存器
-        self.REG_POSITION_REACHED = 0x002C  # 位置到达寄存器
-        self.REG_GRIPPING = 0x0032  # 夹持状态寄存器
-        
-        # 配置寄存器
-        self.REG_OPEN_POSITION = 0x0048   # 张开位置配置
-        self.REG_CLOSE_POSITION = 0x0049  # 闭合位置配置
-        
-        # 两个手指控制寄存器
-        self.finger_regs = {
-            FingerIndex.FINGER_1: {
-                'set_position': 0x000A,    # 设置位置-1
-                'output_force': 0x000B,    # 输出力-1
-                'speed': 0x000C,           # 速度-1
-                'acceleration': 0x000D,    # 加速度-1
-                'actual_position': 0x000E, # 实际位置-1
-                'torque': 0x000F,          # 扭力-1
-                'actual_speed': 0x0010,    # 实际速度-1
-                'voltage': 0x0011,         # 电压-1
-                'current': 0x0012,         # 电流-1
-                'temperature': 0x0013,     # 温度-1
-                'enable': 0x004A           # 指端1使能
-            },
-            FingerIndex.FINGER_2: {
-                'set_position': 0x0014,    # 设置位置-2
-                'output_force': 0x0015,    # 输出力-2
-                'speed': 0x0016,           # 速度-2
-                'acceleration': 0x0017,    # 加速度-2
-                'actual_position': 0x0018, # 实际位置-2
-                'torque': 0x0019,          # 扭力-2
-                'actual_speed': 0x001A,    # 实际速度-2
-                'voltage': 0x001B,         # 电压-2
-                'current': 0x001C,         # 电流-2
-                'temperature': 0x001D,     # 温度-2
-                'enable': 0x004B           # 指端2使能
-            }
-        }
-        
-        # 力传感器寄存器（两个手指都有）
-        self.sensor_regs = {
-            FingerIndex.FINGER_1: {
-                'finger_id': 0x0078,       # 传感器对应手指号码
-                'force_x': 0x0079,         # X切向力
-                'force_y': 0x007A,         # Y切向力  
-                'force_z': 0x007B,         # Z法向力
-                'zero_x': 0x007C,          # X切向力置零值
-                'zero_y': 0x007D,          # Y切向力置零值
-                'zero_z': 0x007E,          # Z法向力置零值
-                'can_id': 0x007F,          # 传感器CAN_ID
-                'zero_cmd': 0x0080         # 传感器清零
-            },
-            FingerIndex.FINGER_2: {
-                'finger_id': 0x0082,       # 传感器对应手指号码
-                'force_x': 0x0083,         # X切向力
-                'force_y': 0x0084,         # Y切向力
-                'force_z': 0x0085,         # Z法向力
-                'zero_x': 0x0086,          # X切向力置零值
-                'zero_y': 0x0087,          # Y切向力置零值
-                'zero_z': 0x0088,          # Z法向力置零值
-                'can_id': 0x0089,          # 传感器CAN_ID
-                'zero_cmd': 0x008A         # 传感器清零
-            }
-        }
-        
-        # 当前状态 - 改为两指
-        self.current_positions = [100, 100]  # 当前位置 (0-100%)
-        self.target_positions = [100, 100]   # 目标位置 (0-100%)
-        self.current_forces = [25, 25]       # 当前力度 (0-100%)
-        self.current_speeds = [40, 40]       # 当前速度 (0-32766步/s)
-        
-        # 运动状态
-        self.is_moving = False
-        self.position_tolerance = 2  # 位置误差容限(%)
-        
-        # 实时监控
-        self.monitor_thread = None
-        self.monitor_running = False
-        self.status_queue = queue.Queue()
-
-    def _detect_port(self):
-        """自动检测串口端口"""
-        ports = [p.device for p in serial.tools.list_ports.comports()
-                 if 'USB Serial' in p.description or 'RS485' in p.description or 'CH340' in p.description]
-        if not ports:
-            raise RuntimeError('未检测到RS485端口')
-        return ports[0]
-
-    def connect(self):
-        """连接设备并测试通信"""
-        try:
-            # 读取硬件版本号来测试连接
-            hw_version = self.instrument.read_register(0x0000)
-            fw_version = self.instrument.read_register(0x0001)
-            print(f'连接成功，设备ID: {self.slave_id}')
-            print(f'硬件版本: {hw_version:#06x}, 固件版本: {fw_version:#06x}')
+            data: 字节数组或列表
+            length: 数据长度，如果为None则使用data的长度
             
-            # 读取当前状态
-            self._update_current_status()
-            
-            # 启动实时监控
-            self.start_monitoring()
-            return True
-        except Exception as e:
-            raise ConnectionError(f'连接失败: {str(e)}')
-
-    def disconnect(self):
-        """断开连接"""
-        self.stop_monitoring()
-        print('两指夹具已断开连接')
-
-    # ==================== 基础控制功能 ====================
-    
-    def set_sync_mode(self, sync_enabled=True):
-        """
-        设置指端同步模式
-        
-        Args:
-            sync_enabled (bool): True为同步运行，False为不同步运行
-        """
-        try:
-            value = GripperCommand.ENABLE if sync_enabled else GripperCommand.DISABLE
-            self.instrument.write_register(self.REG_SYNC, value)
-            mode_str = "同步" if sync_enabled else "不同步"
-            print(f'两指设置为{mode_str}运行模式')
-        except Exception as e:
-            raise RuntimeError(f'设置同步模式失败: {str(e)}')
-
-    def get_sync_mode(self):
-        """获取当前指端同步模式"""
-        try:
-            value = self.instrument.read_register(self.REG_SYNC)
-            return bool(value)
-        except Exception as e:
-            raise RuntimeError(f'读取同步模式失败: {str(e)}')
-
-    def close_gripper(self):
-        """执行闭合指令（全局）"""
-        try:
-            self.instrument.write_register(self.REG_CLOSE, GripperCommand.ENABLE)
-            self.target_positions = [0, 0]  # 闭合为0%
-            print('两指夹具全局闭合指令已发送')
-        except Exception as e:
-            raise RuntimeError(f'闭合指令执行失败: {str(e)}')
-
-    def open_gripper(self):
-        """执行张开指令（全局）"""
-        try:
-            self.instrument.write_register(self.REG_OPEN, GripperCommand.ENABLE)
-            self.target_positions = [100, 100]  # 张开为100%
-            print('两指夹具全局张开指令已发送')
-        except Exception as e:
-            raise RuntimeError(f'张开指令执行失败: {str(e)}')
-
-    # ==================== 单指控制功能 ====================
-    
-    def set_finger_position(self, finger: FingerIndex, position: int, speed: int = None):
-        """
-        设置单个手指位置
-        
-        Args:
-            finger: 手指索引 (0-1)
-            position: 目标位置 (0-100, 0为闭合，100为张开)
-            speed: 运动速度 (可选，0-32766步/s)
-        """
-        if not 0 <= position <= 100:
-            raise ValueError("位置值必须在0-100之间")
-        
-        try:
-            reg_addr = self.finger_regs[finger]['set_position']
-            self.instrument.write_register(reg_addr, position)
-            self.target_positions[finger.value] = position
-            
-            # 设置速度（如果提供）
-            if speed is not None:
-                self.set_finger_speed(finger, speed)
-            
-            print(f'手指{finger.value + 1}设置位置: {position}%')
-        except Exception as e:
-            raise RuntimeError(f'设置手指{finger.value + 1}位置失败: {str(e)}')
-
-    def set_finger_force(self, finger: FingerIndex, force: int):
-        """
-        设置单个手指输出力
-        
-        Args:
-            finger: 手指索引 (0-1)
-            force: 输出力 (0-100%, 40%约为15N)
-        """
-        if not 0 <= force <= 100:
-            raise ValueError("力度值必须在0-100之间")
-        
-        try:
-            reg_addr = self.finger_regs[finger]['output_force']
-            self.instrument.write_register(reg_addr, force)
-            self.current_forces[finger.value] = force
-            print(f'手指{finger.value + 1}设置力度: {force}% (约{force * 0.375:.1f}N)')
-        except Exception as e:
-            raise RuntimeError(f'设置手指{finger.value + 1}力度失败: {str(e)}')
-
-    def set_finger_speed(self, finger: FingerIndex, speed: int):
-        """
-        设置单个手指速度
-        
-        Args:
-            finger: 手指索引 (0-1)
-            speed: 速度 (0-32766步/s, 50步/s = 0.732 RPM)
-        """
-        if not 0 <= speed <= 32766:
-            raise ValueError("速度值必须在0-32766之间")
-        
-        try:
-            reg_addr = self.finger_regs[finger]['speed']
-            self.instrument.write_register(reg_addr, speed)
-            self.current_speeds[finger.value] = speed
-            rpm = speed * 0.732 / 50  # 转换为RPM
-            print(f'手指{finger.value + 1}设置速度: {speed}步/s ({rpm:.2f} RPM)')
-        except Exception as e:
-            raise RuntimeError(f'设置手指{finger.value + 1}速度失败: {str(e)}')
-
-    def set_finger_acceleration(self, finger: FingerIndex, acceleration: int):
-        """
-        设置单个手指加速度
-        
-        Args:
-            finger: 手指索引 (0-1)
-            acceleration: 加速度 (0-254, 单位100步/s²)
-        """
-        if not 0 <= acceleration <= 254:
-            raise ValueError("加速度值必须在0-254之间")
-        
-        try:
-            reg_addr = self.finger_regs[finger]['acceleration']
-            self.instrument.write_register(reg_addr, acceleration)
-            actual_acc = acceleration * 100  # 实际加速度
-            print(f'手指{finger.value + 1}设置加速度: {actual_acc}步/s²')
-        except Exception as e:
-            raise RuntimeError(f'设置手指{finger.value + 1}加速度失败: {str(e)}')
-
-    def enable_finger(self, finger: FingerIndex, enabled: bool = True):
-        """
-        使能/禁用单个手指
-        
-        Args:
-            finger: 手指索引 (0-1)
-            enabled: 是否使能 (True=保持力矩, False=不保持力矩)
-        """
-        try:
-            reg_addr = self.finger_regs[finger]['enable']
-            value = GripperCommand.ENABLE if enabled else GripperCommand.DISABLE
-            self.instrument.write_register(reg_addr, value)
-            status = "使能" if enabled else "禁用"
-            print(f'手指{finger.value + 1}{status}')
-        except Exception as e:
-            raise RuntimeError(f'设置手指{finger.value + 1}使能状态失败: {str(e)}')
-
-    # ==================== 批量控制功能 ====================
-    
-    def set_both_positions(self, positions: list, speeds: list = None):
-        """
-        设置两个手指位置
-        
-        Args:
-            positions: 两个手指的位置列表 [finger1, finger2] (0-100)
-            speeds: 两个手指的速度列表（可选）
-        """
-        if len(positions) != 2:
-            raise ValueError("必须提供2个手指的位置")
-        
-        for i, position in enumerate(positions):
-            finger = FingerIndex(i)
-            speed = speeds[i] if speeds else None
-            self.set_finger_position(finger, position, speed)
-
-    def set_both_forces(self, forces: list):
-        """
-        设置两个手指力度
-        
-        Args:
-            forces: 两个手指的力度列表 [finger1, finger2] (0-100)
-        """
-        if len(forces) != 2:
-            raise ValueError("必须提供2个手指的力度")
-        
-        for i, force in enumerate(forces):
-            finger = FingerIndex(i)
-            self.set_finger_force(finger, force)
-
-    def set_both_speeds(self, speeds: list):
-        """
-        设置两个手指速度
-        
-        Args:
-            speeds: 两个手指的速度列表 [finger1, finger2] (0-32766)
-        """
-        if len(speeds) != 2:
-            raise ValueError("必须提供2个手指的速度")
-        
-        for i, speed in enumerate(speeds):
-            finger = FingerIndex(i)
-            self.set_finger_speed(finger, speed)
-
-    # ==================== 状态获取功能 ====================
-    
-    def get_finger_position(self, finger: FingerIndex):
-        """获取单个手指实际位置"""
-        try:
-            reg_addr = self.finger_regs[finger]['actual_position']
-            position = self.instrument.read_register(reg_addr)
-            self.current_positions[finger.value] = position
-            return position
-        except Exception as e:
-            print(f'读取手指{finger.value + 1}位置失败: {str(e)}')
-            return self.target_positions[finger.value]
-
-    def get_finger_force(self, finger: FingerIndex):
-        """获取单个手指当前扭力"""
-        try:
-            reg_addr = self.finger_regs[finger]['torque']
-            torque = self.instrument.read_register(reg_addr)
-            return torque
-        except Exception as e:
-            print(f'读取手指{finger.value + 1}扭力失败: {str(e)}')
-            return 0
-
-    def get_finger_status(self, finger: FingerIndex):
-        """获取单个手指完整状态"""
-        try:
-            regs = self.finger_regs[finger]
-            return {
-                'finger_id': finger.value + 1,
-                'actual_position': self.instrument.read_register(regs['actual_position']),
-                'target_position': self.target_positions[finger.value],
-                'torque': self.instrument.read_register(regs['torque']),
-                'actual_speed': self.instrument.read_register(regs['actual_speed']),
-                'voltage': self.instrument.read_register(regs['voltage']) * 0.1,  # 转换为V
-                'current': self.instrument.read_register(regs['current']) * 6.5,  # 转换为mA
-                'temperature': self.instrument.read_register(regs['temperature']),
-                'enabled': bool(self.instrument.read_register(regs['enable']))
-            }
-        except Exception as e:
-            raise RuntimeError(f'获取手指{finger.value + 1}状态失败: {str(e)}')
-
-    def get_both_positions(self):
-        """获取两个手指位置"""
-        positions = []
-        for finger in FingerIndex:
-            positions.append(self.get_finger_position(finger))
-        return positions
-
-    def get_system_status(self):
-        """获取系统整体状态"""
-        try:
-            sync_mode = self.get_sync_mode()
-            is_moving = bool(self.instrument.read_register(self.REG_MOVING))
-            position_reached = bool(self.instrument.read_register(self.REG_POSITION_REACHED))
-            is_gripping = bool(self.instrument.read_register(self.REG_GRIPPING))
-            
-            finger_statuses = []
-            for finger in FingerIndex:
-                finger_statuses.append(self.get_finger_status(finger))
-            
-            return {
-                'sync_enabled': sync_mode,
-                'is_moving': is_moving,
-                'position_reached': position_reached,
-                'is_gripping': is_gripping,
-                'fingers': finger_statuses,
-                'target_positions': self.target_positions.copy(),
-                'current_positions': self.get_both_positions()
-            }
-        except Exception as e:
-            raise RuntimeError(f'获取系统状态失败: {str(e)}')
-
-    # ==================== 力传感器功能 ====================
-    
-    def get_finger_forces(self, finger: FingerIndex):
-        """
-        获取手指力传感器数据
-        
-        Args:
-            finger: 手指索引 (0-1，两个手指都有力传感器)
-        
         Returns:
-            dict: 包含X/Y/Z方向力的字典 (单位: 0.01N)
+            CRC16校验值 (16位整数)
         """
-        try:
-            regs = self.sensor_regs[finger]
-            force_x = self.instrument.read_register(regs['force_x'])
-            force_y = self.instrument.read_register(regs['force_y'])
-            force_z = self.instrument.read_register(regs['force_z'])
+        if length is None:
+            length = len(data)
             
-            # 处理负值（补码形式）
-            if force_x > 32767:
-                force_x -= 65536
-            if force_y > 32767:
-                force_y -= 65536
+        crc = 0xFFFF  # 初始值
+        
+        for i in range(length):
+            crc ^= data[i]  # 异或当前字节
             
-            return {
-                'force_x': force_x * 0.01,  # 转换为N
-                'force_y': force_y * 0.01,  # 转换为N
-                'force_z': force_z * 0.01,  # 转换为N
-                'finger_id': finger.value + 1
-            }
-        except Exception as e:
-            raise RuntimeError(f'获取手指{finger.value + 1}力传感器数据失败: {str(e)}')
-
-    def zero_force_sensor(self, finger: FingerIndex):
-        """
-        力传感器置零
-        
-        Args:
-            finger: 手指索引 (0-1，两个手指都有力传感器)
-        """
-        try:
-            reg_addr = self.sensor_regs[finger]['zero_cmd']
-            self.instrument.write_register(reg_addr, 1)  # 0变1触发置零
-            print(f'手指{finger.value + 1}力传感器置零完成')
-        except Exception as e:
-            raise RuntimeError(f'手指{finger.value + 1}力传感器置零失败: {str(e)}')
-
-    # ==================== 实时监控功能 ====================
-    
-    def _update_current_status(self):
-        """更新当前状态"""
-        self.current_positions = self.get_both_positions()
-
-    def start_monitoring(self):
-        """开始实时状态监控"""
-        if not self.monitor_running:
-            self.monitor_running = True
-            self.monitor_thread = threading.Thread(target=self._monitor_loop, daemon=True)
-            self.monitor_thread.start()
-            print('实时监控已启动')
-
-    def stop_monitoring(self):
-        """停止实时状态监控"""
-        self.monitor_running = False
-        if self.monitor_thread and self.monitor_thread.is_alive():
-            self.monitor_thread.join(timeout=1)
-        print('实时监控已停止')
-
-    def _monitor_loop(self):
-        """监控循环"""
-        while self.monitor_running:
-            try:
-                # 更新位置状态
-                self._update_current_status()
-                
-                # 检查运动状态
-                self.is_moving = bool(self.instrument.read_register(self.REG_MOVING))
-                
-                # 将状态信息放入队列
-                status = self.get_system_status()
-                if not self.status_queue.full():
-                    self.status_queue.put(status)
-                
-                time.sleep(0.2)  # 200ms更新一次
-            except Exception as e:
-                print(f'监控线程错误: {str(e)}')
-                time.sleep(0.5)
-
-    def get_latest_status(self):
-        """获取最新状态信息（非阻塞）"""
-        try:
-            return self.status_queue.get_nowait()
-        except queue.Empty:
-            return None
-
-    # ==================== 高级控制功能 ====================
-    
-    def wait_for_completion(self, timeout=10):
-        """等待运动完成"""
-        start_time = time.time()
-        while time.time() - start_time < timeout:
-            if not bool(self.instrument.read_register(self.REG_MOVING)):
-                position_reached = bool(self.instrument.read_register(self.REG_POSITION_REACHED))
-                if position_reached:
-                    print('运动完成')
-                    return True
-            time.sleep(0.1)
-        
-        print('等待运动完成超时')
-        return False
-
-    def calibrate(self):
-        """两指夹具校准 - 完整的张开闭合循环"""
-        print('开始两指夹具校准...')
-        
-        # 设置同步模式
-        self.set_sync_mode(True)
-        
-        # 全张开
-        print('张开夹具...')
-        self.open_gripper()
-        self.wait_for_completion()
-        time.sleep(1)
-        
-        # 全闭合
-        print('闭合夹具...')
-        self.close_gripper()
-        self.wait_for_completion()
-        time.sleep(1)
-        
-        # 回到中间位置
-        print('回到中间位置...')
-        self.set_both_positions([50, 50])
-        self.wait_for_completion()
-        
-        print('两指夹具校准完成')
-
-    def gentle_grip(self, force=30):
-        """轻柔夹持"""
-        self.set_both_forces([force, force])
-        self.set_both_positions([20, 20])  # 轻微闭合
-        print(f'执行轻柔夹持，力度: {force}%')
-
-    def firm_grip(self, force=80):
-        """牢固夹持"""
-        self.set_both_forces([force, force])
-        self.set_both_positions([10, 10])  # 较大程度闭合
-        print(f'执行牢固夹持，力度: {force}%')
-
-    def emergency_stop(self):
-        """紧急停止"""
-        try:
-            # 禁用所有手指
-            for finger in FingerIndex:
-                self.enable_finger(finger, False)
-            print('紧急停止已执行 - 两个手指已禁用')
-        except Exception as e:
-            print(f'紧急停止失败: {str(e)}')
-
-    def save_configuration(self):
-        """保存当前配置到FLASH"""
-        try:
-            self.instrument.write_register(0x0034, 1)  # 数值保存寄存器
-            print('配置保存到FLASH')
-        except Exception as e:
-            print(f'保存配置失败: {str(e)}')
-
-    def restore_defaults(self):
-        """恢复默认参数配置"""
-        try:
-            self.instrument.write_register(0x0035, 1)  # 恢复默认参数寄存器
-            print('已恢复默认参数配置')
-        except Exception as e:
-            print(f'恢复默认配置失败: {str(e)}')
-
-    # ==================== 连续控制功能 ====================
-    
-    def smooth_move(self, finger: FingerIndex, target_position: int, duration: float, steps: int = 20):
-        """
-        平滑移动到目标位置
-        
-        Args:
-            finger: 手指索引
-            target_position: 目标位置 (0-100)
-            duration: 移动时间（秒）
-            steps: 分解步数
-        """
-        current_pos = self.get_finger_position(finger)
-        step_size = (target_position - current_pos) / steps
-        step_time = duration / steps
-        
-        print(f'手指{finger.value + 1}平滑移动: {current_pos}% -> {target_position}%')
-        
-        for i in range(steps + 1):
-            pos = int(current_pos + step_size * i)
-            self.set_finger_position(finger, pos)
-            time.sleep(step_time)
-
-    def smooth_move_both(self, target_positions: list, duration: float, steps: int = 20):
-        """
-        两指同时平滑移动
-        
-        Args:
-            target_positions: 目标位置列表 [finger1, finger2]
-            duration: 移动时间（秒）
-            steps: 分解步数
-        """
-        if len(target_positions) != 2:
-            raise ValueError("必须提供2个手指的位置")
-        
-        current_positions = self.get_both_positions()
-        step_time = duration / steps
-        
-        print(f'两指同时平滑移动: {current_positions} -> {target_positions}')
-        
-        for i in range(steps + 1):
-            positions = []
-            for j in range(2):
-                step_size = (target_positions[j] - current_positions[j]) / steps
-                pos = int(current_positions[j] + step_size * i)
-                positions.append(pos)
-            
-            self.set_both_positions(positions)
-            time.sleep(step_time)
-
-    def continuous_grip_control(self, target_force: float, max_position: int = 30):
-        """
-        连续力控夹持
-        
-        Args:
-            target_force: 目标力度 (N)
-            max_position: 最大闭合位置 (0-100)
-        """
-        print(f'开始连续力控夹持，目标力度: {target_force}N')
-        
-        # 设置力度
-        force_percent = min(int(target_force / 0.375), 100)
-        self.set_both_forces([force_percent, force_percent])
-        
-        # 逐步闭合直到达到目标力度
-        for position in range(100, max_position, -5):
-            self.set_both_positions([position, position])
-            time.sleep(0.2)
-            
-            # 检查力传感器反馈
-            try:
-                forces1 = self.get_finger_forces(FingerIndex.FINGER_1)
-                forces2 = self.get_finger_forces(FingerIndex.FINGER_2)
-                
-                # 计算总力
-                total_force = abs(forces1['force_z']) + abs(forces2['force_z'])
-                
-                if total_force >= target_force:
-                    print(f'达到目标力度: {total_force:.2f}N，位置: {position}%')
-                    break
+            for _ in range(8):  # 处理8位
+                if crc & 0x0001:  # 如果最低位为1
+                    crc = (crc >> 1) ^ 0xA001  # 右移1位并异或多项式
+                else:
+                    crc = crc >> 1  # 右移1位
                     
-            except Exception as e:
-                print(f'力传感器读取失败: {e}')
-                continue
+        return crc
+    
+    def crc16_ccitt(self, data, length=None):
+        """
+        CRC16 CCITT校验函数
+        使用多项式 0x1021 (x^16 + x^12 + x^5 + 1)
+        初始值: 0xFFFF
+        异或值: 0x0000
         
-        print('连续力控夹持完成')
+        Args:
+            data: 字节数组或列表
+            length: 数据长度，如果为None则使用data的长度
+            
+        Returns:
+            CRC16校验值 (16位整数)
+        """
+        if length is None:
+            length = len(data)
+            
+        crc = 0xFFFF  # 初始值
+        
+        for i in range(length):
+            crc ^= (data[i] << 8)  # 将当前字节左移8位后异或
+            
+            for _ in range(8):  # 处理8位
+                if crc & 0x8000:  # 如果最高位为1
+                    crc = ((crc << 1) ^ 0x1021) & 0xFFFF  # 左移1位并异或多项式
+                else:
+                    crc = (crc << 1) & 0xFFFF  # 左移1位
+                    
+        return crc
+    
+    def calculate_crc16(self, data, crc_type="modbus"):
+        """
+        计算CRC16校验码
+        
+        Args:
+            data: 字节数组或列表
+            crc_type: CRC类型，"modbus" 或 "ccitt"
+            
+        Returns:
+            (crc_low, crc_high): CRC低字节和高字节
+        """
+        if crc_type.lower() == "modbus":
+            crc = self.crc16_modbus(data)
+        elif crc_type.lower() == "ccitt":
+            crc = self.crc16_ccitt(data)
+        else:
+            raise ValueError("不支持的CRC类型，请使用 'modbus' 或 'ccitt'")
+            
+        # 返回低字节和高字节 (小端序)
+        return (crc & 0xFF, (crc >> 8) & 0xFF)
+    
+    def verify_crc16(self, data, expected_crc_low, expected_crc_high, crc_type="modbus"):
+        """
+        验证CRC16校验码
+        
+        Args:
+            data: 字节数组或列表
+            expected_crc_low: 期望的CRC低字节
+            expected_crc_high: 期望的CRC高字节
+            crc_type: CRC类型，"modbus" 或 "ccitt"
+            
+        Returns:
+            bool: 校验是否通过
+        """
+        calculated_low, calculated_high = self.calculate_crc16(data, crc_type)
+        return (calculated_low == expected_crc_low) and (calculated_high == expected_crc_high)
 
-if __name__ == '__main__':
-    gripper = None
-    try:
-        # 初始化两指夹具
-        gripper = CTAG2F120Gripper(port=None)
-        print(f"检测到的端口: {gripper.port}")
-        
-        # 连接设备
-        gripper.connect()
-        
-        # 校准夹具
-        print("开始校准...")
-        gripper.calibrate()
-        
-        # 测试单指控制
-        print("测试单指控制...")
-        gripper.set_finger_position(FingerIndex.FINGER_1, 30, speed=100)
-        gripper.set_finger_position(FingerIndex.FINGER_2, 50, speed=150)
-        
-        time.sleep(3)
-        
-        # 测试批量控制
-        print("测试批量控制...")
-        gripper.set_both_positions([80, 60], speeds=[100, 100])
-        gripper.wait_for_completion()
-        
-        # 测试平滑移动
-        print("测试平滑移动...")
-        gripper.smooth_move_both([20, 30], duration=2.0)
-        
-        # 测试力传感器
+    def homing(self):
+        '''复位
+        功能：回到最初位置
+        '''
+        self.setpos(20)
+        self.run_gripper()
+    
+    def enable_gripper(self):
+        '''功能：使能灵巧手
+        指令帧长度：6Bytes
+        指令号：0x50（CMD_MC_SET_DRVALL_SEEKPOS）
+        数据内容：6 个驱动器的目标位置，每个位置为 2Bytes（小端模式低字节先发送），共12Bytes，目标位置的有效值为 0~2000，若为 0xFFFF （-1），则表示不需要设置该驱动器的目标
+                位置，因此可单独设置某个驱动器的目标位置
+        '''
+        # INSERT_YOUR_CODE
+        '''
+        该命令为执行器使能相关命令，地址为 0x0100。该寄存器地址为可读写地址，寄存器
+        数据为 0 时执行器处于失能状态，为 1 是执行器处于使能状态。
+        发送数据：01 06 01 00 00 01 49 F6
+        返回数据：01 06 01 00 00 01 49 F6
+        '''
+        # 构造指令帧
+        b = [0]*8
+        b[0] = self.gripper_id  # 设备ID，通常为1
+        b[1] = 0x06             # 功能码
+        b[2] = 0x01             # 寄存器高字节
+        b[3] = 0x00             # 寄存器低字节
+        b[4] = 0x00             # 数据高字节
+        b[5] = 0x01             # 数据低字节（1为使能，0为失能）
+
+        # 计算CRC16校验码
+        crc_low, crc_high = self.calculate_crc16(b[0:6], "modbus")
+        b[6] = crc_low
+        b[7] = crc_high
+
+        # 向串口发送数据
+        putdata = b''
+        for i in range(8):
+            putdata = putdata + self.num2str(b[i])
+        print("发送使能指令:", putdata.hex(" "))
+        self.ser.write(putdata)
+        time.sleep(0.2)
+        read_num = self.ser.inWaiting()
+        getdata = self.ser.read(read_num)
+        print("使能响应:", getdata.hex(" "))
+
+    def disable_gripper(self):
+        '''功能：禁用灵巧手
+        指令帧长度：6Bytes
+        指令号：0x50（CMD_MC_SET_DRVALL_SEEKPOS）
+        数据内容：6 个驱动器的目标位置，每个位置为 2Bytes（小端模式低字节先发送），共12Bytes，目标位置的有效值为 0~2000，若为 0xFFFF （-1），则表示不需要设置该驱动器的目标
+                位置，因此可单独设置某个驱动器的目标位置
+        '''
+    # INSERT_YOUR_CODE
+        '''
+        该命令为执行器下使能相关命令，地址为 0x0100。该寄存器地址为可读写地址，寄存器
+        数据为 0 时执行器处于失能状态，为 1 是执行器处于使能状态。
+        发送数据：01 06 01 00 00 00 88 36
+        返回数据：01 06 01 00 00 00 88 36
+        '''
+        # 构造指令帧
+        b = [0]*8
+        b[0] = self.gripper_id  # 设备ID，通常为1
+        b[1] = 0x06             # 功能码
+        b[2] = 0x01             # 寄存器高字节
+        b[3] = 0x00             # 寄存器低字节
+        b[4] = 0x00             # 数据高字节
+        b[5] = 0x00             # 数据低字节（1为使能，0为失能）
+
+        # 计算CRC16校验码
+        crc_low, crc_high = self.calculate_crc16(b[0:6], "modbus")
+        b[6] = crc_low
+        b[7] = crc_high
+
+        # 向串口发送数据
+        putdata = b''
+        for i in range(8):
+            putdata = putdata + self.num2str(b[i])
+        print("发送下使能指令:", putdata.hex(" "))
+        self.ser.write(putdata)
+        time.sleep(0.2)
+        read_num = self.ser.inWaiting()
+        getdata = self.ser.read(read_num)
+        print("下使能响应:", getdata.hex(" "))
+
+    def run_gripper(self):
+        '''
+        功能：触发临时区运动
+        说明：向0x0108寄存器写1，触发执行器以0x0103~0x0106的参数运行到0x0102所设定的临时区运动位置。
+        发送数据：01 06 01 08 00 01 C8 34
+        返回数据：01 06 01 08 00 01 C8 34
+        '''
+        b = [0]*8
+        b[0] = self.gripper_id  # 设备ID，通常为1
+        b[1] = 0x06             # 功能码
+        b[2] = 0x01             # 寄存器高字节
+        b[3] = 0x08             # 寄存器低字节
+        b[4] = 0x00             # 数据高字节
+        b[5] = 0x01             # 数据低字节（1为触发，0为不触发）
+
+        # 计算CRC16校验码
+        crc_low, crc_high = self.calculate_crc16(b[0:6], "modbus")
+        b[6] = crc_low
+        b[7] = crc_high
+
+        # 向串口发送数据
+        putdata = b''
+        for i in range(8):
+            putdata = putdata + self.num2str(b[i])
+        print("发送临时区运动触发指令:", putdata.hex(" "))
+        self.ser.write(putdata)
+        time.sleep(0.2)
+        read_num = self.ser.inWaiting()
+        getdata = self.ser.read(read_num)
+        print("临时区运动触发响应:", getdata.hex(" "))
+
+    def is_force_sensor_reached(self):
+        '''
+        判断力传感器是否到达
+        '''
+        b = [0]*8
+        b[0] = self.gripper_id  # 设备ID，通常为1
+        b[1] = 0x03             # 功能码
+        b[2] = 0x06             # 寄存器高字节
+        b[3] = 0x01             # 寄存器低字节
+        b[4] = 0x00             # 数据高字节
+        b[5] = 0x01             # 数据低字节（读取1个寄存器）
+
+        # 计算CRC16校验码
+        crc_low, crc_high = self.calculate_crc16(b[0:6], "modbus")
+        b[6] = crc_low
+        b[7] = crc_high
+
+        # 向串口发送数据
+        putdata = b''
+        for i in range(8):
+            putdata = putdata + self.num2str(b[i])
+        print("发送力矩到达判断指令:", putdata.hex(" "))
+        self.ser.write(putdata)
+        time.sleep(0.2)
+        read_num = self.ser.inWaiting()
+        getdata = self.ser.read(read_num)
+        print("力矩到达判断响应:", getdata.hex(" "))
+
+        # 解析返回数据
+        if len(getdata) < 7:
+            print("返回数据长度不足，无法判断力矩是否到达")
+            return False
+
+        # 返回数据格式：01 03 02 00 00 B8 44
+        # Data[3] = 0x00, Data[4] = 0x00，表示未到达；0x00, 0x01表示到达
         try:
-            print("测试力传感器...")
-            forces1 = gripper.get_finger_forces(FingerIndex.FINGER_1)
-            forces2 = gripper.get_finger_forces(FingerIndex.FINGER_2)
-            print(f"手指1力传感器: {forces1}")
-            print(f"手指2力传感器: {forces2}")
+            data_list = list(getdata)
+            if data_list[0] != self.gripper_id or data_list[1] != 0x03:
+                print("返回数据格式错误")
+                return False
+            # 数据长度为2，数据在data_list[3]和data_list[4]
+            value = (data_list[3] << 8) | data_list[4]
+            if value == 1:
+                return True
+            else:
+                return False
         except Exception as e:
-            print(f"力传感器测试失败: {e}")
-        
-        # 显示最终状态
-        status = gripper.get_system_status()
-        print(f"系统状态: {status}")
+            print("解析力矩到达判断响应异常:", e)
+            return False
 
-    except Exception as e:
-        print(f"错误: {str(e)}")
-        if gripper:
-            gripper.emergency_stop()
-    finally:
-        if gripper:
-            gripper.disconnect()
-        print("程序结束")
+    def is_position_reached(self):
+        '''
+        判断位置是否到达（0x0602）
+        说明：读取0x0602寄存器，判断位置是否到达。寄存器值为0表示未到达，为1表示已到达。
+        发送数据：01 03 06 02 00 01 25 42
+        返回数据：01 03 02 00 01 79 84
+        返回值：True（到达），False（未到达）
+        '''
+        b = [0]*8
+        b[0] = self.gripper_id  # 设备ID，通常为1
+        b[1] = 0x03             # 功能码
+        b[2] = 0x06             # 寄存器高字节
+        b[3] = 0x02             # 寄存器低字节
+        b[4] = 0x00             # 数据高字节
+        b[5] = 0x01             # 数据低字节（读取1个寄存器）
+
+        # 计算CRC16校验码
+        crc_low, crc_high = self.calculate_crc16(b[0:6], "modbus")
+        b[6] = crc_low
+        b[7] = crc_high
+
+        # 向串口发送数据
+        putdata = b''
+        for i in range(8):
+            putdata = putdata + self.num2str(b[i])
+        print("发送位置到达判断指令:", putdata.hex(" "))
+        self.ser.write(putdata)
+        time.sleep(0.2)
+        read_num = self.ser.inWaiting()
+        getdata = self.ser.read(read_num)
+        print("位置到达判断响应:", getdata.hex(" "))
+
+        # 解析返回数据
+        if len(getdata) < 7:
+            print("返回数据长度不足，无法判断位置是否到达")
+            return False
+
+        # 返回数据格式：01 03 02 00 01 79 84
+        # Data[3] = 0x00, Data[4] = 0x01，表示已到达
+        try:
+            data_list = list(getdata)
+            if data_list[0] != self.gripper_id or data_list[1] != 0x03:
+                print("返回数据格式错误")
+                return False
+            # 数据长度为2，数据在data_list[3]和data_list[4]
+            value = (data_list[3] << 8) | data_list[4]
+            if value == 1:
+                return True
+            else:
+                return False
+        except Exception as e:
+            print("解析位置到达返回数据异常:", e)
+            return False
+
+
+    def setpos(self,width):
+        '''功能：主控单元设置灵巧手中 6 个直线驱动器的目标位置，使灵巧手完成相应的手势
+                动作。灵巧手中的 6 个直线伺服驱动器的 ID 号为 1-6，其中小拇指的 ID 为 1、无名指的 ID
+                为 2、中指的 ID 为 3、食指的 ID 为 4、大拇指弯曲指关节 ID 为 5、大拇指旋转指关节 ID
+                为 6。
+        指令帧长度：18Bytes
+        指令号：0x50（CMD_MC_SET_DRVALL_SEEKPOS）
+        数据内容：6 个驱动器的目标位置，每个位置为 2Bytes（小端模式低字节先发送），共12Bytes，目标位置的有效值为 0~2000，若为 0xFFFF （-1），则表示不需要设置该驱动器的目标
+                位置，因此可单独设置某个驱动器的目标位置
+        '''
+        datanum = 0x0C
+        b = [0]*13
+        # 设备ID
+        b[0] = self.gripper_id
+        b[1] = 0x10
+
+        # 寄存器地址
+        b[2] = 0x01
+        b[3] = 0x02
+
+        # 寄存器数量
+        b[4] = 0x00
+        b[5] = 0x02
+
+        # 字节数
+        b[6] = 0x04
+
+        # 数据
+        # 使用函数将20mm转换为4个字节并赋值到b[7]~b[10]
+        def mm_to_bytes(val_mm):
+            # 这里假设1mm对应100单位，20mm即2000
+            pos = int(val_mm * 100)
+            # 转换为2字节（小端），高位在前
+            high = (pos >> 8) & 0xFF
+            low = pos & 0xFF
+            return [0x00, 0x00, high, low]
+
+        b[7], b[8], b[9], b[10] = mm_to_bytes(width)
+
+        # 校验码
+        data_for_crc = [b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7], b[8], b[9], b[10]]
+        crc_low, crc_high = self.calculate_crc16(data_for_crc, "modbus")
+        b[11] = crc_low
+        b[12] = crc_high
+
+        #向串口发送数据
+        putdata = b''
+        
+        for i in range(1,14):
+            putdata = putdata + self.num2str(b[i-1])
+        # print(putdata)
+        self.ser.write(putdata)
+
+        # print('读取目标位置发送的数据：%s'%putdata.hex(" "))
+        time.sleep(0.5)
+        read_num = self.ser.inWaiting()
+        getdata = self.ser.read(read_num)
+        # print('读取目标位置返回的数据：%s'%getdata.hex(" "))
+
+        Data = getdata.hex(" ").split(" ")
+        self.run_gripper()
+        while self.is_force_sensor_reached() == False and self.is_position_reached() == False:
+            time.sleep(0.2)
+            print(self.is_force_sensor_reached())
+            print(self.is_position_reached())
+        return
+    # INSERT_YOUR_CODE
+    def set_temp_torque(self, percent):
+        '''
+        设置执行器临时运动力矩百分比
+        该命令为执行器临时运动力矩，地址为0x0105。寄存器内数据为执行器最大力矩（0x0306）的百分比。
+        发送数据：01 06 01 05 00 64 99 DC
+        返回数据：01 06 01 05 00 64 99 DC
+        参数:
+            percent: 力矩百分比（0~100），如100表示100%
+        '''
+        if percent < 0 or percent > 100:
+            print("力矩百分比应在0~100之间")
+            return False
+
+        b = [0]*8
+        b[0] = self.gripper_id  # 设备ID，通常为1
+        b[1] = 0x06             # 功能码
+        b[2] = 0x01             # 寄存器高字节
+        b[3] = 0x05             # 寄存器低字节
+        b[4] = 0x00             # 数据高字节
+        b[5] = percent & 0xFF   # 数据低字节（百分比）
+
+        # 计算CRC16校验码
+        crc_low, crc_high = self.calculate_crc16(b[0:6], "modbus")
+        b[6] = crc_low
+        b[7] = crc_high
+
+        # 向串口发送数据
+        putdata = b''
+        for i in range(8):
+            putdata = putdata + self.num2str(b[i])
+        print("发送临时区运动力矩设定指令:", putdata.hex(" "))
+        self.ser.write(putdata)
+        time.sleep(0.2)
+        read_num = self.ser.inWaiting()
+        getdata = self.ser.read(read_num)
+        print("临时区运动力矩设定响应:", getdata.hex(" "))
+
+        # 简单校验返回
+        if getdata == putdata:
+            print("临时区运动力矩设定成功")
+            return True
+        else:
+            print("临时区运动力矩设定失败")
+            return False
+
+    # def get_joint_position(self):
+    #     '''
+    #     功能：实时反馈位置信息，读取执行器的实时位置
+    #     说明：读取寄存器地址0x0609和0x060A，返回执行器实时位置信息
+    #     位置 = (high << 16) + low
+    #     发送数据：01 03 06 09 00 02 14 81
+    #     返回数据：01 03 04 00 00 00 00 FA 33
+    #     '''
+    #     b = [0] * 8
+    #     # 设备ID
+    #     b[0] = self.gripper_id if hasattr(self, 'gripper_id') else 0x01
+    #     # 功能码
+    #     b[1] = 0x03
+    #     # 寄存器地址高字节、低字节
+    #     b[2] = 0x06
+    #     b[3] = 0x09
+    #     # 数据：寄存器数量高字节、低字节（读取2个寄存器）
+    #     b[4] = 0x00
+    #     b[5] = 0x02
+    #     # CRC16校验
+    #     crc_low, crc_high = self.calculate_crc16(b[0:6], "modbus")
+    #     b[6] = crc_low
+    #     b[7] = crc_high
+
+    #     # 发送数据
+    #     putdata = b''
+    #     for i in range(8):
+    #         putdata = putdata + self.num2str(b[i])
+    #     print("发送实时反馈位置信息指令:", putdata.hex(" "))
+    #     self.ser.write(putdata)
+    #     time.sleep(0.2)
+    #     read_num = self.ser.inWaiting()
+    #     getdata = self.ser.read(read_num)
+    #     print("实时反馈位置信息响应:", getdata.hex(" "))
+
+    #     # 解析返回数据
+    #     if len(getdata) < 9:
+    #         print("返回数据长度不足，无法解析实时位置信息")
+    #         return None
+
+    #     try:
+    #         data_list = list(getdata)
+    #         # 检查设备ID和功能码
+    #         if data_list[0] != b[0] or data_list[1] != 0x03:
+    #             print("返回数据格式错误")
+    #             return None
+    #         # 数据长度
+    #         data_len = data_list[2]
+    #         if data_len != 4:
+    #             print("返回数据长度字段错误")
+    #             return None
+    #         # 位置 = (high << 16) + low
+    #         # high: data_list[3] << 8 | data_list[4]
+    #         # low:  data_list[5] << 8 | data_list[6]
+    #         high = (data_list[3] << 8) | data_list[4]
+    #         low = (data_list[5] << 8) | data_list[6]
+    #         position = (high << 16) + low
+    #         print(f"实时反馈位置信息：{position} (high: {high:#06x}, low: {low:#06x})")
+    #         return position
+    #     except Exception as e:
+    #         print("解析实时反馈位置信息异常:", e)
+    #         return None
+
+
+
+if __name__ == "__main__":
+    hand = GripperController(port="COM6", baudrate=115200)
+    # hand.homing()
+    hand.set_temp_torque(20)
+    hand.setpos(20)
+    hand.setpos(120)
+    # a = hand.is_force_sensor_reached()
+    # print(a)
+    # time.sleep(1)
+    # a = hand.is_force_sensor_reached()
+    # print(a)
+    # time.sleep(1)
+    # a = hand.is_force_sensor_reached()
+    # print(a)
+    # time.sleep(1)
+    # a = hand.is_force_sensor_reached()
+    # print(a)
+    # time.sleep(1)
+    # hand.setpos(20)
+    # hand.get_joint_position()
