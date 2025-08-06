@@ -95,23 +95,27 @@ class ActionExecuter:
             print(f"执行动作失败: {e}")
             return False
 
-    def execute_get_drink(self, pos_list: list = None, layer_number: int = None, head_angle: float = None, body_distance: float = None) -> bool:
+    # 拿一瓶饮料
+    def execute_get_drink(self, drink_id: int = None, layer_number: int = None, head_angle: float = None, body_distance: float = None) -> bool:
         try:
             if self.handle_l is None or self.handle_r is None:
                 print("机器人不可用")
                 return True
                 
-            if pos_list is None: # 到达货架再到达对应层数
+            if drink_id is None: # 到达货架再到达对应层数
                 self.move_to_shelf()
                 self.move_to_pick_height_pitch_angle(self.handle_l, self.handle_r, self.add_data_1, body_distance, head_angle)
                 print("到达对应层数")
             else: # 到达对应位置
-                for pos in pos_list:
-                    if pos == 5:
-                        self.get_drink(self.handle_l, self.handle_r, self.add_data_1)
-                        self.init_robot(self.handle_l, self.handle_r, self.add_data_1)
+                if drink_id == 5:
+                    self.move_to_shelf()
+                    self.move_to_pick_height_pitch_angle(self.handle_l, self.handle_r, self.add_data_1, body_distance, head_angle)
+                    self.get_drink(self.handle_l, self.handle_r, self.add_data_1)
+                    self.init_robot(self.handle_l, self.handle_r, self.add_data_1)
                 print("到达对应位置")
             return True
         except Exception as e:
             print(f"执行失败: {e}")
             return False
+        
+    # 

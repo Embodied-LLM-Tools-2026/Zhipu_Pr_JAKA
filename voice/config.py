@@ -53,7 +53,11 @@ class Config:
         # 饮料充足
         "饮料还够，我这就拿给您，请您稍等",
         # 拿完一瓶饮料
-        "这是您要的饮料"
+        "这是您要的饮料",
+        # 准备拿下一瓶
+        "下一瓶我这就去拿",
+        # 请您告诉我具体需要哪种饮料
+        "请您告诉我具体需要哪种饮料",
     ]
     
     # 拖延语备选
@@ -85,7 +89,7 @@ class Config:
     }
 
     # 实机还是模拟
-    ROBOT_AVAILABLE = True #调试时要模拟执行动作就改为False
+    ROBOT_AVAILABLE = False #调试时要模拟执行动作就改为False
     
     @classmethod
     def setup_environment(cls):

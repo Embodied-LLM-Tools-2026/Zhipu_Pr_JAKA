@@ -860,22 +860,31 @@ class VoiceRobotController:
                     obj_name = command_result.get("obj_name", "unknown")
                     num = int(command_result.get("num", "0"))
                     if obj_name not in Config.drink_list:   
-                        print("💬 我们这里没有这种饮料")
-                        self._play_and_execute_action("我们这里没有这种饮料", "shake_head")
+                        if obj_name == "饮料": # 如果用户说“饮料”，则提示用户具体需要哪种饮料
+                            print("请您告诉我具体需要哪种饮料")
+                            self._play_cached_audio("请您告诉我具体需要哪种饮料",tts_ready_callback=tts_ready_callback)
+                        else:
+                            print("💬 我们这里没有这种饮料")
+                            self._play_and_execute_action("我们这里没有这种饮料", "shake_head")
                         success = True
                     else:
+                        self._play_and_execute_action("好的，我去看看饮料还够不够", "nod")
                         # 获取饮料层数及对应的机器人头部俯仰角和身躯高度
                         layer_number,head_angle,body_distance = self.obj_locater.get_layer_number(obj_name=obj_name,num=num)
                         # 到达对应层数
                         self.robot_controller.execute_get_drink(head_angle=head_angle, body_distance=body_distance)
                         # 获取饮料位置
                         pos_list = self.obj_locater.observe(obj_name, num)
-                        pos_list = [5]
+                        pos_list = [5,4] # 测试用
                         print(f"💬 所在的层数：{layer_number}, 机器人头部俯仰角：{head_angle}, 机器人身躯高度：{body_distance}")
                         print(f"💬 饮料位置: {pos_list}")
                         if len(pos_list) > 0:
-                            audio_file_path = self._play_cached_audio("好的", tts_ready_callback=tts_ready_callback)
-                            self.robot_controller.execute_get_drink(pos_list=pos_list,layer_number=layer_number)
+                            audio_file_path = self._play_cached_audio("饮料还够，我这就拿给您，请您稍等", tts_ready_callback=tts_ready_callback)
+                            for i,pos in enumerate(pos_list):
+                                self.robot_controller.execute_get_drink(drink_id=pos,layer_number=layer_number,head_angle=head_angle,body_distance=body_distance)
+                                audio_file_path = self._play_cached_audio("这是您要的饮料", tts_ready_callback=tts_ready_callback)
+                                if i < len(pos_list) - 1:
+                                    audio_file_path = self._play_cached_audio("下一瓶我这就去拿", tts_ready_callback=tts_ready_callback)
                         else:
                             print("💬 不好意思，饮料不够了")
                             self._play_cached_audio("不好意思，饮料不够了")
