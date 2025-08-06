@@ -42,6 +42,9 @@ zarr==2.13.3
 # 语音合成依赖
 edge-tts
 kokoro
+ordered_set
+cn2an
+pypinyin_dict
 
 # 可选依赖
 # openai>=1.0.0   # OpenAI (备选)

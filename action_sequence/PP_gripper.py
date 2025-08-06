@@ -12,7 +12,7 @@ if PARENT_DIR not in sys.path:
 
 try:
     from controller.hand_controller import InspireHandR
-    from controller.AGV_controller import AGVClient
+    from action_sequence.agv_client import AGVClient
 except ImportError as e:
     print(f"导入InspireHandR或AGVClient失败，请检查controller/hand_controller.py和controller/AGV_controller.py路径。错误信息: {e}")
     # 如果导入失败，创建占位类以避免NameError
@@ -143,10 +143,11 @@ def pick_1_5(handle_L,handle_R,add_data):
     # 逆解，求笛卡尔点位p1的对应关节坐标
     # jp1 = x5.cnvrt_j(handle_R, new_pick_2_point, 1, pick_2)
 
-#     # # print(jp3)
     x5.movj(handle_R, pick_2, add_data)
     x5.wait_move_done(handle_R)
-
+    time.sleep(1)
+    ## 夹手
+    time.sleep(1)
 
     # 升起 new
     pick_3 = x5.Joint(j1 =140.679,j2 = -24.452, j3 = -30.001, j4 = -56.009, 
@@ -161,7 +162,12 @@ def pick_1_5(handle_L,handle_R,add_data):
     x5.wait_move_done(handle_R)
 
     # pre place
-    pick_5 = x5.Joint(j1 = -38.652, j2 = -2.122, j3 = 48.515, j4 = -89.585 ,
+    # pick_5 = x5.Joint(j1 = -38.652, j2 = -2.122, j3 = 48.515, j4 = -89.585 ,
+    #  j5 = 107.625, j6 = -77.819, e1 = -157.687, e2=0, e3=160)
+    # x5.movj(handle_R, pick_5, add_data)
+    # x5.wait_move_done(handle_R)
+
+    pick_5 = x5.Joint(j1 = 3.828, j2 = -2.122, j3 = 25.323, j4 = -89.585 ,
      j5 = 107.625, j6 = -77.819, e1 = -157.687, e2=0, e3=160)
     x5.movj(handle_R, pick_5, add_data)
     x5.wait_move_done(handle_R)
@@ -174,7 +180,14 @@ def pick_1_5(handle_L,handle_R,add_data):
      j5 = 46.422, j6 = -43.152, e1 = -132.991, e2=0, e3=160)
     x5.movj(handle_R, pick_6, add_data)
     x5.wait_move_done(handle_R)
+    time.sleep(1)
+    ## 松手
+    time.sleep(1)
 
+    pick_7 = x5.Joint(j1 = 3.828, j2 = -2.122, j3 = 25.323, j4 = -89.585 ,
+     j5 = 107.625, j6 = -77.819, e1 = -157.687, e2=0, e3=160)
+    x5.movj(handle_R, pick_7, add_data)
+    x5.wait_move_done(handle_R)
 
     # # pre place
     # pick_7 = x5.Joint(j1 = -38.652, j2 = -2.122, j3 = 43.077, j4 = -40.520, 
@@ -241,9 +254,9 @@ def main():
     #     # print(agv.get_pose())
     # time.sleep(35)
     # move_to_LM()
-    init_robot(handle_l, handle_r, add_data_1)
+    # init_robot(handle_l, handle_r, add_data_1)
     # wave(handle_l, handle_r, add_data_1)
-    pick_1_5(handle_l, handle_r, add_data_1)
+    # pick_1_5(handle_l, handle_r, add_data_1)
     # move_to_pick_height_pitch_angle(handle_l, handle_r, hand_l, hand_r, add_data_1, 200, 0)
     init_robot(handle_l, handle_r, add_data_1)
 

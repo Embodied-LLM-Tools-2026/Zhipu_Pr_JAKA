@@ -85,7 +85,7 @@ class Config:
     }
 
     # 实机还是模拟
-    ROBOT_AVAILABLE = False #调试时要模拟执行动作就改为False
+    ROBOT_AVAILABLE = True #调试时要模拟执行动作就改为False
     
     @classmethod
     def setup_environment(cls):
