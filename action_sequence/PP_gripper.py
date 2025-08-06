@@ -12,7 +12,7 @@ if PARENT_DIR not in sys.path:
 
 try:
     from controller.hand_controller import InspireHandR
-    from agv_client import AGVClient
+    from action_sequence.agv_client import AGVClient
 except ImportError as e:
     print(f"导入InspireHandR或AGVClient失败，请检查controller/hand_controller.py和controller/AGV_controller.py路径。错误信息: {e}")
     # 如果导入失败，创建占位类以避免NameError
@@ -143,7 +143,6 @@ def pick_1_5(handle_L,handle_R,add_data):
     # 逆解，求笛卡尔点位p1的对应关节坐标
     # jp1 = x5.cnvrt_j(handle_R, new_pick_2_point, 1, pick_2)
 
-#     # # print(jp3)
     x5.movj(handle_R, pick_2, add_data)
     x5.wait_move_done(handle_R)
     time.sleep(1)
@@ -257,7 +256,7 @@ def main():
     # move_to_LM()
     # init_robot(handle_l, handle_r, add_data_1)
     # wave(handle_l, handle_r, add_data_1)
-    pick_1_5(handle_l, handle_r, add_data_1)
+    # pick_1_5(handle_l, handle_r, add_data_1)
     # move_to_pick_height_pitch_angle(handle_l, handle_r, hand_l, hand_r, add_data_1, 200, 0)
     init_robot(handle_l, handle_r, add_data_1)
 

@@ -26,7 +26,7 @@ class TextToSpeechEngine:
         device = 'cuda' if torch.cuda.is_available() else 'cpu'
         model = KModel(model=model_path, config=config_path, repo_id=repo_id).to(device).eval()
         self.zh_pipeline = KPipeline(lang_code='z', repo_id=repo_id, model=model)
-        voice_zf = "zf_022" #音色，待选6、19、22
+        voice_zf = "zm_009" #音色，待选6、19、22
         self.voice_zf_tensor = torch.load(f'ckpts/kokoro-v1.1/voices/{voice_zf}.pt', weights_only=True)
 
     def speed_callable(self,len_ps):

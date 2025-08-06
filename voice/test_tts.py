@@ -13,7 +13,7 @@ def speed_callable(len_ps):
     return speed * 1.1
 
 voice_dir = '../ckpts/kokoro-v1.1/voices/'
-voice_files = [f for f in os.listdir(voice_dir) if f.startswith('zf') and f.endswith('.pt')]
+voice_files = [f for f in os.listdir(voice_dir) if f.startswith('zm') and f.endswith('.pt')]
 
 # 创建输出文件夹
 output_dir = 'output_voices'
