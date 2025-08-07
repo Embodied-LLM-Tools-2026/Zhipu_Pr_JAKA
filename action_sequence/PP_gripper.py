@@ -105,7 +105,7 @@ def move_to_shelf():
     with AGVClient(ip='192.168.1.51') as agv:
         agv.go_to_point_in_world(-0.255,-0.039,0, 1)
 
-def pick_2_4(handle_L,handle_R,add_data,gripper_left,gripper_right):
+def pick_4_4(handle_L,handle_R,add_data,gripper_left,gripper_right):
     """
     抓取2层4号
     """
@@ -143,7 +143,7 @@ def pick_2_4(handle_L,handle_R,add_data,gripper_left,gripper_right):
     x5.wait_move_done(handle_R)
     print("抓取5号")
 
-def pick_2_2(handle_L,handle_R,add_data,gripper_left,gripper_right):
+def pick_4_2(handle_L,handle_R,add_data,gripper_left,gripper_right):
     """
     抓取2层2号
     """
@@ -188,7 +188,7 @@ def pick_2_2(handle_L,handle_R,add_data,gripper_left,gripper_right):
     print("抓取5号")
 
 
-def pick_1_5(handle_L,handle_R,add_data,gripper_left,gripper_right):
+def pick_5_5(handle_L,handle_R,add_data,gripper_left,gripper_right):
     """
     抓取
     """

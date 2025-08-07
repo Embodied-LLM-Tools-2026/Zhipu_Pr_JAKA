@@ -860,7 +860,7 @@ class VoiceRobotController:
                     obj_name = command_result.get("obj_name", "unknown")
                     num = int(command_result.get("num", "0"))
                     if obj_name not in Config.drink_list:   
-                        if obj_name == "饮料": # 如果用户说“饮料”，则提示用户具体需要哪种饮料
+                        if obj_name == "饮料": # 如果用户说“饮料”，则提示用户具体需要哪种饮料。待解决：如果用户同时说了多种饮料，会出错
                             print("请您告诉我具体需要哪种饮料")
                             self._play_cached_audio("请您告诉我具体需要哪种饮料",tts_ready_callback=tts_ready_callback)
                         else:
@@ -887,7 +887,7 @@ class VoiceRobotController:
                                     audio_file_path = self._play_cached_audio("下一瓶我这就去拿", tts_ready_callback=tts_ready_callback)
                         else:
                             print("💬 不好意思，饮料不够了")
-                            self._play_cached_audio("不好意思，饮料不够了")
+                            self._play_cached_audio("不好意思，饮料不够了") # 待解决：如果饮料不够了，它看完之后需要返回
                         success = True
                 else:
                     audio_file_path = self._play_cached_audio("好的", tts_ready_callback=tts_ready_callback)
