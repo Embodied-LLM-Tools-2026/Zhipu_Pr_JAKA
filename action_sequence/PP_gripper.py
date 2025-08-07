@@ -34,6 +34,11 @@ INIT_POS_L = x5.Pose(x=-200, y=245, z=5, a=120, b=5, c=115, e1=-90, e2=0, e3=0)
 INIT_POINT_L = x5.Point(pose=INIT_POS_L, uf=0, tf=0, cfg=(0,0,0,7))
 INIT_JOINT_L = x5.Joint(j1=4.927, j2=-80.496, j3=-126.895, j4=-87.812, j5=22.909, j6=-79.830, e1=-20.340+90, e2=0, e3=0)
 
+def back_bar_station():
+    with AGVClient(ip='192.168.1.51') as agv:
+        agv.go_to_point_in_world(-0.677,0.016,3.13722928, 1)
+
+
 def init_robot(handle_l, handle_r, add_data):
     # 初始化左臂
     x5.movj(handle_l, INIT_JOINT_L, add_data)
@@ -105,10 +110,12 @@ def move_to_shelf():
     with AGVClient(ip='192.168.1.51') as agv:
         agv.go_to_point_in_world(-0.255,-0.039,0, 1)
 
-def pick_2_4(handle_L,handle_R,add_data,gripper_left,gripper_right):
+def pick_4_4(handle_L,handle_R,add_data,gripper_left,gripper_right):
     """
     抓取2层4号
     """
+    with AGVClient(ip='192.168.1.51') as agv:
+        agv.go_to_point_in_world(0.084,0.016,0.0043633, 0)
     pick_2 = x5.Joint(j1=91.998, j2 = -6.429, j3 = 21.269, j4 = -98.156 ,
     j5 = -13.637, j6 = -26.405, e1 = -59.672, e2=0, e3=130)
     x5.movj(handle_R, pick_2, add_data)
@@ -142,12 +149,32 @@ def pick_2_4(handle_L,handle_R,add_data,gripper_left,gripper_right):
     x5.movj(handle_R, pick_5, add_data)
     x5.wait_move_done(handle_R)
     print("抓取5号")
+    with AGVClient(ip='192.168.1.51') as agv:
+        agv.go_to_point_in_world(-0.677,0.016,3.13722928, 1)
 
-def pick_2_2(handle_L,handle_R,add_data,gripper_left,gripper_right):
+    ## 预设点位，需要设定第二个
+    pick_6 = x5.Joint(j1 =27.674, j2 = -69.520, j3 = 46.600, j4 = -50.957 ,
+    j5 = 11.877, j6 = -27.190, e1 = -159.768, e2=0, e3=130)
+    x5.movj(handle_R, pick_6, add_data)
+    x5.wait_move_done(handle_R)
+    print("抓取5号")
+    gripper_right.setpos(0)
+
+    pick_7 = x5.Joint(j1 =27.837, j2 = -61.691, j3 = 50.544, j4 = -77.634 ,
+    j5 = 4.961, j6 = -4.843, e1 = -148.925, e2=0, e3=130)
+    x5.movj(handle_R, pick_7, add_data)
+    x5.wait_move_done(handle_R)
+    print("抓取5号")
+
+
+    init_robot(handle_L, handle_R, add_data)
+
+def pick_4_2(handle_L,handle_R,add_data,gripper_left,gripper_right):
     """
     抓取2层2号
     """
-
+    with AGVClient(ip='192.168.1.51') as agv:
+        agv.go_to_point_in_world(0.084,0.016,0.0043633, 0)
     pick_4 = x5.Joint(j1=63.393, j2 = -27.739, j3 = 51.683, j4 = -96.139,
     j5 = -16.647, j6 = -40.161, e1 = -64.811, e2=0, e3=130)
     x5.movj(handle_R, pick_4, add_data)
@@ -187,14 +214,34 @@ def pick_2_2(handle_L,handle_R,add_data,gripper_left,gripper_right):
     x5.wait_move_done(handle_R)
     print("抓取5号")
 
+    with AGVClient(ip='192.168.1.51') as agv:
+        agv.go_to_point_in_world(-0.677,0.016,3.13722928, 1)
 
-def pick_1_5(handle_L,handle_R,add_data,gripper_left,gripper_right):
+    ## 预设点位，需要设定第二个
+    pick_6 = x5.Joint(j1 =39.543, j2 = -56.320, j3 = 21.110, j4 = -24.619 ,
+    j5 = 26.262, j6 = -56.211, e1 = -143.972, e2=0, e3=130)
+    x5.movj(handle_R, pick_6, add_data)
+    x5.wait_move_done(handle_R)
+    print("抓取5号")
+    gripper_right.setpos(0)
+
+    pick_7 = x5.Joint(j1 =40.056, j2 = -40.239, j3 = 26.906, j4 = -58.785 ,
+    j5 = 26.766, j6 = -34.589, e1 = -144.630, e2=0, e3=130)
+    x5.movj(handle_R, pick_7, add_data)
+    x5.wait_move_done(handle_R)
+    print("抓取5号")
+
+
+    init_robot(handle_L, handle_R, add_data)
+
+
+def pick_5_5(handle_L,handle_R,add_data,gripper_left,gripper_right):
     """
     抓取
     """
     # 计算与目标参考点位的差值
     with AGVClient(ip='192.168.1.51') as agv:
-        # agv.go_to_point_in_world(-0.255,-0.039,0, 1)
+        agv.go_to_point_in_world(0.084,0.016,0.0043633, 0)
         pose_result = agv.get_pose()
         x, y, angle = pose_result
     delta_x = (x-0.016)*1000  #-0.0874+0.08=-0.0074
@@ -247,35 +294,35 @@ def pick_1_5(handle_L,handle_R,add_data,gripper_left,gripper_right):
     x5.movj(handle_R, pick_5, add_data)
     x5.wait_move_done(handle_R)
 
-    # with AGVClient(ip='192.168.1.51') as agv:
-    #     agv.go_to_point_in_world(-0.779,-0.037,-3.14,1)
+    pick_6 = x5.Joint(j1 = 37.176, j2 = 15.535, j3 = 14.215, j4 = -68.999 ,
+     j5 =25.527, j6 = -87.195, e1 = -84.449, e2=0, e3=160)
+    x5.movj(handle_R, pick_6, add_data)
+    x5.wait_move_done(handle_R)
 
-    # # 放置
-    # pick_6 = x5.Joint(j1 = 58.186, j2 = -70.701, j3 = -15.641, j4 = -6.684, 
-    #  j5 = 46.422, j6 = -43.152, e1 = -132.991, e2=0, e3=160)
-    # x5.movj(handle_R, pick_6, add_data)
-    # x5.wait_move_done(handle_R)
-    # time.sleep(1)
-    # ## 松手
-    # time.sleep(1)
+    pick_5 = x5.Joint(j1 =33.298, j2 = -2.419, j3 = 24.806, j4 = -77.036 ,
+    j5 = 21.211, j6 = -88, e1 = -83.869, e2=0, e3=130)
+    x5.movj(handle_R, pick_5, add_data)
+    x5.wait_move_done(handle_R)
+    print("抓取5号")
 
-    # pick_7 = x5.Joint(j1 = 3.828, j2 = -2.122, j3 = 25.323, j4 = -89.585 ,
-    #  j5 = 107.625, j6 = -77.819, e1 = -157.687, e2=0, e3=160)
-    # x5.movj(handle_R, pick_7, add_data)
-    # x5.wait_move_done(handle_R)
+    with AGVClient(ip='192.168.1.51') as agv:
+        agv.go_to_point_in_world(-0.677,0.016,3.13722928, 1)
+  
+    ## 预设点位，需要设定第二个
+    pick_6 = x5.Joint(j1 =39.543, j2 = -56.320, j3 = 21.110, j4 = -24.619 ,
+    j5 = 26.262, j6 = -56.211, e1 = -143.972, e2=0, e3=130)
+    x5.movj(handle_R, pick_6, add_data)
+    x5.wait_move_done(handle_R)
+    print("抓取5号")
+    gripper_right.setpos(0)
 
-    # # pre place
-    # pick_7 = x5.Joint(j1 = -38.652, j2 = -2.122, j3 = 43.077, j4 = -40.520, 
-    #  j5 = 117.594, j6 = -65.691, e1 = -140.857, e2=0, e3=160)
-    # x5.movj(handle_R, pick_7, add_data)
-    # x5.wait_move_done(handle_R)
+    pick_7 = x5.Joint(j1 =40.056, j2 = -40.239, j3 = 26.906, j4 = -58.785 ,
+    j5 = 26.766, j6 = -34.589, e1 = -144.630, e2=0, e3=130)
+    x5.movj(handle_R, pick_7, add_data)
+    x5.wait_move_done(handle_R)
+    print("抓取5号")
 
-
-    # # 到达安全点
-    # pick_8 = x5.Joint(j1 =-12.429,j2 = 4.995, j3 = 5.556, j4 = -89.311, 
-    #  j5 = 117.431, j6 = -88.0, e1 = -137.357, e2=0, e3=160)
-    # x5.movj(handle_R, pick_8, add_data)
-    # x5.wait_move_done(handle_R)
+    init_robot(handle_L, handle_R, add_data)
 
 
 
@@ -327,10 +374,10 @@ def main():
     # time.sleep(35)
     # move_to_LM()
     init_robot(handle_l, handle_r, add_data_1)
-    pick_2_4(handle_l, handle_r, add_data_1,gripper_left,gripper_right)
-    # wave(handle_l, handle_r, add_data_1)
-    # pick_1_5(handle_l, handle_r, add_data_1,gripper_left,gripper_right)
-    # move_to_pick_height_pitch_angle(handle_l, handle_r, hand_l, hand_r, add_data_1, 200, 0)
+    pick_1_5(handle_l, handle_r, add_data_1,gripper_left,gripper_right)
+    # # wave(handle_l, handle_r, add_data_1)
+    # # pick_1_5(handle_l, handle_r, add_data_1,gripper_left,gripper_right)
+    # # move_to_pick_height_pitch_angle(handle_l, handle_r, hand_l, hand_r, add_data_1, 200, 0)
     # init_robot(handle_l, handle_r, add_data_1)
 
 
