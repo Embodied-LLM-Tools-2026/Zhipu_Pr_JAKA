@@ -111,6 +111,7 @@ def move_to_shelf():
         agv.go_to_point_in_world(-0.255,-0.039,0, 1)
 
 def pick_4_4(handle_L,handle_R,add_data,gripper_left,gripper_right):
+def pick_4_4(handle_L,handle_R,add_data,gripper_left,gripper_right):
     """
     抓取2层4号
     """

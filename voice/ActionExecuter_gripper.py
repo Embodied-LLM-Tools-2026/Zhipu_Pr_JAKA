@@ -25,17 +25,25 @@ class ActionExecuter:
             self.handle_r = x5.connect(robot_ip_right)
             self.add_data_1 = x5.MovPointAdd(vel=100, acc=100)
             self.add_data_2 = x5.MovPointAdd(vel=100, cnt=100, acc=100, dec=100, offset =-1, offset_data=(10,0,0,0,0,0,0,0,0))
-            # 初始化手
-            import time
-            from action_sequence.PP_gripper import init_robot, pick_1_5, move_to_shelf, move_to_pick_height_pitch_angle
+            # 初始化夹爪
+            from controller.gripper_controller import GripperController
+            self.gripper_left = GripperController(port="COM10", baudrate=115200)
+            self.gripper_right = GripperController(port="COM11", baudrate=115200)
+            self.gripper_left.set_temp_torque(15)
+            self.gripper_right.set_temp_torque(15)
+            self.gripper_left.setpos(0)
+            self.gripper_right.setpos(0)
 
             # 导入动作函数
+            from action_sequence.PP_gripper import init_robot, pick_5_5, pick_4_2, pick_4_4, move_to_shelf, move_to_pick_height_pitch_angle
             self.init_robot = init_robot
             self.greeting = wave
             self.shaking_head = Shake_head
             self.nodding = Nod
             self.bowing = bow
-            self.get_drink = pick_1_5
+            self.pick_5_5 = pick_5_5
+            self.pick_4_2 = pick_4_2
+            self.pick_4_4 = pick_4_4
             self.move_to_shelf = move_to_shelf
             self.move_to_pick_height_pitch_angle = move_to_pick_height_pitch_angle
 
@@ -107,15 +115,20 @@ class ActionExecuter:
                 self.move_to_pick_height_pitch_angle(self.handle_l, self.handle_r, self.add_data_1, body_distance, head_angle)
                 print("到达对应层数")
             else: # 到达对应位置
-                if drink_id == 5:
-                    self.move_to_shelf()
-                    self.move_to_pick_height_pitch_angle(self.handle_l, self.handle_r, self.add_data_1, body_distance, head_angle)
-                    self.get_drink(self.handle_l, self.handle_r, self.add_data_1)
-                    self.init_robot(self.handle_l, self.handle_r, self.add_data_1)
+                self.move_to_shelf()
+                self.move_to_pick_height_pitch_angle(self.handle_l, self.handle_r, self.add_data_1, body_distance, head_angle)
+                if layer_number == 5:
+                    if drink_id == 5:
+                        self.pick_5_5(self.handle_l, self.handle_r, self.add_data_1, self.gripper_left, self.gripper_right)
+                elif layer_number == 4:
+                    if drink_id == 2:
+                        self.pick_4_2(self.handle_l, self.handle_r, self.add_data_1, self.gripper_left, self.gripper_right)
+                    elif drink_id == 4:
+                        self.pick_4_4(self.handle_l, self.handle_r, self.add_data_1, self.gripper_left, self.gripper_right)
+                self.init_robot(self.handle_l, self.handle_r, self.add_data_1)
                 print("到达对应位置")
             return True
         except Exception as e:
             print(f"执行失败: {e}")
             return False
         
-    # 
