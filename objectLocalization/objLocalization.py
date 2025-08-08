@@ -78,7 +78,7 @@ class ObjectLocalization:
         :param quantity: 要查找的数量
         :return: 包含推荐位置编号的列表，如果查找失败则返回None
         """
-        search_result = self.locator.find_drinks(obj_name, quantity, grabbing_direction="right", total_drinks=5)
+        search_result = self.locator.find_drinks(obj_name, quantity, grabbing_direction="right")
         
         if search_result and search_result.get("success"):
             return search_result.get("positions")
@@ -102,7 +102,7 @@ def main():
     # print(f"{obj_loc.obj_name}所在的层数：{layer_number}, 机器人头部俯仰角：{head_angle}, 机器人身躯高度：{body_distance}")
     #print()
 
-    obj_loc.observe("可乐", 3)
+    obj_loc.observe("雪碧",2)
     
 
 if __name__ == "__main__":

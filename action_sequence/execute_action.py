@@ -87,6 +87,7 @@ def Nod(handle_L,handle_R,add_data):
     point_L = copy.copy(INIT_POINT_L)
     point_L.pose.e3 += 20
     # 第一次向下 
+    x5.servol(handle_L, 100)
     x5.movl(handle_L, point_L, add_data)
     x5.wait_move_done(handle_L)
 

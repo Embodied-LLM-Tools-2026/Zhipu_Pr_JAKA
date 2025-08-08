@@ -35,7 +35,7 @@ class ActionExecuter:
             self.gripper_right.setpos(0)
 
             # 导入动作函数
-            from action_sequence.PP_gripper import init_robot, pick_5_5, pick_4_2, pick_4_4, move_to_shelf, move_to_pick_height_pitch_angle
+            from action_sequence.PP_gripper import init_robot, back_bar_station, pick_5_5, pick_4_2, pick_4_4, move_to_shelf, move_to_pick_height_pitch_angle
             self.init_robot = init_robot
             self.greeting = wave
             self.shaking_head = Shake_head
@@ -46,6 +46,7 @@ class ActionExecuter:
             self.pick_4_4 = pick_4_4
             self.move_to_shelf = move_to_shelf
             self.move_to_pick_height_pitch_angle = move_to_pick_height_pitch_angle
+            self.back_bar_station = back_bar_station
 
             print(f"已连接到机器人: {robot_ip_left} 和 {robot_ip_right}")
             self.init_robot(self.handle_l, self.handle_r, self.add_data_1)
@@ -131,4 +132,7 @@ class ActionExecuter:
         except Exception as e:
             print(f"执行失败: {e}")
             return False
+
+    def back_to_init_height_and_angle(self):
+        self.move_to_pick_height_pitch_angle(self.handle_l, self.handle_r, self.add_data_1, 160, 0)
         

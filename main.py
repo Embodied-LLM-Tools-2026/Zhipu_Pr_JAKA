@@ -875,7 +875,7 @@ class VoiceRobotController:
                         self.robot_controller.execute_get_drink(head_angle=head_angle, body_distance=body_distance)
                         # 获取饮料位置
                         pos_list = self.obj_locater.observe(obj_name, num)
-                        pos_list = [5,4] # 测试用
+                        # pos_list = [5,4] # 测试用
                         print(f"💬 所在的层数：{layer_number}, 机器人头部俯仰角：{head_angle}, 机器人身躯高度：{body_distance}")
                         print(f"💬 饮料位置: {pos_list}")
                         if len(pos_list) > 0:
@@ -887,7 +887,9 @@ class VoiceRobotController:
                                     audio_file_path = self._play_cached_audio("下一瓶我这就去拿", tts_ready_callback=tts_ready_callback)
                         else:
                             print("💬 不好意思，饮料不够了")
-                            self._play_cached_audio("不好意思，饮料不够了") # 待解决：如果饮料不够了，它看完之后需要返回
+                            self.robot_controller.back_bar_station()
+                            self.robot_controller.back_to_init_height_and_angle()
+                            self._play_cached_audio("不好意思，饮料不够了", tts_ready_callback=tts_ready_callback) 
                         success = True
                 else:
                     audio_file_path = self._play_cached_audio("好的", tts_ready_callback=tts_ready_callback)

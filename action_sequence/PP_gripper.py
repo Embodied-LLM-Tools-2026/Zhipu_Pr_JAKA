@@ -108,15 +108,14 @@ def wave(handle_l, handle_r, add_data):
 
 def move_to_shelf():
     with AGVClient(ip='192.168.1.51') as agv:
-        agv.go_to_point_in_world(-0.255,-0.039,0, 1)
+        agv.go_to_point_in_world(0.084,0.016,0.0043633, 0)
 
-def pick_4_4(handle_L,handle_R,add_data,gripper_left,gripper_right):
 def pick_4_4(handle_L,handle_R,add_data,gripper_left,gripper_right):
     """
     抓取2层4号
     """
-    with AGVClient(ip='192.168.1.51') as agv:
-        agv.go_to_point_in_world(0.084,0.016,0.0043633, 0)
+    # with AGVClient(ip='192.168.1.51') as agv:
+    #     agv.go_to_point_in_world(0.084,0.016,0.0043633, 0)
     pick_2 = x5.Joint(j1=91.998, j2 = -6.429, j3 = 21.269, j4 = -98.156 ,
     j5 = -13.637, j6 = -26.405, e1 = -59.672, e2=0, e3=130)
     x5.movj(handle_R, pick_2, add_data)
@@ -174,8 +173,8 @@ def pick_4_2(handle_L,handle_R,add_data,gripper_left,gripper_right):
     """
     抓取2层2号
     """
-    with AGVClient(ip='192.168.1.51') as agv:
-        agv.go_to_point_in_world(0.084,0.016,0.0043633, 0)
+    # with AGVClient(ip='192.168.1.51') as agv:
+    #     agv.go_to_point_in_world(0.084,0.016,0.0043633, 0)
     pick_4 = x5.Joint(j1=63.393, j2 = -27.739, j3 = 51.683, j4 = -96.139,
     j5 = -16.647, j6 = -40.161, e1 = -64.811, e2=0, e3=130)
     x5.movj(handle_R, pick_4, add_data)
@@ -242,7 +241,7 @@ def pick_5_5(handle_L,handle_R,add_data,gripper_left,gripper_right):
     """
     # 计算与目标参考点位的差值
     with AGVClient(ip='192.168.1.51') as agv:
-        agv.go_to_point_in_world(0.084,0.016,0.0043633, 0)
+        # agv.go_to_point_in_world(0.084,0.016,0.0043633, 0)
         pose_result = agv.get_pose()
         x, y, angle = pose_result
     delta_x = (x-0.016)*1000  #-0.0874+0.08=-0.0074
@@ -375,7 +374,7 @@ def main():
     # time.sleep(35)
     # move_to_LM()
     init_robot(handle_l, handle_r, add_data_1)
-    pick_1_5(handle_l, handle_r, add_data_1,gripper_left,gripper_right)
+    pick_4_2(handle_l, handle_r, add_data_1,gripper_left,gripper_right)
     # # wave(handle_l, handle_r, add_data_1)
     # # pick_1_5(handle_l, handle_r, add_data_1,gripper_left,gripper_right)
     # # move_to_pick_height_pitch_angle(handle_l, handle_r, hand_l, hand_r, add_data_1, 200, 0)

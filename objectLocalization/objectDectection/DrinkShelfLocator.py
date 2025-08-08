@@ -331,7 +331,7 @@ class DrinkFinder:
             aligned_mask = current_mask
             if self.alignment_enabled and "reference_line_info" in position_template:
                 aligned_mask = self._align_mask_to_template(current_mask, position_template)
-            
+
             # 将当前检测到的mask分解为独立的个体位置
             current_individual_positions, _ = self._decompose_current_mask(aligned_mask)
             
@@ -354,7 +354,7 @@ class DrinkFinder:
                 if grabbing_direction == "left":
                     selected_positions = sorted_positions[:quantity]
                 else:
-                    selected_positions = sorted_positions[:quantity:-1]
+                    selected_positions = sorted_positions[M-quantity:]
             
             return {
                 "success": True,
@@ -1020,7 +1020,7 @@ class DrinkShelfLocator:
         self.yoloe_processor = YOLOEProcessor(model_path)
         self.camera = CameraController(camera_id)
         self.calibrator = PositionCalibrator(template_dir)
-        self.finder = DrinkFinder(alignment_enabled=False)  # 启用掩码对齐功能
+        self.finder = DrinkFinder(alignment_enabled=True)  # 启用掩码对齐功能
         
     
     def calibrate_positions(self, drink_type: str) -> Dict:
@@ -1155,7 +1155,7 @@ class DrinkShelfLocator:
                     if grabbing_direction.lower() == 'left':
                         selected_positions = occupied_positions[:quantity]
                     else:   
-                        selected_positions = occupied_positions[:quantity:-1]
+                        selected_positions = occupied_positions[M-quantity:]
                 
                 result = {
                     "success": True,
