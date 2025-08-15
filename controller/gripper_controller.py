@@ -535,11 +535,11 @@ class GripperController:
 
 
 if __name__ == "__main__":
-    hand = GripperController(port="COM6", baudrate=115200)
+    hand = GripperController(port="COM11", baudrate=115200)
     # hand.homing()
     hand.set_temp_torque(20)
-    hand.setpos(20)
-    hand.setpos(120)
+    hand.setpos(0)
+    # hand.setpos(120)
     # a = hand.is_force_sensor_reached()
     # print(a)
     # time.sleep(1)
