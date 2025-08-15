@@ -10,56 +10,90 @@ class CrossPlatformAudioManager:
     """跨平台音频管理器 - 使用sounddevice和soundfile"""
     
     def __init__(self):
-        self.sample_rate = self._get_compatible_sample_rate()
         self.channels = 1
         self.dtype = 'int16'
         
         # 预选择最佳设备
         self.input_device = self._get_best_input_device()
         self.output_device = self._get_best_output_device()
-        
+        self.sample_rate = self._get_compatible_sample_rate(self.input_device)
         print(f"🎯 音频设备预选择完成:")
         print(f"   输入设备: {self.input_device}")
         print(f"   输出设备: {self.output_device}")
         print(f"   采样率: {self.sample_rate}Hz")
     
-    def _get_compatible_sample_rate(self):
-        """获取兼容的采样率"""
+    def _get_compatible_sample_rate(self, input_device_index):
+        """
+        检测并选择兼容的采样率
+        优先选择WebRTC VAD支持的采样率：8000, 16000, 32000, 48000 Hz
+        """
         try:
-            import sounddevice as sd
+            import pyaudio
+            pa = pyaudio.PyAudio()
             
-            # 测试常用采样率
-            test_rates = [48000, 44100, 22050, 16000, 8000]
-            
-            for rate in test_rates:
-                try:
-                    # 短暂测试这个采样率
-                    test_duration = 0.01  # 10ms
-                    recording = sd.rec(
-                        int(test_duration * rate), 
-                        samplerate=rate, 
-                        channels=1,
-                        dtype='int16'
-                    )
-                    sd.wait()
-                    print(f"✅ 使用采样率: {rate}Hz")
-                    return rate
-                except Exception as e:
-                    print(f"⚠️ 采样率 {rate}Hz 不兼容: {e}")
-                    continue
-            
-            # 如果都不行，使用默认设备的采样率
             try:
-                device_info = sd.query_devices(kind='input')
-                default_rate = int(device_info['default_samplerate'])
-                print(f"✅ 使用设备默认采样率: {default_rate}Hz")
-                return default_rate
-            except:
-                print("⚠️ 回退到16000Hz")
-                return 16000
+                # WebRTC VAD 支持的采样率，按优先级排序
+                vad_supported_rates = [16000, 48000, 32000, 8000]
                 
+                # 使用传入的设备索引，如果为None则使用默认设备
+                if input_device_index is None:
+                    try:
+                        device_index = pa.get_default_input_device_info()['index']
+                    except:
+                        device_index = 0
+                else:
+                    device_index = input_device_index
+                
+                print(f"🔍 检测设备 {device_index} 的采样率支持情况...")
+                
+                # 测试每个采样率是否被设备支持
+                for rate in vad_supported_rates:
+                    try:
+                        # 使用 PyAudio 的 is_format_supported 检测
+                        if pa.is_format_supported(
+                            rate=rate,
+                            input_device=device_index,
+                            input_channels=1,
+                            input_format=pyaudio.paInt16
+                        ):
+                            print(f"✅ 选择采样率: {rate} Hz (WebRTC VAD兼容)")
+                            return rate
+                    except ValueError:
+                        # 不支持该采样率
+                        continue
+                    except Exception as e:
+                        # 其他错误，继续尝试下一个
+                        print(f"⚠️ 测试采样率 {rate} Hz 时出错: {e}")
+                        continue
+                
+                # 如果所有WebRTC VAD采样率都不支持，尝试获取设备默认采样率
+                try:
+                    device_info = pa.get_device_info_by_index(device_index)
+                    device_rate = int(device_info['defaultSampleRate'])
+                    print(f"⚠️ WebRTC VAD采样率均不支持，设备默认采样率: {device_rate} Hz")
+                    
+                    # 选择最接近的WebRTC VAD支持的采样率
+                    closest_rate = min(vad_supported_rates, key=lambda x: abs(x - device_rate))
+                    print(f"📍 选择最接近的VAD支持采样率: {closest_rate} Hz")
+                    return closest_rate
+                    
+                except Exception as e:
+                    print(f"⚠️ 获取设备信息失败: {e}")
+                
+            finally:
+                pa.terminate()
+            
+            # 最后的备选方案
+            print("⚠️ 采样率检测失败，使用默认值: 16000 Hz")
+            return 16000
+            
         except ImportError:
-            return 44100  # 默认值
+            print("⚠️ PyAudio 未安装，使用默认采样率: 16000 Hz")
+            return 16000
+        except Exception as e:
+            print(f"⚠️ 采样率检测异常: {e}，使用默认值: 16000 Hz")
+            return 16000
+
         
     def record_audio(self, duration=None, use_vad=True):
         """录制音频，返回numpy数组"""
@@ -132,11 +166,19 @@ class CrossPlatformAudioManager:
             if not input_devices:
                 return None  # 使用默认设备
             
+            # 优先选择 DJI 麦克风
+            for idx, d in input_devices:
+                name = d['name'].lower()
+                print(f"🎤 检测设备: {d['name']}")
+                if 'dji' in name:
+                    print(f"🎤 优先选择 DJI 麦克风: {d['name']} (设备 {idx})")
+                    return idx
+
             # 优先选择USB设备
             for device_idx, device in input_devices:
                 device_name = device['name'].lower()
                 if any(usb_indicator in device_name for usb_indicator in 
-                      ['usb', 'headset', 'microphone', 'webcam']):
+                      ['earpod','usb', 'headset', 'microphone', 'webcam']):
                     print(f"🎯 选择USB设备: {device['name']}")
                     return device_idx
             

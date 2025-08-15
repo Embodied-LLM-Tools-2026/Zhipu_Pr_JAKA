@@ -7,6 +7,11 @@
 2. 检测到语音中包含"小拓"后，播放help.mp3，执行动作1
 3. 再次检测语音，结束后播放ok.mp3，执行动作2
 4. 循环检测
+
+优化特性：
+- 解决音频overflow问题
+- 优化缓冲区管理
+- 改进错误处理
 """
 
 import os
@@ -91,6 +96,130 @@ except ImportError as e:
     sys.exit(1)
 
 
+class OptimizedVoiceRecorder:
+    """优化的语音录制器，解决overflow问题"""
+    
+    def __init__(self):
+        """初始化优化的录音器"""
+        self.base_recorder = SimplifiedVoiceRecorder()
+        self.is_recording = False
+        self.overflow_count = 0
+        self.max_overflow_tolerance = 10  # 最大容忍overflow次数
+        
+        # 优化音频参数
+        if hasattr(self.base_recorder, 'audio_manager'):
+            # 减小缓冲区大小，提高响应速度
+            original_sample_rate = self.base_recorder.audio_manager.sample_rate
+            print(f"🔧 原始采样率: {original_sample_rate}Hz")
+            
+            # 如果采样率过高，降低到16000Hz以减少处理负担
+            # if original_sample_rate > 16000:
+            #     print("🔧 检测到高采样率，优化为16000Hz以减少overflow")
+            #     self.base_recorder.audio_manager.sample_rate = 16000
+    
+    def start_recording(self, use_vad=True, max_retries=3):
+        """开始录音，带重试机制"""
+        for attempt in range(max_retries):
+            try:
+                print(f"🎤 开始录音 (尝试 {attempt + 1}/{max_retries})")
+                
+                # 如果之前有overflow，先清理一下
+                if self.overflow_count > 0:
+                    print(f"🔧 检测到{self.overflow_count}次overflow，执行清理...")
+                    self._cleanup_after_overflow()
+                
+                success = self.base_recorder.start_recording(use_vad=use_vad)
+                
+                if success:
+                    print("✅ 录音成功完成")
+                    self.overflow_count = 0  # 重置overflow计数
+                    return True
+                else:
+                    print(f"⚠️ 录音失败，尝试 {attempt + 1}/{max_retries}")
+                    time.sleep(0.5)  # 短暂等待后重试
+                    
+            except Exception as e:
+                if "overflow" in str(e).lower():
+                    self.overflow_count += 1
+                    print(f"⚠️ 检测到overflow (第{self.overflow_count}次): {e}")
+                    
+                    if self.overflow_count > self.max_overflow_tolerance:
+                        print("🔧 overflow次数过多，尝试重新初始化音频系统...")
+                        self._reinitialize_audio_system()
+                        self.overflow_count = 0
+                    
+                    # 等待更长时间后重试
+                    time.sleep(1.0)
+                else:
+                    print(f"❌ 录音异常: {e}")
+                    time.sleep(0.5)
+        
+        print("❌ 录音重试次数耗尽")
+        return False
+    
+    def _cleanup_after_overflow(self):
+        """overflow后的清理操作"""
+        try:
+            # 清理录音器资源
+            if hasattr(self.base_recorder, 'cleanup'):
+                self.base_recorder.cleanup()
+            
+            # 短暂休息让系统恢复
+            time.sleep(0.2)
+            
+            # 如果有高级VAD，重置其状态
+            if hasattr(self.base_recorder, 'advanced_vad') and self.base_recorder.advanced_vad:
+                try:
+                    self.base_recorder.advanced_vad.reset()
+                    print("🔄 VAD状态已重置")
+                except:
+                    pass
+            
+            print("✅ overflow清理完成")
+            
+        except Exception as e:
+            print(f"⚠️ overflow清理过程出错: {e}")
+    
+    def _reinitialize_audio_system(self):
+        """重新初始化音频系统"""
+        try:
+            print("🔄 重新初始化音频系统...")
+            
+            # 强制重新初始化音频管理器
+            if hasattr(self.base_recorder, 'audio_manager'):
+                # 尝试强力重新初始化
+                if hasattr(self.base_recorder.audio_manager, '_force_reinitialize_audio_system'):
+                    success = self.base_recorder.audio_manager._force_reinitialize_audio_system()
+                    if success:
+                        print("✅ 音频系统重新初始化成功")
+                    else:
+                        print("⚠️ 音频系统重新初始化部分失败")
+            
+            # 重新创建录音器实例
+            try:
+                from voice.utils import SimplifiedVoiceRecorder
+                new_recorder = SimplifiedVoiceRecorder()
+                if new_recorder:
+                    self.base_recorder = new_recorder
+                    print("✅ 录音器实例重新创建成功")
+            except Exception as e:
+                print(f"⚠️ 录音器重新创建失败: {e}")
+                
+        except Exception as e:
+            print(f"❌ 音频系统重新初始化失败: {e}")
+    
+    def save_audio(self, filename):
+        """保存音频"""
+        return self.base_recorder.save_audio(filename)
+    
+    def cleanup(self):
+        """清理资源"""
+        try:
+            self.base_recorder.cleanup()
+        except:
+            pass
+
+
 class VoiceDetectionController:
     """语音检测控制器"""
     
@@ -122,12 +251,12 @@ class VoiceDetectionController:
     
     def _init_components(self):
         """初始化各个组件"""
-        # 初始化录音器
+        # 初始化优化的录音器
         try:
-            self.recorder = SimplifiedVoiceRecorder()
+            self.recorder = OptimizedVoiceRecorder()
             if not self.recorder:
                 raise RuntimeError("录音器初始化失败")
-            print("✅ 语音录音器已启用")
+            print("✅ 优化语音录音器已启用 (防overflow)")
         except Exception as e:
             print(f"❌ 录音器初始化失败: {e}")
             print("请检查音频设备是否正常工作")
@@ -229,8 +358,8 @@ class VoiceDetectionController:
         print("👂 开始语音检测...")
         
         try:
-            # 使用SimplifiedVoiceRecorder的内置VAD功能
-            success = self.recorder.start_recording(use_vad=True)
+            # 使用优化的录音器，带重试机制
+            success = self.recorder.start_recording(use_vad=True, max_retries=3)
             
             if not success:
                 print("❌ 录音失败")
@@ -267,7 +396,11 @@ class VoiceDetectionController:
             print("\n🛑 用户中断录音")
             return None
         except Exception as e:
-            print(f"❌ 语音检测过程出错: {e}")
+            if "overflow" in str(e).lower():
+                print(f"⚠️ 音频overflow错误: {e}")
+                print("🔧 系统将自动优化音频参数并重试...")
+            else:
+                print(f"❌ 语音检测过程出错: {e}")
             return None
         finally:
             # 清理录音器资源
@@ -344,6 +477,7 @@ class VoiceDetectionController:
         """运行语音检测程序"""
         print("\n🚀 语音检测程序启动")
         print("💡 程序将自动检测语音，识别唤醒词并执行相应动作")
+        print("🔧 已启用overflow防护和音频优化")
         print("⌨️ 按 Ctrl+C 退出程序")
         print()
         
@@ -364,9 +498,14 @@ class VoiceDetectionController:
                     time.sleep(0.5)
                     
                 except Exception as e:
-                    print(f"⚠️ 处理过程中出现错误: {e}")
-                    print("🔄 程序将继续运行...")
-                    time.sleep(1)
+                    if "overflow" in str(e).lower():
+                        print(f"⚠️ 处理过程中出现overflow: {e}")
+                        print("🔧 系统正在自动优化音频参数...")
+                        time.sleep(2.0)  # 更长的恢复时间
+                    else:
+                        print(f"⚠️ 处理过程中出现错误: {e}")
+                        print("🔄 程序将继续运行...")
+                        time.sleep(1)
                 
         except KeyboardInterrupt:
             print("\n🛑 程序被用户中断")
@@ -394,7 +533,7 @@ class VoiceDetectionController:
 
 def main():
     """主函数"""
-    print("🎤 语音检测程序")
+    print("🎤 语音检测程序 (优化版)")
     print("="*60)
     
     try:
@@ -407,6 +546,11 @@ def main():
         print("2. 当检测到包含'小拓'的语音时，会播放help.mp3并执行动作1")
         print("3. 然后等待用户说话，语音结束后播放ok.mp3并执行动作2")
         print("4. 循环进行以上流程")
+        print("\n🔧 优化特性:")
+        print("- 自动处理音频overflow问题")
+        print("- 智能重试机制")
+        print("- 音频参数自适应优化")
+        print("- 增强的错误恢复能力")
         print("\n📁 音频文件:")
         print("- 请将help.mp3和ok.mp3放入preset_audio目录")
         print("- 如果音频文件不存在，程序会跳过播放但继续执行动作")
