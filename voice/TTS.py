@@ -20,14 +20,15 @@ class TextToSpeechEngine:
         # 使用跨平台音频管理器
         self.audio_manager = CrossPlatformAudioManager()
 
-        repo_id = 'hexgrad/Kokoro-82M-v1.1-zh'
-        model_path = 'ckpts/kokoro-v1.1/kokoro-v1_1-zh.pth'
-        config_path = 'ckpts/kokoro-v1.1/config.json'
-        device = 'cuda' if torch.cuda.is_available() else 'cpu'
-        model = KModel(model=model_path, config=config_path, repo_id=repo_id).to(device).eval()
-        self.zh_pipeline = KPipeline(lang_code='z', repo_id=repo_id, model=model)
-        voice_zf = "zm_010" #音色，待选zf_022
-        self.voice_zf_tensor = torch.load(f'ckpts/kokoro-v1.1/voices/{voice_zf}.pt', weights_only=True)
+        if Config.TTS_ENGINE == "kokoro":
+            repo_id = 'hexgrad/Kokoro-82M-v1.1-zh'
+            model_path = 'ckpts/kokoro-v1.1/kokoro-v1_1-zh.pth'
+            config_path = 'ckpts/kokoro-v1.1/config.json'
+            device = 'cuda' if torch.cuda.is_available() else 'cpu'
+            model = KModel(model=model_path, config=config_path, repo_id=repo_id).to(device).eval()
+            self.zh_pipeline = KPipeline(lang_code='z', repo_id=repo_id, model=model)
+            voice_zf = "zm_010" #音色，待选zf_022
+            self.voice_zf_tensor = torch.load(f'ckpts/kokoro-v1.1/voices/{voice_zf}.pt', weights_only=True)
 
     def speed_callable(self,len_ps):
         """
