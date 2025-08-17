@@ -15,8 +15,8 @@ class ObjectLocalization:
         self.layer_mapping = {
             "奶茶": [2,28-5],
             "柠檬茶": [3,0,-5],
-            "雪碧": [4,0,130],
-            "可乐": [5,0,450]
+            "可乐": [4,0,130],
+            "雪碧": [5,0,450]
         }
 
         base_path = os.path.join("objectLocalization", "objectDectection")

@@ -86,7 +86,7 @@ else:
     from voice.LLM import RobotCommandProcessor
     from voice.PinyinMatcher import PinyinMatcher
     from voice.utils import SimplifiedVoiceRecorder, SimplifiedAudioPlayer
-    from voice.ActionExecuter_gripper import ActionExecuter
+    from voice.ActionExecuter import ActionExecuter
 from objectLocalization.objLocalization import ObjectLocalization
 
 

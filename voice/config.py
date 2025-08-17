@@ -24,7 +24,7 @@ class Config:
     AUDIO_CHUNK_SIZE = 1024
 
     # 文本转语音配置
-    TTS_ENGINE = "kokoro" # "kokoro" or "edge_tts"
+    TTS_ENGINE = "edge_tts" # "kokoro" or "edge_tts"
     
     # 缓存配置
     ENABLE_CACHE = True
@@ -84,8 +84,8 @@ class Config:
     drink_layer_mapping = {
         "奶茶": [2,28-5],
         "柠檬茶": [3,0,-5],
-        "雪碧": [4,0,130],
-        "可乐": [5,0,450]
+        "可乐": [4,0,130],
+        "雪碧": [5,0,450]
     }
 
     # 实机还是模拟
