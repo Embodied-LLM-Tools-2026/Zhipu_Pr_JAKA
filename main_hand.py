@@ -71,22 +71,19 @@ print("VRC (流式,VAD,win) running...")
 
 from voice.config import Config
 from voice.deps import DependencyManager
+from voice.TTS import TextToSpeechEngine
+from voice.ASR import SenseVoiceRecognizer
+from voice.LLM import RobotCommandProcessor
+from voice.PinyinMatcher import PinyinMatcher
+from voice.utils import SimplifiedVoiceRecorder, SimplifiedAudioPlayer
+from voice.ActionExecuter_hand import ActionExecuter
 
 # 设置环境
 Config.setup_environment()
 
-# 检测依赖
 deps = DependencyManager()
-# 检测依赖
 if not deps._get_check_result():
     print("⚠️ 依赖检测失败，请检查依赖项")
-else:
-    from voice.TTS import TextToSpeechEngine
-    from voice.ASR import SenseVoiceRecognizer
-    from voice.LLM import RobotCommandProcessor
-    from voice.PinyinMatcher import PinyinMatcher
-    from voice.utils import SimplifiedVoiceRecorder, SimplifiedAudioPlayer
-    from voice.ActionExecuter import ActionExecuter
 from objectLocalization.objLocalization import ObjectLocalization
 
 
@@ -233,7 +230,7 @@ class VoiceRobotController:
         
         # 将控制器引用传递给录音器（用于计时功能）
         if self.recorder:
-            self.recorder.controller = self
+            setattr(self.recorder, "controller", self)
         
         # 初始化其他组件
         self.recognizer = SenseVoiceRecognizer(device=device)
@@ -370,17 +367,21 @@ class VoiceRobotController:
         def vad_warmup_thread():
             try:
                 # 在音频播放的同时预热VAD系统
-                if self.recorder and hasattr(self.recorder, 'advanced_vad'):
-                    print("🔥 后台预热VAD系统...")
-                    # 重置VAD状态，准备下一轮录音
-                    self.recorder.advanced_vad.reset()
-                    # 预检查音频设备健康状态
-                    self.recorder._check_audio_device_health()
-                    # 设置预热标志，下次录音时可以快速启动
-                    self.recorder._vad_prewarmed = True
-                    print("✅ VAD系统预热完成")
-                    # 系统准备就绪，结束计时
-                    self._end_response_cycle_timing()
+                if self.recorder:
+                    adv_vad = getattr(self.recorder, 'advanced_vad', None)
+                    if adv_vad is not None:
+                        print("🔥 后台预热VAD系统...")
+                        # 重置VAD状态，准备下一轮录音
+                        if hasattr(adv_vad, 'reset'):
+                            adv_vad.reset()
+                        # 预检查音频设备健康状态
+                        if hasattr(self.recorder, '_check_audio_device_health'):
+                            self.recorder._check_audio_device_health()
+                        # 设置预热标志，下次录音时可以快速启动
+                        setattr(self.recorder, "_vad_prewarmed", True)
+                        print("✅ VAD系统预热完成")
+                        # 系统准备就绪，结束计时
+                        self._end_response_cycle_timing()
             except Exception as e:
                 print(f"⚠️ VAD预热失败: {e}")
         
@@ -690,6 +691,7 @@ class VoiceRobotController:
     # 同时播放音频和执行动作
     def _play_and_execute_action(self, audio_text: str, action: str) -> bool:
         """同时播放音频和执行动作"""
+        result_holder = {"success": False}
         def play_audio_thread():
             self._play_cached_audio(audio_text)
         def execute_action_thread():
@@ -698,12 +700,14 @@ class VoiceRobotController:
                 print(f"✅ {action}动作执行成功")
             else:
                 print(f"❌ {action}动作执行失败")
+            result_holder["success"] = success
         audio_thread = threading.Thread(target=play_audio_thread)
         action_thread = threading.Thread(target=execute_action_thread)
         audio_thread.start()
         action_thread.start()
         audio_thread.join()
         action_thread.join()
+        return result_holder["success"]
 
     def _handle_awake_state(self, text: str) -> bool:
         """处理正常聊天或动作指令或退下指令"""
@@ -875,6 +879,7 @@ class VoiceRobotController:
                         self.robot_controller.execute_get_drink(head_angle=head_angle, body_distance=body_distance)
                         # 获取饮料位置
                         pos_list = self.obj_locater.observe(obj_name, num)
+                        pos_list = pos_list or []
                         # pos_list = [5,4] # 测试用
                         print(f"💬 所在的层数：{layer_number}, 机器人头部俯仰角：{head_angle}, 机器人身躯高度：{body_distance}")
                         print(f"💬 饮料位置: {pos_list}")
