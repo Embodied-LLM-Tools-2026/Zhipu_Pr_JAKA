@@ -178,7 +178,7 @@ class CrossPlatformAudioManager:
             for device_idx, device in input_devices:
                 device_name = device['name'].lower()
                 if any(usb_indicator in device_name for usb_indicator in 
-                      ['earpod','usb', 'headset', 'microphone', 'webcam']):
+                      ['earpod', 'usb', 'headset', 'microphone', 'webcam', 'xiaomi']):
                     print(f"🎯 选择USB设备: {device['name']}")
                     return device_idx
             
@@ -355,7 +355,7 @@ class CrossPlatformAudioManager:
             for device_idx, device in output_devices:
                 device_name = device['name'].lower()
                 if any(usb_indicator in device_name for usb_indicator in 
-                      ['usb', 'headset', 'speaker', 'headphone']):
+                      ['usb', 'headset', 'xiaomi', 'headphone']):
                     print(f"🔊 选择USB输出设备: {device['name']}")
                     return device_idx
             
