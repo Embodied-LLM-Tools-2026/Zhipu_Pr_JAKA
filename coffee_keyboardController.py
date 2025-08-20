@@ -15,7 +15,7 @@ from threading import Thread
 from typing import Dict, Callable, Optional
 from dataclasses import dataclass
 from pynput.keyboard import Key, Listener
-
+import xapi.api as x5
 # 添加父目录到路径，确保可以正确导入controller模块
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 PARENT_DIR = os.path.abspath(os.path.join(BASE_DIR, '..'))
@@ -27,6 +27,7 @@ try:
     from controller.hand_controller import InspireHandR
     from controller.gripper_controller import GripperController
     from action_sequence.agv_client import AGVClient
+    from action_sequence.pour_coffee import put_coffee_cup, press_button, get_coffee_cup_with_coffee
 except ImportError as e:
     logging.warning(f"导入控制器模块失败: {e}")
     # 创建占位类以避免NameError
@@ -133,7 +134,14 @@ class KeyboardController:
         
         # 初始化动作映射
         self._setup_action_mapping()
-    
+
+        # 机械臂控制
+        self.handle_l = x5.connect("192.168.1.9")
+        self.handle_r = x5.connect("192.168.1.10")
+        self.hand_l = InspireHandR(port="COM12", baudrate=115200, hand_id=1)
+        self.hand_r = InspireHandR(port="COM14", baudrate=115200, hand_id=2)
+        self.add_data_1 = x5.MovPointAdd(vel=100, acc=100)
+
     def _setup_logging(self):
         """设置日志配置"""
         logging.basicConfig(
@@ -165,19 +173,27 @@ class KeyboardController:
         self.is_processing = True
         print("\r" + " " * 20 + "\r", end="", flush=True)  # 清理提示信息
         self.logger.info("执行动作1：开始")
-        time.sleep(self.config.PROCESSING_DELAY)
+        put_coffee_cup(self.handle_l,self.handle_r,self.hand_l,self.hand_r,self.add_data_1)
         self.is_processing = False
         self.logger.info("执行动作1：完成")
     
     def _action_2(self):
         """动作2"""
+        self.is_processing = True
         print("\r" + " " * 20 + "\r", end="", flush=True)  # 清理提示信息
-        self.logger.info("执行动作2")
+        self.logger.info("执行动作2：开始")
+        press_button(self.handle_l,self.handle_r,self.hand_l,self.hand_r,self.add_data_1)
+        self.is_processing = False
+        self.logger.info("执行动作2：完成")
     
     def _action_3(self):
         """动作3"""
+        self.is_processing = True
         print("\r" + " " * 20 + "\r", end="", flush=True)  # 清理提示信息
-        self.logger.info("执行动作3")
+        self.logger.info("执行动作3：开始")
+        get_coffee_cup_with_coffee(self.handle_l,self.handle_r,self.hand_l,self.hand_r,self.add_data_1)
+        self.is_processing = False
+        self.logger.info("执行动作3：完成")
     
     def _action_4(self):
         """动作4"""

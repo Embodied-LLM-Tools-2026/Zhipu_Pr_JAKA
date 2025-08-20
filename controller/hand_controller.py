@@ -14,7 +14,7 @@ class InspireHandR:
         self.ser = serial.Serial(port, baudrate)
         self.ser.isOpen()
         self.hand_id = hand_id
-        self.reset() # 手部复原
+        # self.reset() # 手部复原
         #self.instrument = minimalmodbus.Instrument(self.port, 1)
     
     #把十六进制或十进制的数转成bytes
