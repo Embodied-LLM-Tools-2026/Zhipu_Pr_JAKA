@@ -23,7 +23,7 @@ class ActionExecuter:
         if Config.ROBOT_AVAILABLE:
             # 初始化机械臂
             import xapi.api as x5
-            from action_sequence.execute_action import wave, bow, Nod, Shake_head
+            from action_sequence.execute_action import wave, bow, Nod, Shake_head, rotate_head_to_angle
             self.handle_l = x5.connect(robot_ip_left)
             self.handle_r = x5.connect(robot_ip_right)
             self.add_data_1 = x5.MovPointAdd(vel=100, acc=100)
@@ -42,6 +42,10 @@ class ActionExecuter:
                 move_to_shelf,
                 back_bar_station,
             )
+            from action_sequence.pour_coffee import (
+                move_to_coffee_machine_and_make_coffee,
+                get_coffee_and_serve,
+            )
             self.hand_l = InspireHandR(port="COM12", baudrate=115200, hand_id=1)
             self.hand_r = InspireHandR(port="COM14", baudrate=115200, hand_id=2)
             self.hand_l.set_default_speed(100, 100, 100, 100, 100, 100)
@@ -57,7 +61,10 @@ class ActionExecuter:
             self.move_to_pick_height_pitch_angle = move_to_pick_height_pitch_angle
             self.move_to_shelf = move_to_shelf
             self.back_bar_station = back_bar_station
-
+            self.move_to_coffee_machine_and_make_coffee = move_to_coffee_machine_and_make_coffee
+            self.get_coffee_and_serve = get_coffee_and_serve
+            self.rotate_head_to_angle = rotate_head_to_angle
+            
             print(f"已连接到机器人: {robot_ip_left} 和 {robot_ip_right}")
             self.init_robot(self.handle_l, self.handle_r, self.add_data_1, self.hand_l, self.hand_r)
             self.back_bar_station()
@@ -66,7 +73,7 @@ class ActionExecuter:
         else:
             print("机器人控制不可用")
 
-    def execute_action(self, action: str) -> bool:
+    def execute_action(self, action: str, angle=None, incremental=False, back_to_init=False) -> bool:
         """执行动作"""
         print("handle_l:", self.handle_l)
         print("handle_r:", self.handle_r)
@@ -76,6 +83,8 @@ class ActionExecuter:
                 print("执行：打招呼")
             elif action == "shake_head":
                 print("执行：摇头")
+            elif action == "rotate_head_to_angle":
+                print("执行：转头")
             elif action == "nod":
                 print("执行：点头")
             elif action == "bow":
@@ -93,6 +102,9 @@ class ActionExecuter:
             elif action == "shake_head":
                 print("执行：摇头")
                 _ = self.shaking_head(self.handle_l, self.handle_r, self.add_data_2)
+            elif action == "rotate_head_to_angle":
+                print("执行：转头")
+                _ = self.rotate_head_to_angle(self.handle_l, self.handle_r, self.add_data_1, angle=angle, incremental=incremental, back_to_init=back_to_init)
             elif action == "nod":
                 print("执行：点头")
                 _ = self.nodding(self.handle_l, self.handle_r, self.add_data_2)
