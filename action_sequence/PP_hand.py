@@ -28,7 +28,7 @@ except ImportError as e:
 # 初始化右臂
 INIT_POS_R = x5.Pose(x=-200, y=-245, z=5, a=-120, b=-5, c=-115, e1=90, e2=0, e3=160)
 INIT_POINT_R = x5.Point(pose=INIT_POS_R, uf=0, tf=0, cfg=(0,0,0,7))
-INIT_JOINT_R = x5.Joint(j1=-7.277, j2=-80.381, j3=97.428, j4=-91.135, j5=-24.051, j6=-74.093, e1=12.445-90, e2=0, e3=160)
+INIT_JOINT_R = x5.Joint(j1=-7.277, j2=-80.381, j3=97.428, j4=-91.135, j5=-24.051, j6=-74.093, e1=12.445-90, e2=0, e3=0)
 
 # 初始化左臂
 INIT_POS_L = x5.Pose(x=-200, y=245, z=5, a=120, b=5, c=115, e1=-90, e2=0, e3=0)
@@ -170,6 +170,8 @@ def pick_5_5(handle_L,handle_R,hand_l,hand_r,add_data):
         # agv.go_to_point_in_world(0.420,0.038,0, 0)
         pose_result = agv.get_pose()
         x, y, angle = pose_result
+        print("pose_result = ",pose_result)
+
     delta_x = (x-0.450)*1000  #-0.0874+0.08=-0.0074
     delta_y = (y-0.038)*1000 #-0.0376+0.035=-0.0026
 

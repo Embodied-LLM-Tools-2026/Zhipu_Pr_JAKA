@@ -26,6 +26,8 @@ def main():
     handle_r = x5.connect("192.168.1.10")
 
     cjoint = str(x5.get_cjoint(handle_l))
+    cpos = str(x5.get_cpoint(handle_l))
     print(format_joints(cjoint))
+    print(cpos)
 if __name__ == "__main__":
     main()
