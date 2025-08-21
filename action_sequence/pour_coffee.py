@@ -385,6 +385,19 @@ def put_coffee_cup_with_coffee(handle_L,handle_R,hand_l,hand_r,add_data):
     x5.wait_move_done(handle_R)
 
 
+def move_to_coffee_machine_and_make_coffee():
+    """
+    移动到咖啡机并开始制作咖啡（按下按钮）。该函数返回后会播报语音"咖啡正在制作中，请您稍等片刻"
+    """
+    time.sleep(3)
+
+def get_coffee_and_serve():
+    """
+    将咖啡从咖啡机接水处拿走并放到传送带上。该函数返回后会播报语音"请享用您的咖啡"
+    """
+    time.sleep(3)
+
+
 
 
 if __name__ == "__main__":
