@@ -33,7 +33,7 @@ except ImportError as e:
 # 初始化右臂
 INIT_POS_R = x5.Pose(x=-200, y=-245, z=5, a=-120, b=-5, c=-115, e1=90, e2=0, e3=160)
 INIT_POINT_R = x5.Point(pose=INIT_POS_R, uf=0, tf=0, cfg=(0,0,0,7))
-INIT_JOINT_R = x5.Joint(j1=-7.277, j2=-80.381, j3=97.428, j4=-91.135, j5=-24.051, j6=-74.093, e1=12.445-90, e2=0, e3=160)
+INIT_JOINT_R = x5.Joint(j1=-7.277, j2=-80.381, j3=97.428, j4=-91.135, j5=-24.051, j6=-74.093, e1=12.445-90, e2=0, e3=0)
 
 # 初始化左臂
 INIT_POS_L = x5.Pose(x=-200, y=245, z=5, a=120, b=5, c=115, e1=-90, e2=0, e3=0)
@@ -161,18 +161,6 @@ def put_coffee_cup(handle_L,handle_R,hand_l,hand_r,add_data):
     x5.wait_move_done(handle_L)
     hand_l.setpos(1000, 1000, 1000, 1000, 1000, 0)
 
-    # # pre 拿杯子动作1（上扬）
-    # pick_2 = x5.Joint(j1 =-43.836,j2 = -40.784, j3 = -69.693, j4 = -75.668, 
-    #  j5 = 43.75, j6 = -15.309, e1 = 87.207, e2=0, e3=0)
-    # x5.movj(handle_L, pick_2, add_data)
-    # x5.wait_move_done(handle_L)
-
-    # # pre 拿杯子动作2（临近杯子上方）
-    # pick_3 = x5.Joint(j1 =-39.853,j2 = -52.416, j3 = -62.818, j4 = -64.683, 
-    #  j5 = 43.744, j6 = -1.954, e1 = 87.205, e2=0, e3=0)
-    # x5.movj(handle_L, pick_3, add_data)
-    # x5.wait_move_done(handle_L)
-
     # pre 拿杯子动作1（修改）
     pick_2 = x5.Joint(j1 = -33.254, j2 = -58.097, j3 = -64.264, j4 = -80.521, 
                       j5 = 37.83, j6 = -23.082, e1 = 86.889, e2 = -0.004, e3 = 0.001)
@@ -180,8 +168,8 @@ def put_coffee_cup(handle_L,handle_R,hand_l,hand_r,add_data):
     x5.wait_move_done(handle_L)
 
     # pre 拿杯子动作2（修改）
-    pick_3 = x5.Joint(j1 = -41.216, j2 = -52.013, j3 = -63.644, j4 = -64.681, 
-                      j5 = 42.388, j6 = -1.951, e1 = 87.205, e2 = -0.003, e3 = -0.001)
+    pick_3 = x5.Joint(j1 = -39.923, j2 = -51.457, j3 = -67.319, j4 = -67.409, 
+                      j5 = 42.58, j6 = -1.991, e1 = 87.206, e2 = -0.005, e3 = -0.001)
     x5.movj(handle_L, pick_3, add_data)
     x5.wait_move_done(handle_L)
 
@@ -196,22 +184,15 @@ def put_coffee_cup(handle_L,handle_R,hand_l,hand_r,add_data):
     time.sleep(0.5)
 
     # 举起杯子
-    pick_5 = x5.Joint(j1 =-53.213,j2 = -49.375, j3 = -49.728, j4 = -50.686, 
-     j5 = 28.693, j6 = -19.63, e1 = 87.212, e2=0, e3=0)
+    pick_5 = x5.Joint(j1 = -53.591, j2 = -53.49, j3 = -53.291, j4 = -51.393, 
+                      j5 = 44.289, j6 = -17.586, e1 = 87.211, e2 = -0.003, e3 = 0.003)
     x5.movj(handle_L, pick_5, add_data)
     x5.wait_move_done(handle_L)
 
 
-    # # pre 放杯子（咖啡机接水处）
-    # pick_6 = x5.Joint(j1 =-62.378,j2 = -58.391, j3 = -26.807, j4 = -50.763, 
-    #  j5 = 23.412, j6 = -10.574, e1 = 87.205, e2=0, e3=0)
-    # x5.movj(handle_L, pick_6, add_data)
-    # x5.wait_move_done(handle_L)
-
-
     # 放杯子（咖啡机接水处）
-    pick_7 = x5.Joint(j1 =-59.618,j2 = -75.203, j3 = -38.432, j4 = -43.136, 
-     j5 = 35.257, j6 = 0.072, e1 = 87.208, e2=0, e3=0)
+    pick_7 = x5.Joint(j1 = -59.719, j2 = -73.478, j3 = -39.241, j4 = -42.449, 
+                      j5 = 50.773, j6 = 1.076, e1 = 87.172, e2 = -0.002, e3 = 0)
     x5.movj(handle_L, pick_7, add_data)
     x5.wait_move_done(handle_L)
 
@@ -219,11 +200,6 @@ def put_coffee_cup(handle_L,handle_R,hand_l,hand_r,add_data):
     hand_l.setpos(1000, 1000, 1000, 1000, 1000, 0)
     time.sleep(0.5)
 
-    # 收手动作1（调整手腕角度，稍微远离放杯处）
-    pick_2 = x5.Joint(j1 =-58.955,j2 = -75.194, j3 = -38.530, j4 = -44.154, 
-     j5 = 45.847, j6 = 2.131, e1 = 87.206, e2=0, e3=0)
-    x5.movj(handle_L, pick_2, add_data)
-    x5.wait_move_done(handle_L)
 
     # 收手动作2（稍微远离放杯处）
     pick_3 = x5.Joint(j1 =-50.525,j2 = -63.152, j3 = -41.353, j4 = -60.378, 
@@ -249,8 +225,8 @@ def press_button(handle_L,handle_R,hand_l,hand_r,add_data):
     print(delta_y)
 
     # 靠近点击按钮1
-    pick_3 = x5.Joint(j1 = -35.863, j2 = -72.277, j3 = -102.053, j4 = -77.859, 
-                      j5 = 77.805, j6 = -28.431, e1 = 87.441, e2 = -0.006, e3 = 0.001)
+    pick_3 = x5.Joint(j1 = -44.902, j2 = -70.286, j3 = -88.649, j4 = -61.257, 
+                      j5 = 80.224, j6 = -19.512, e1 = 87.44, e2 = -0.021, e3 = 0.006)
     x5.movj(handle_L, pick_3, add_data)
     x5.wait_move_done(handle_L)
 
@@ -279,20 +255,20 @@ def press_button(handle_L,handle_R,hand_l,hand_r,add_data):
 
 
 
-    # # 靠近点击按钮1
-    # pick_3 = x5.Joint(j1 = -35.863, j2 = -72.277, j3 = -102.053, j4 = -77.859, 
-    #                   j5 = 77.805, j6 = -28.431, e1 = 87.441, e2 = -0.006, e3 = 0.001)
-    # x5.movj(handle_L, pick_3, add_data)
-    # x5.wait_move_done(handle_L)
+    # 靠近点击按钮1
+    pick_3 = x5.Joint(j1 = -35.863, j2 = -72.277, j3 = -102.053, j4 = -77.859, 
+                      j5 = 77.805, j6 = -28.431, e1 = 87.441, e2 = -0.006, e3 = 0.001)
+    x5.movj(handle_L, pick_3, add_data)
+    x5.wait_move_done(handle_L)
 
-    # # 靠近动作1（远离放杯处） #TODO: 修改动作序号
-    # pick_3 = x5.Joint(j1 = -41.434, j2 = -58.217, j3 = -62.943, j4 = -62.141, 
-    #                   j5 = 44.192, j6 = -9.458, e1 = 87.205, e2 = -0.001, e3 = -0.001)
-    # x5.movj(handle_L, pick_3, add_data)
-    # x5.wait_move_done(handle_L)
+    # 靠近动作1（远离放杯处） #TODO: 修改动作序号
+    pick_3 = x5.Joint(j1 = -41.434, j2 = -58.217, j3 = -62.943, j4 = -62.141, 
+                      j5 = 44.192, j6 = -9.458, e1 = 87.205, e2 = -0.001, e3 = -0.001)
+    x5.movj(handle_L, pick_3, add_data)
+    x5.wait_move_done(handle_L)
 
-    # hand_l.setpos(820, 820, 820, 820, 1000, 0)
-    # time.sleep(0.5)
+    hand_l.setpos(820, 820, 820, 820, 1000, 0)
+    time.sleep(0.5)
 
 
 
@@ -303,66 +279,124 @@ def get_coffee_cup_with_coffee(handle_L,handle_R,hand_l,hand_r,add_data):
     hand_l.setpos(800, 800, 800, 820, 1000, 0)
     time.sleep(2)
 
-    # 靠近动作2（靠近放杯处）
-    pick_3 = x5.Joint(j1 =-50.472,j2 = -67.304, j3 = -44.792, j4 = -56.411, 
+    # 靠近动作（靠近放杯处）
+    pick_2 = x5.Joint(j1 =-50.472,j2 = -67.304, j3 = -44.792, j4 = -56.411, 
      j5 = 32.597, j6 = 3.897, e1 = 87.189, e2=0, e3=0)
-    x5.movj(handle_L, pick_3, add_data)
+    x5.movj(handle_L, pick_2, add_data)
     x5.wait_move_done(handle_L)
 
     # 抓杯子（咖啡机接水处）
-    pick_4 = x5.Joint(j1 = -55.006, j2 = -74.22, j3 = -45.164, j4 = -47.319, 
+    pick_3 = x5.Joint(j1 = -55.006, j2 = -74.22, j3 = -45.164, j4 = -47.319, 
                       j5 = 52.916, j6 = 1.635, e1 = 87.204, e2 = -0.005, e3 = 0.001)
-    x5.movj(handle_L, pick_4, add_data)
+    x5.movj(handle_L, pick_3, add_data)
     x5.wait_move_done(handle_L)
 
     hand_l.setpos(750, 700, 700, 650, 500, 0)
 
     # 升起杯子（咖啡机接水处）
-    pick_5 = x5.Joint(j1 =-62.378,j2 = -58.391, j3 = -26.807, j4 = -50.763, 
+    pick_4 = x5.Joint(j1 =-62.378,j2 = -58.391, j3 = -26.807, j4 = -50.763, 
      j5 = 23.412, j6 = -10.574, e1 = 87.205, e2=0, e3=0)
+    x5.movj(handle_L, pick_4, add_data)
+    x5.wait_move_done(handle_L)
+
+
+    # 将杯子放在右手可以够住的地方的上方动作1
+    pick_5 = x5.Joint(j1 = -57.206, j2 = -47.858, j3 = -31.67, j4 = -71.925, 
+                      j5 = 25.901, j6 = -22.743, e1 = 87.203, e2 = -0.003, e3 = 0.002)
     x5.movj(handle_L, pick_5, add_data)
     x5.wait_move_done(handle_L)
 
-
-    # pre 放杯子动作（临近放杯子位置上方）
-    pick_6 = x5.Joint(j1 =-39.853,j2 = -52.416, j3 = -62.818, j4 = -64.683, 
-     j5 = 43.744, j6 = -1.954, e1 = 87.205, e2=0, e3=0)
-    x5.movj(handle_L, pick_6, add_data)
-    x5.wait_move_done(handle_L)
-
-    # 放杯子（将杯子放在目标位置）
-    pick_7 = x5.Joint(j1 =-47.123,j2 = -51.262, j3 = -52.629, j4 = -51.509, 
-     j5 = 45.781, j6 = -14.476, e1 = 87.210, e2=0, e3=0)
+    # 将杯子放在右手可以够住的地方的上方动作2
+    pick_7 = x5.Joint(j1 = -51.803, j2 = -47.705, j3 = -39.376, j4 = -70.198, 
+                      j5 = 38.053, j6 = -24.907, e1 = 87.35, e2 = -0.003, e3 = 0.001)
     x5.movj(handle_L, pick_7, add_data)
     x5.wait_move_done(handle_L)
 
-    hand_l.setpos(1000,1000,1000,1000,1000,0)
-    time.sleep(0.5)
-
-    # # pre 离开放杯子位置动作1（临近放杯子位置上方）
-    # pick_8 = x5.Joint(j1 =-39.853,j2 = -52.416, j3 = -62.818, j4 = -64.683, 
-    #  j5 = 43.744, j6 = -1.954, e1 = 87.205, e2=0, e3=0)
-    # x5.movj(handle_L, pick_8, add_data)
-    # x5.wait_move_done(handle_L)
-
-    # pre 离开放杯子位置动作2（上扬）
-    pick_9 = x5.Joint(j1 =-43.836,j2 = -40.784, j3 = -69.693, j4 = -75.668, 
-     j5 = 43.75, j6 = -15.309, e1 = 87.207, e2=0, e3=0)
+    # 将杯子放在右手可以够住的地方
+    pick_9 = x5.Joint(j1 = -47.119, j2 = -49.864, j3 = -39.845, j4 = -67.525, 
+                      j5 = 41.673, j6 = -24.622, e1 = 87.344, e2 = -0.005, e3 = 0.002)
     x5.movj(handle_L, pick_9, add_data)
     x5.wait_move_done(handle_L)
 
-    # 回到初始化
-    pick_10 = INIT_JOINT_L 
-    x5.movj(handle_L, pick_10, add_data)
-    x5.wait_move_done(handle_L)
-    hand_l.setpos(1000, 1000, 1000, 1000, 1000, 0)
+    # 松手
+    hand_l.setpos(1000,1000,1000,1000,1000,0)
+    time.sleep(0.5)
 
+    # 抬起手
+    pick_9 = x5.Joint(j1 = -42.418, j2 = -43.11, j3 = -57.251, j4 = -75.078, j5 = 39.458, j6 = -31.697, e1 = 87.345, e2 = -0.005, e3 = 0.002)
+    x5.movj(handle_L, pick_9, add_data)
+    x5.wait_move_done(handle_L)
  
 
 def put_coffee_cup_with_coffee(handle_L,handle_R,hand_l,hand_r,add_data):
     """
     """
-    pass
+    hand_r.setpos(1000, 1000, 1000,1000,1000,0)
+
+    ## 保证右手在初始化状态
+    pick_1 = INIT_JOINT_R
+    x5.movj(handle_R, pick_1, add_data)
+    x5.wait_move_done(handle_R)
+
+    # 靠近杯子动作
+    pick_2 = x5.Joint(j1 = 48.476, j2 = -71.505, j3 = 52.333, j4 = -73.266, 
+                      j5 = -43.73, j6 = -31.605, e1 = -93.41, e2 = 0, e3 = -0.022)
+    x5.movj(handle_R, pick_2, add_data)
+    x5.wait_move_done(handle_R)
+    
+    # 抓握杯子动作
+    pick_3 = x5.Joint(j1 = 47.083, j2 = -88.892, j3 = 55.147, j4 = -43.16, 
+                      j5 = -53.034, j6 = -31.099, e1 = -96.923, e2 = 0.001, e3 = -0.032)
+    x5.movj(handle_R, pick_3, add_data)
+    x5.wait_move_done(handle_R)
+
+    # 合手
+    hand_r.setpos(750, 700, 700, 650, 500, 0)
+    
+    # 抬起水杯
+    pick_2 = x5.Joint(j1 = 41.457, j2 = -54.411, j3 = 85.154, j4 = -65.744, 
+                      j5 = -68.96, j6 = -53.4, e1 = -72.72, e2 = 0.002, e3 = -0.042)
+    x5.movj(handle_R, pick_2, add_data)
+    x5.wait_move_done(handle_R)
+
+    # 放在置物台上方
+    pick_2 = x5.Joint(j1 = 46.172, j2 = -71.418, j3 = 91.062, j4 = -52.335, j5 = -83.655, j6 = -34.416, e1 = -72.89, e2 = 0.005, e3 = -0.052)
+    x5.movj(handle_R, pick_2, add_data)
+    x5.wait_move_done(handle_R)
+
+
+    # 放在置物台上
+    pick_2 = x5.Joint(j1 = 43.55, j2 = -73.231, j3 = 91.292, j4 = -51.396, j5 = -84.224, j6 = -31.195, e1 = -74.011, e2 = 0.006, e3 = -0.063)
+    x5.movj(handle_R, pick_2, add_data)
+    x5.wait_move_done(handle_R)
+
+    # 松手
+    hand_r.setpos(1000, 1000, 1000,1000,1000,0)
+    time.sleep(0.5)
+
+    # 抬起手臂
+    pick_2 = x5.Joint(j1 = 44.826, j2 = -62.205, j3 = 102.228, j4 = -65.67, j5 = -81.574, j6 = -50.841, e1 = -74.014, e2 = 0.009, e3 = -0.073)
+    x5.movj(handle_R, pick_2, add_data)
+    x5.wait_move_done(handle_R)
+    
+    # 回到初始化
+    pick_3 = INIT_JOINT_R
+    x5.movj(handle_R, pick_3, add_data)
+    x5.wait_move_done(handle_R)
+
+
+def move_to_coffee_machine_and_make_coffee():
+    """
+    移动到咖啡机并开始制作咖啡（按下按钮）。该函数返回后会播报语音"咖啡正在制作中，请您稍等片刻"
+    """
+    time.sleep(3)
+
+def get_coffee_and_serve():
+    """
+    将咖啡从咖啡机接水处拿走并放到传送带上。该函数返回后会播报语音"请享用您的咖啡"
+    """
+    time.sleep(3)
+
 
 
 
@@ -379,16 +413,10 @@ if __name__ == "__main__":
     # 连接机器人
     handle_l = x5.connect("192.168.1.9")
     handle_r = x5.connect("192.168.1.10")
-    # put_coffee_cup(handle_l,handle_r,hand_l,hand_r,add_data_1)
+    put_coffee_cup(handle_l,handle_r,hand_l,hand_r,add_data_1)
 
     press_button(handle_l,handle_r,hand_l,hand_r,add_data_1)
+    # # time.sleep(32)
 
-    # get_coffee_cup_with_coffee(handle_l,handle_r,hand_l,hand_r,add_data_1)
-
-    # # hand_r.setpos(1000,1000,1000,1000,1000,0)
-    # # time.sleep(1)
-    # # hand_l.setpos(1000,1000,1000,1000,1000,0)
-    # # time.sleep(1)
-    # # put_coffee_cup(handle_l,handle_r,hand_l,hand_r,add_data_1)
-    # press_cup_extractor_button(handle_l,handle_r,hand_l,hand_r,add_data_1)
-    # get_coffee_cup(handle_l,handle_r,hand_l,hand_r,add_data_1)
+    get_coffee_cup_with_coffee(handle_l,handle_r,hand_l,hand_r,add_data_1)
+    put_coffee_cup_with_coffee(handle_l,handle_r,hand_l,hand_r,add_data_1)

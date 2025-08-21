@@ -29,5 +29,10 @@ def main():
     cpos = str(x5.get_cpoint(handle_l))
     print(format_joints(cjoint))
     print(cpos)
+    print("+++++++++++++++++++++++++++++++++++++++++")
+    cjoint = str(x5.get_cjoint(handle_r))
+    cpos = str(x5.get_cpoint(handle_r))
+    print(format_joints(cjoint))
+    print(cpos)
 if __name__ == "__main__":
     main()

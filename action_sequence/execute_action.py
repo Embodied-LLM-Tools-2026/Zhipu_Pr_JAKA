@@ -107,18 +107,36 @@ def Shake_head(handle_L,handle_R,add_data):
     """
     摇头
     """
+    if angle == None:
+        point_L_1 = copy.copy(INIT_POINT_L)
+        point_L_2 = copy.copy(INIT_POINT_L)
+        point_L_1.pose.e2 += 20
+        point_L_2.pose.e2 -= 20
+        x5.movl(handle_L, point_L_1, add_data)
+        x5.wait_move_done(handle_L)
+        x5.movl(handle_L, point_L_2, add_data)
+        x5.wait_move_done(handle_L)
+        x5.movl(handle_L, point_L_1, add_data)
+        x5.wait_move_done(handle_L)
+        x5.movl(handle_L, INIT_POINT_L, add_data)
+        x5.wait_move_done(handle_L)
+ 
+ 
+def rotate_head_to_angle(handle_L,handle_R,add_data, angle, incremental=False, back_to_init=False):
+    """
+    转头到指定角度
+    """
     point_L_1 = copy.copy(INIT_POINT_L)
-    point_L_2 = copy.copy(INIT_POINT_L)
-    point_L_1.pose.e2 += 20
-    point_L_2.pose.e2 -= 20
+    if incremental:
+        point_L_1.pose.e2 += angle
+    else:
+        point_L_1.pose.e2 = angle
     x5.movl(handle_L, point_L_1, add_data)
     x5.wait_move_done(handle_L)
-    x5.movl(handle_L, point_L_2, add_data)
-    x5.wait_move_done(handle_L)
-    x5.movl(handle_L, point_L_1, add_data)
-    x5.wait_move_done(handle_L)
-    x5.movl(handle_L, INIT_POINT_L, add_data)
-    x5.wait_move_done(handle_L)
+    if back_to_init:
+        x5.movl(handle_L, INIT_POINT_L, add_data)
+        x5.wait_move_done(handle_L)
+        
 
 def init_robot(handle_l, handle_r, add_data):
     # 初始化左臂

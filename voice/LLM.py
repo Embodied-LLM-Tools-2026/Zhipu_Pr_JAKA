@@ -90,7 +90,7 @@ class RobotCommandProcessor:
         {{
             "intent": "command"或"chat",
             "action": "动作类型（仅当intent为command时有效，使用英文描述，动作类型只有可能是：greet, shake_head, nod, bow, get_drink, others）",
-            "obj_name": "饮料类型（仅当action为get_drink时有效，使用中文描述，饮料类型只有可能是：{self.drink_list}这四种）",
+            "obj_name": "饮料类型（仅当action为get_drink时有效，使用中文描述，饮料类型只有可能是：饮料类型只有可能是：{self.drink_list}这{len(self.drink_list)}种，如果识别到的饮料是咖啡但不是美式咖啡（如拿铁、卡布奇诺、玛奇朵、澳瑞白、浓缩、意式等），则归类为其它咖啡）",
             "num": "数量（仅当action为get_drink时有效，使用数字描述，如1，2，3，4，5，6，7，8，9，10）",
             "confidence": 0.0到1.0之间的置信度,
             "description": "意图或动作描述"
