@@ -13,9 +13,9 @@ class ObjectLocalization:
         self.obj_name = None
         self.num = None
         self.layer_mapping = {
-            "奶茶": [2,28-5],
-            "柠檬茶": [3,0,-5],
-            "可乐": [4,0,130],
+            "水": [2,28,-4],
+            "可乐": [3,0,100],
+            "奶茶": [4,0,250],
             "雪碧": [5,0,450]
         }
 
