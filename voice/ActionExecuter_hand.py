@@ -37,11 +37,25 @@ class ActionExecuter:
             import time
             from action_sequence.PP_hand import (
                 init_robot,
-                pick_5_5,
                 move_to_pick_height_pitch_angle,
                 move_to_shelf,
                 back_bar_station,
             )
+            
+            # 尝试导入所有可能的pick函数
+            import action_sequence.PP_hand as pp_hand_module
+            for layer in range(1, 6):  # layer_number: 1~4
+                for drink in range(1, 6):  # drink_id: 1~5
+                    function_name = f"pick_{layer}_{drink}"
+                    try:
+                        if hasattr(pp_hand_module, function_name):
+                            pick_function = getattr(pp_hand_module, function_name)
+                            setattr(self, function_name, pick_function)
+                            print(f"成功导入函数: {function_name}")
+                        else:
+                            print(f"跳过不存在的函数: {function_name}")
+                    except Exception as e:
+                        print(f"导入函数 {function_name} 时出错: {e}")
             from action_sequence.pour_coffee import (
                 move_to_coffee_machine_and_make_coffee,
                 get_coffee_and_serve,
@@ -57,7 +71,6 @@ class ActionExecuter:
             self.shaking_head = Shake_head
             self.nodding = Nod
             self.bowing = bow
-            self.pick_5_5 = pick_5_5
             self.move_to_pick_height_pitch_angle = move_to_pick_height_pitch_angle
             self.move_to_shelf = move_to_shelf
             self.back_bar_station = back_bar_station
@@ -146,15 +159,25 @@ class ActionExecuter:
                 self.move_to_pick_height_pitch_angle(
                     self.handle_l, self.handle_r, self.add_data_1, body_distance, head_angle
                 )
-                if layer_number == 5:
-                    if drink_id == 5:
-                        self.pick_5_5(
+                # 检查layer_number和drink_id是否在有效范围内
+                if isinstance(layer_number, int) and 1 <= layer_number <= 5 and isinstance(drink_id, int) and 1 <= drink_id <= 5:
+                    # 动态调用pick函数
+                    pick_function_name = f"pick_{layer_number}_{drink_id}"
+                    if hasattr(self, pick_function_name):
+                        pick_function = getattr(self, pick_function_name)
+                        pick_function(
                             self.handle_l,
                             self.handle_r,
                             self.hand_l,
                             self.hand_r,
                             self.add_data_1,
                         )
+                    else:
+                        print(f"警告：函数 {pick_function_name} 不存在")
+                        return False
+                else:
+                    print(f"无效的参数：layer_number={layer_number}, drink_id={drink_id}")
+                    return False
                 self.init_robot(self.handle_l, self.handle_r, self.add_data_1, self.hand_l, self.hand_r)
                 print("到达对应位置")
             return True

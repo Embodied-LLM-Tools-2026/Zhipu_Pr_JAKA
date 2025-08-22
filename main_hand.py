@@ -908,7 +908,11 @@ class VoiceRobotController:
                             if len(pos_list) > 0:
                                 audio_file_path = self._play_cached_audio("饮料还够，我这就拿给您，请您稍等", tts_ready_callback=tts_ready_callback)
                                 for i,pos in enumerate(pos_list):
-                                    self.robot_controller.execute_get_drink(drink_id=pos,layer_number=layer_number,head_angle=head_angle,body_distance=body_distance)
+                                    if not self.robot_controller.execute_get_drink(drink_id=pos,layer_number=layer_number,head_angle=head_angle,body_distance=body_distance):
+                                        print("💬 不好意思，饮料不够了")
+                                        self._play_cached_audio("不好意思，饮料不够了", tts_ready_callback=tts_ready_callback) 
+                                        success = True
+                                        break
                                     audio_file_path = self._play_cached_audio("这是您要的饮料", tts_ready_callback=tts_ready_callback)
                                     if i < len(pos_list) - 1:
                                         audio_file_path = self._play_cached_audio("下一瓶我这就去拿", tts_ready_callback=tts_ready_callback)
