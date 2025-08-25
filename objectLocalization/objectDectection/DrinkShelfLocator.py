@@ -41,6 +41,11 @@ class CameraController:
         
         # 拍摄图像
         ret, frame = cap.read()
+        frame[0:200,:,:] = 255
+        frame[350:,:,:] = 255
+
+        cv2.imwrite(r"C:\Users\Work\Documents\Pr_Stage1\archive\examples\images\images\image_1.jpg", frame)
+
         cap.release()
         
         if not ret:
@@ -348,7 +353,7 @@ class DrinkFinder:
                     "success": False,
                     "positions": [],
                     "found_count": M,
-                    "message": f"当前货架上只有{M}个{drink_type}"
+                    "message": f"当前货架上只有{M}个饮料"
                 }
             else:
                 if grabbing_direction == "left":
@@ -851,10 +856,10 @@ class DrinkFinder:
         
         # 蒙特卡洛搜索参数范围
         angle_std = 15.0  # 角度标准差（度）
-        translation_std = 30.0  # 平移标准差（像素）
+        translation_std = 20.0  # 平移标准差（像素）
         
         # 执行100次蒙特卡洛采样
-        for iteration in range(50):
+        for iteration in range(100):
             
             # 随机采样变换参数
             # 角度：正态分布，均值0，标准差15度
@@ -994,11 +999,44 @@ class DrinkFinder:
 class DrinkShelfLocator:
     """智能货架饮料定位系统主控制器"""
     
+    # 定义饮料类型到边界框(bboxes)的映射
+    bbox_map = {
+        '可乐': [[328, 241, 359, 315]],
+        '雪碧': [[152, 177, 194, 267]],
+        '水': [[260, 272, 288, 340]],
+        '奶茶': [[332, 236, 371, 367]]
+    }
+    
+    @classmethod
+    def load_bbox_map(cls, config_dir: str = "config"):
+        """从文件加载bbox_map"""
+        bbox_file = os.path.join(config_dir, "bbox_map.json")
+        if os.path.exists(bbox_file):
+            try:
+                with open(bbox_file, 'r', encoding='utf-8') as f:
+                    cls.bbox_map = json.load(f)
+                print(f"已加载bbox_map: {cls.bbox_map}")
+            except Exception as e:
+                print(f"加载bbox_map失败: {e}")
+    
+    @classmethod
+    def save_bbox_map(cls, config_dir: str = "config"):
+        """保存bbox_map到文件"""
+        os.makedirs(config_dir, exist_ok=True)
+        bbox_file = os.path.join(config_dir, "bbox_map.json")
+        try:
+            with open(bbox_file, 'w', encoding='utf-8') as f:
+                json.dump(cls.bbox_map, f, ensure_ascii=False, indent=2)
+            print(f"已保存bbox_map到: {bbox_file}")
+        except Exception as e:
+            print(f"保存bbox_map失败: {e}")
+    
     def __init__(self, 
-                 model_path: str = "weights/yoloe-11s-seg.pt",
+                 model_path: str = "weights/yoloe-11l-seg.pt",
                  reference_dir: str = "reference_images",
                  template_dir: str = "position_templates",
-                 camera_id: int = 0):
+                 camera_id: int = 0,
+                 config_dir: str = "config"):
         """
         初始化系统
         Args:
@@ -1006,14 +1044,19 @@ class DrinkShelfLocator:
             reference_dir: 参考图片目录
             template_dir: 位置模板目录
             camera_id: 相机设备ID
+            config_dir: 配置文件目录
         """
         self.model_path = model_path
         self.reference_dir = reference_dir
         self.template_dir = template_dir
+        self.config_dir = config_dir
         
         # 创建必要目录
         os.makedirs(reference_dir, exist_ok=True)
         os.makedirs(template_dir, exist_ok=True)
+        
+        # 加载保存的bbox_map
+        self.load_bbox_map(config_dir)
         
         # 初始化各模块
         from .YoloE_Seg import YOLOEProcessor
@@ -1039,7 +1082,6 @@ class DrinkShelfLocator:
             current_image = self.camera.capture_image(
                 save_path=f"calibration_{drink_type}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jpg"
             )
-            
             # 2. 加载该饮料的参考图片
             visual_prompts = self.get_visual_prompts(drink_type)
             reference_image_path = self.camera.load_reference_image(self.reference_dir, drink_type)
@@ -1225,16 +1267,8 @@ class DrinkShelfLocator:
         """
         根据饮料类型生成视觉提示。
         """
-        # 定义饮料类型到边界框(bboxes)的映射
-        bbox_map = {
-            '可乐': [[330, 103, 368, 203]],
-            '雪碧': [[320, 95, 359, 196]],
-            '柠檬茶': [[308, 232, 342, 284]],
-            '奶茶': [[311, 327, 337, 374]]
-        }
-        
         # 使用 get 方法获取 bboxes，如果 drink_type 不存在则返回 None
-        bboxes_data = bbox_map.get(drink_type)
+        bboxes_data = self.bbox_map.get(drink_type)
         
         # 如果找不到对应的饮料类型，可以决定是返回 None 还是抛出错误
         if bboxes_data is None:
@@ -1246,13 +1280,25 @@ class DrinkShelfLocator:
             'cls': np.array([0]),
         }
 
+    def update_bbox_map(self, drink_type: str, bbox: List[int]):
+        """
+        更新饮料类型的边界框映射
+        Args:
+            drink_type: 饮料类型
+            bbox: 边界框 [x1, y1, x2, y2]
+        """
+        self.bbox_map[drink_type] = [bbox]
+        print(f"已更新 {drink_type} 的边界框: {bbox}")
+        # 保存到文件
+        self.save_bbox_map(self.config_dir)
+
 
 if __name__ == "__main__":
     # 使用示例
     
     # 初始化系统
     locator = DrinkShelfLocator(
-        model_path="weights/yoloe-11s-seg.pt",
+        model_path="weights/yoloe-11l-seg.pt",
         reference_dir="reference_images",
         template_dir="position_templates",
         camera_id=0

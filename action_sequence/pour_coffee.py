@@ -31,14 +31,14 @@ except ImportError as e:
             raise RuntimeError("AGVClient类导入失败，请检查controller/AGV_controller.py文件是否存在且无语法错误。")
 
 # 初始化右臂
-INIT_POS_R = x5.Pose(x=-200, y=-245, z=5, a=-120, b=-5, c=-115, e1=90, e2=0, e3=160)
+INIT_POS_R = x5.Pose(x=-145.160249452737, y=-199.35900829533145, z=84.71502397446304, a=160.6069585824988, b=-85.4579200755279, c=14.351717712227035, e1=96.11870531058125, e2=-0.0006866455078125, e3=-0.010833740234375)
 INIT_POINT_R = x5.Point(pose=INIT_POS_R, uf=0, tf=0, cfg=(0,0,0,7))
-INIT_JOINT_R = x5.Joint(j1=-7.277, j2=-80.381, j3=97.428, j4=-91.135, j5=-24.051, j6=-74.093, e1=12.445-90, e2=0, e3=0)
+INIT_JOINT_R = x5.Joint(j1 = -6.362, j2 = -81.738, j3 = 104.467, j4 = -95.218, j5 = 4.181, j6 = -85.024, e1 = -77.554, e2 = -0.001, e3 = -0.011)
 
 # 初始化左臂
-INIT_POS_L = x5.Pose(x=-200, y=245, z=5, a=120, b=5, c=115, e1=-90, e2=0, e3=0)
+INIT_POS_L = x5.Pose(x=-184.90416189951029, y=203.02375649010347, z=107.66267344899968, a=66.04016912016178, b=-86.68490315803206, c=121.8029965956341, e1=-99.97461614507827, e2=-0.0006866455078125, e3=0.0061798095703125)
 INIT_POINT_L = x5.Point(pose=INIT_POS_L, uf=0, tf=0, cfg=(0,0,0,7))
-INIT_JOINT_L = x5.Joint(j1=4.927, j2=-80.496, j3=-97.021, j4=-87.812, j5=22.909, j6=-79.830, e1=-20.340+90, e2=0, e3=0)
+INIT_JOINT_L = x5.Joint(j1 = 5.694, j2 = -82.975, j3 = -106.95, j4 = -84.678, j5 = -7.358, j6 = -90.755, e1 = 69.521, e2 = -0.001, e3 = 0.006)
 
 def init_robot(handle_l, handle_r, add_data, hand_l, hand_r):
     # 初始化左臂
@@ -154,12 +154,27 @@ def put_coffee_cup(handle_L,handle_R,hand_l,hand_r,add_data):
     """
     将杯子从桌面上拿到咖啡机接水处
     """
+    with AGVClient(ip='192.168.1.50') as agv:
+        # agv.go_to_point_in_world(0.420,0.038,0, 0)
+        pose_result = agv.get_pose()
+        x, y, angle = pose_result
+        print("pose_result = ",pose_result)
+
+    delta_x = (x + 0.153)*1000
+    delta_y = (y + 1.027)*1000
+    # delta_angle = (angle + )
+    print(delta_x)
+    print(delta_y)
 
     # 回到初始化
     pick_1 = INIT_JOINT_L 
     x5.movj(handle_L, pick_1, add_data)
     x5.wait_move_done(handle_L)
     hand_l.setpos(1000, 1000, 1000, 1000, 1000, 0)
+
+    INIT_JOINT_R = x5.Joint(j1=-7.277, j2=-80.381, j3=97.428, j4=-91.135, j5=-24.051, j6=-74.093, e1=12.445-90, e2=0, e3=0)
+    x5.movj(handle_R, INIT_JOINT_R, add_data)
+    x5.wait_move_done(handle_R)
 
     # pre 拿杯子动作1（修改）
     pick_2 = x5.Joint(j1 = -33.254, j2 = -58.097, j3 = -64.264, j4 = -80.521, 
@@ -176,7 +191,21 @@ def put_coffee_cup(handle_L,handle_R,hand_l,hand_r,add_data):
     # 拿杯子
     pick_4 = x5.Joint(j1 =-47.123,j2 = -51.262, j3 = -52.629, j4 = -51.509, 
      j5 = 45.781, j6 = -14.476, e1 = 87.210, e2=0, e3=0)
-    x5.movj(handle_L, pick_4, add_data)
+    
+
+
+    pick_4_point = x5.Pose(x=-192.26252193008182, y=538.3044279671338, z=158.26904829683812, a=-103.3156725565794, b=4.746906928726649, c=5.1939242251689555, e1=-42.67976105448165, e2=0.0006866455078125, e3=-0.001373291015625)
+    pick_4_point = x5.Point(pose=pick_4_point, uf=0, tf=0, cfg=(0,0,0,7))
+
+    # # 计算新的调整后的抓取点位  机器人y轴对应agv x轴，机器人右臂z轴对应agv y轴
+    new_pick_4_point = copy.deepcopy(pick_4_point)
+    new_pick_4_point.pose.z = 158.26904829683812 - delta_y
+    new_pick_4_point.pose.y = 538.3044279671338 - delta_x
+    print(new_pick_4_point)
+    # 逆解，求笛卡尔点位p1的对应关节坐标
+    jp4 = x5.cnvrt_j(handle_L, new_pick_4_point, 1, pick_4)
+
+    x5.movj(handle_L, jp4, add_data)
     x5.wait_move_done(handle_L)
 
     # 合手
@@ -191,10 +220,13 @@ def put_coffee_cup(handle_L,handle_R,hand_l,hand_r,add_data):
 
 
     # 放杯子（咖啡机接水处）
-    pick_7 = x5.Joint(j1 = -59.719, j2 = -73.478, j3 = -39.241, j4 = -42.449, 
-                      j5 = 50.773, j6 = 1.076, e1 = 87.172, e2 = -0.002, e3 = 0)
+    pick_7 = x5.Joint(j1 = -56.851, j2 = -73.339, j3 = -41.695, j4 = -46.621, j5 = 50.705, j6 = 0.042, e1 = 87.174, e2 = -0.004, e3 = 0.019)
     x5.movj(handle_L, pick_7, add_data)
     x5.wait_move_done(handle_L)
+
+    x5.movj(handle_L, pick_7, add_data)
+    x5.wait_move_done(handle_L)
+
 
     # 张开手
     hand_l.setpos(1000, 1000, 1000, 1000, 1000, 0)
@@ -202,8 +234,7 @@ def put_coffee_cup(handle_L,handle_R,hand_l,hand_r,add_data):
 
 
     # 收手动作2（稍微远离放杯处）
-    pick_3 = x5.Joint(j1 =-50.525,j2 = -63.152, j3 = -41.353, j4 = -60.378, 
-     j5 = 34.733, j6 = 0.367, e1 = 87.205, e2=0, e3=0)
+    pick_3 = x5.Joint(j1 = -51.748, j2 = -53.451, j3 = -51.876, j4 = -63.107, j5 = 52.991, j6 = -7.184, e1 = 87.174, e2 = -0.005, e3 = 0.019)
     x5.movj(handle_L, pick_3, add_data)
     x5.wait_move_done(handle_L)
 
@@ -218,12 +249,11 @@ def press_button(handle_L,handle_R,hand_l,hand_r,add_data):
         x, y, angle = pose_result
         print("pose_result = ",pose_result)
 
-    delta_x = (x + 0.126)*1000
-    delta_y = (y + 1.007)*1000
+    delta_x = (x + 0.1553)*1000
+    delta_y = (y + 1.0309)*1000
     # delta_angle = (angle + )
     print(delta_x)
     print(delta_y)
-
     # 靠近点击按钮1
     pick_3 = x5.Joint(j1 = -44.902, j2 = -70.286, j3 = -88.649, j4 = -61.257, 
                       j5 = 80.224, j6 = -19.512, e1 = 87.44, e2 = -0.021, e3 = 0.006)
@@ -234,19 +264,21 @@ def press_button(handle_L,handle_R,hand_l,hand_r,add_data):
     time.sleep(0.5)
 
     # 点击按钮
-    pick_2 = x5.Joint(j1 =-65.037,j2 = -63.601, j3 = -59.010, j4 = -71.290, 
-     j5 = 110.391, j6 = -22.381, e1 = 88.551, e2=0, e3=0)
+    pick_2 = x5.Joint(j1 = -64.502, j2 = -67.85, j3 = -60.973, j4 = -67.409, j5 = 110.475, j6 = -20.965, e1 = 88.546, e2 = -0.001, e3 = 0.021)
     
-    pick_2_point = x5.Pose(x=31.532609304433805, y=550.651067895151, z=-2.0392821949483, a=-140.328270550831, b=52.310069120352246, c=-55.6540698605539, e1=-51.023414208825805, e2=0, e3=0)
+    pick_2_point = x5.Pose(x=22.379362617902128, y=563.2459797839849, z=-15.102345356584667, a=-134.83396548189097, b=49.43601815125561, c=-49.73207522866588, e1=-54.65169179081774, e2=-0.001373291015625, e3=0.020599365234375)
     pick_2_point = x5.Point(pose=pick_2_point, uf=0, tf=0, cfg=(0,0,0,7))
-
-    # # 计算新的调整后的抓取点位  机器人y轴对应agv x轴，机器人右臂z轴对应agv y轴
+    target_agv_point = [-0.1575,-1.0214,-0.0074]
+    from correct_hand import correct_left_arm
+    P_hand_LeftArmCur = correct_left_arm(target_agv_point,pick_2_point)
+    new_pick_2_point = x5.Point(pose=P_hand_LeftArmCur, uf=0, tf=0, cfg=(0,0,0,7))
+    # 计算新的调整后的抓取点位  机器人y轴对应agv x轴，机器人右臂z轴对应agv y轴
     new_pick_2_point = copy.deepcopy(pick_2_point)
-    new_pick_2_point.pose.z = -2.0392821949483 - delta_y
-    new_pick_2_point.pose.y = 550.651067895151 - delta_x
+    new_pick_2_point.pose.z = -15.102345356584667 - delta_y
+    new_pick_2_point.pose.y = 563.2459797839849 - delta_x
     print(new_pick_2_point)
     # 逆解，求笛卡尔点位p1的对应关节坐标
-    jp1 = x5.cnvrt_j(handle_R, new_pick_2_point, 1, pick_2)
+    jp1 = x5.cnvrt_j(handle_L, new_pick_2_point, 1, pick_2)
 
     x5.movj(handle_L, jp1, add_data)
     x5.wait_move_done(handle_L)
@@ -255,20 +287,20 @@ def press_button(handle_L,handle_R,hand_l,hand_r,add_data):
 
 
 
-    # 靠近点击按钮1
-    pick_3 = x5.Joint(j1 = -35.863, j2 = -72.277, j3 = -102.053, j4 = -77.859, 
-                      j5 = 77.805, j6 = -28.431, e1 = 87.441, e2 = -0.006, e3 = 0.001)
-    x5.movj(handle_L, pick_3, add_data)
-    x5.wait_move_done(handle_L)
+    # # 靠近点击按钮1
+    # pick_3 = x5.Joint(j1 = -35.863, j2 = -72.277, j3 = -102.053, j4 = -77.859, 
+    #                   j5 = 77.805, j6 = -28.431, e1 = 87.441, e2 = -0.006, e3 = 0.001)
+    # x5.movj(handle_L, pick_3, add_data)
+    # x5.wait_move_done(handle_L)
 
-    # 靠近动作1（远离放杯处） #TODO: 修改动作序号
-    pick_3 = x5.Joint(j1 = -41.434, j2 = -58.217, j3 = -62.943, j4 = -62.141, 
-                      j5 = 44.192, j6 = -9.458, e1 = 87.205, e2 = -0.001, e3 = -0.001)
-    x5.movj(handle_L, pick_3, add_data)
-    x5.wait_move_done(handle_L)
+    # # 靠近动作1（远离放杯处） #TODO: 修改动作序号
+    # pick_3 = x5.Joint(j1 = -41.434, j2 = -58.217, j3 = -62.943, j4 = -62.141, 
+    #                   j5 = 44.192, j6 = -9.458, e1 = 87.205, e2 = -0.001, e3 = -0.001)
+    # x5.movj(handle_L, pick_3, add_data)
+    # x5.wait_move_done(handle_L)
 
-    hand_l.setpos(820, 820, 820, 820, 1000, 0)
-    time.sleep(0.5)
+    # hand_l.setpos(820, 820, 820, 820, 1000, 0)
+    # time.sleep(0.5)
 
 
 
@@ -385,19 +417,23 @@ def put_coffee_cup_with_coffee(handle_L,handle_R,hand_l,hand_r,add_data):
     x5.wait_move_done(handle_R)
 
 
-def move_to_coffee_machine_and_make_coffee():
+def move_to_coffee_machine_and_make_coffee(handle_l,handle_r,hand_l,hand_r,add_data_1):
     """
     移动到咖啡机并开始制作咖啡（按下按钮）。该函数返回后会播报语音"咖啡正在制作中，请您稍等片刻"
     """
     time.sleep(3)
+    put_coffee_cup(handle_l,handle_r,hand_l,hand_r,add_data_1)
 
-def get_coffee_and_serve():
+    press_button(handle_l,handle_r,hand_l,hand_r,add_data_1)
+
+def get_coffee_and_serve(handle_l,handle_r,hand_l,hand_r,add_data_1):
     """
     将咖啡从咖啡机接水处拿走并放到传送带上。该函数返回后会播报语音"请享用您的咖啡"
     """
     time.sleep(3)
 
-
+    get_coffee_cup_with_coffee(handle_l,handle_r,hand_l,hand_r,add_data_1)
+    put_coffee_cup_with_coffee(handle_l,handle_r,hand_l,hand_r,add_data_1)
 
 
 if __name__ == "__main__":
@@ -413,10 +449,10 @@ if __name__ == "__main__":
     # 连接机器人
     handle_l = x5.connect("192.168.1.9")
     handle_r = x5.connect("192.168.1.10")
-    put_coffee_cup(handle_l,handle_r,hand_l,hand_r,add_data_1)
+    # put_coffee_cup(handle_l,handle_r,hand_l,hand_r,add_data_1)
 
     press_button(handle_l,handle_r,hand_l,hand_r,add_data_1)
     # # time.sleep(32)
 
-    get_coffee_cup_with_coffee(handle_l,handle_r,hand_l,hand_r,add_data_1)
-    put_coffee_cup_with_coffee(handle_l,handle_r,hand_l,hand_r,add_data_1)
+    # get_coffee_cup_with_coffee(handle_l,handle_r,hand_l,hand_r,add_data_1)
+    # put_coffee_cup_with_coffee(handle_l,handle_r,hand_l,hand_r,add_data_1)

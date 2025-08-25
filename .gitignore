@@ -3,3 +3,5 @@ __pycache__/
 recordings/
 ckpts/
 output_voices/
+sam2.1_b.pt
+objectLocalization/objectDectection/weights/
