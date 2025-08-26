@@ -7,21 +7,64 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')
 
 from objectLocalization.objectDectection.DrinkShelfLocator import DrinkShelfLocator
 
+# 层数映射：层数（从下往上数），头部俯仰角（正方向为向下旋转），身躯高度（数值越大，身躯高度越高）
+layer_mapping = {
+    "水": [2, 28, -4],
+    "雪碧": [3, 20, 100],
+    "奶茶": [4, 5, 250],
+    "可乐": [5, -3, 450]
+}
+
+def load_layer_mapping(config_dir: str = "config"):
+    """从文件加载layer_mapping"""
+    global layer_mapping
+    layer_file = os.path.join(config_dir, "layer_mapping.json")
+    if os.path.exists(layer_file):
+        try:
+            with open(layer_file, 'r', encoding='utf-8') as f:
+                layer_mapping = json.load(f)
+            print(f"已加载layer_mapping: {layer_mapping}")
+        except Exception as e:
+            print(f"加载layer_mapping失败: {e}")
+
+def save_layer_mapping(config_dir: str = "config"):
+    """保存layer_mapping到文件"""
+    global layer_mapping
+    os.makedirs(config_dir, exist_ok=True)
+    layer_file = os.path.join(config_dir, "layer_mapping.json")
+    try:
+        with open(layer_file, 'w', encoding='utf-8') as f:
+            json.dump(layer_mapping, f, ensure_ascii=False, indent=2)
+        print(f"已保存layer_mapping到: {layer_file}")
+    except Exception as e:
+        print(f"保存layer_mapping失败: {e}")
+
+# 在模块加载时自动加载配置
+load_layer_mapping()
+
+def update_layer_mapping(drink_type: str, layer: int, head_angle: int, body_distance: int):
+    """
+    更新层数映射
+    Args:
+        drink_type: 饮料类型
+        layer: 层数
+        head_angle: 头部俯仰角
+        body_distance: 身躯高度
+    """
+    global layer_mapping
+    layer_mapping[drink_type] = [layer, head_angle, body_distance]
+    print(f"已更新 {drink_type} 的层数映射: 层{layer}, 俯仰角{head_angle}, 高度{body_distance}")
+    # 保存到文件
+    save_layer_mapping()
+
 class ObjectLocalization:
     def __init__(self):
         """初始化对象定位类"""
         self.obj_name = None
         self.num = None
-        self.layer_mapping = {
-            "奶茶": [2,28-5],
-            "柠檬茶": [3,0,-5],
-            "可乐": [4,0,130],
-            "雪碧": [5,0,450]
-        }
-
         base_path = os.path.join("objectLocalization", "objectDectection")
         self.locator = DrinkShelfLocator(
-            model_path=os.path.join(base_path, "weights/yoloe-11s-seg.pt"),
+            model_path=os.path.join(base_path, "weights/yoloe-11l-seg.pt"),
             reference_dir=os.path.join(base_path, "reference_images"),
             template_dir=os.path.join(base_path, "position_templates"),
             camera_id=0
@@ -35,6 +78,8 @@ class ObjectLocalization:
         """
         if obj_name is None or num is None:
             # 如果obj_name和num为None，则从json文件中读取
+            if json_file_path is None:
+                raise ValueError("json_file_path不能为None")
             try:
                 # 检查文件是否存在
                 if not os.path.exists(json_file_path):
@@ -61,10 +106,10 @@ class ObjectLocalization:
             self.num = num
         
         # 根据对象名称返回对应的层号
-        if self.obj_name in self.layer_mapping:
-            layer_number = self.layer_mapping[self.obj_name][0]
-            head_angle = self.layer_mapping[self.obj_name][1]
-            body_distance = self.layer_mapping[self.obj_name][2]
+        if self.obj_name in layer_mapping:
+            layer_number = layer_mapping[self.obj_name][0]
+            head_angle = layer_mapping[self.obj_name][1]
+            body_distance = layer_mapping[self.obj_name][2]
             print(f"对象 '{self.obj_name}' 对应第 {layer_number} 层")
             return layer_number, head_angle, body_distance
         else:

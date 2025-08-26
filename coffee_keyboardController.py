@@ -16,10 +16,6 @@ from typing import Dict, Callable, Optional
 from dataclasses import dataclass
 from pynput.keyboard import Key, Listener
 
-import threading
-
-import signal
-
 # 添加父目录到路径，确保可以正确导入controller模块
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 PARENT_DIR = os.path.abspath(os.path.join(BASE_DIR, '..'))
@@ -31,6 +27,7 @@ try:
     from controller.hand_controller import InspireHandR
     from controller.gripper_controller import GripperController
     from action_sequence.agv_client import AGVClient
+    from action_sequence.pour_coffee import put_coffee_cup, press_button, get_coffee_cup_with_coffee
 except ImportError as e:
     logging.warning(f"导入控制器模块失败: {e}")
     # 创建占位类以避免NameError
@@ -114,42 +111,10 @@ class KeyboardController:
         self.processor_thread = None
         self.logger = None
         self._setup_logging()
-        self.category_count = 4
-        self.function_count = 8
-        self.exit_flag = False
-
-        # 用于主线程退出的事件
-        self.exit_event = threading.Event()
-
-        # 示例类别和函数名
-        self.category_names = {
-            1: "类别1",
-            2: "类别2",
-            3: "类别3",
-            4: "类别4"
-        }
-        self.function_names = {
-            1: "函数1",
-            2: "函数2",
-            3: "函数3",
-            4: "函数4",
-            5: "函数5",
-            6: "函数6",
-            7: "函数7",
-            8: "函数8"
-        }
-        # 这里可以根据实际需要替换为真实的动作
-        self.function_mapping = {
-            1: self._function_1,
-            2: self._function_2,
-            3: self._function_3,
-            4: self._function_4,
-            5: self._function_5,
-            6: self._function_6,
-            7: self._function_7,
-            8: self._function_8
-        }
-
+        
+        # 初始化动作映射
+        self._setup_action_mapping()
+    
     def _setup_logging(self):
         logging.basicConfig(
             level=logging.INFO,
@@ -160,81 +125,70 @@ class KeyboardController:
             ]
         )
         self.logger = logging.getLogger(__name__)
-
-    def _function_1(self):
-        self.logger.info("执行函数1")
-        time.sleep(2)
-        print("执行函数1")
-
-    def _function_2(self):
-        self.logger.info("执行函数2")
-        print("执行函数2")
-
-    def _function_3(self):
-        self.logger.info("执行函数3")
-        print("执行函数3")
-
-    def _function_4(self):
-        self.logger.info("执行函数4")
-        print("执行函数4")
-
-    def _function_5(self):
-        self.logger.info("执行函数5")
-        print("执行函数5")
-
-    def _function_6(self):
-        self.logger.info("执行函数6")
-        print("执行函数6")
-
-    def _function_7(self):
-        self.logger.info("执行函数7")
-        print("执行函数7")
-
-    def _function_8(self):
-        self.logger.info("执行函数8")
-        print("执行函数8")
-
-    def print_category_menu(self):
-        print("\n请选择函数类别（小键盘1-4）：")
-        for i in range(1, self.category_count + 1):
-            print(f"{i}: {self.category_names.get(i, f'类别{i}')}")
-        print("按Backspace返回/退出。")
-  
-    def print_function_menu(self, category):
-        print(f"\n已选择类别：{self.category_names.get(category, f'类别{category}')}")
-        # print("请选择具体函数（小键盘1-8）：")
-        # for i in range(1, self.function_count + 1):
-        #     print(f"{i}: {self.function_names.get(i, f'函数{i}')}")
-        # print("按Backspace返回上一级。")
-
-    def _clear_key_queue(self):
-        """清空按键队列中的所有按键输入"""
-        try:
-            while not self.key_queue.empty():
-                self.key_queue.get_nowait()
-                self.key_queue.task_done()
-            self.logger.info("按键队列已清空")
-        except Exception as e:
-            self.logger.error(f"清空按键队列时出错: {e}")
-
-    def _pause_keyboard_listener(self):
-        """暂停按键监听器"""
-        try:
-            if self.keyboard_listener and self.keyboard_listener.listener:
-                self.keyboard_listener.listener.stop()
-                self.logger.info("按键监听器已暂停")
-        except Exception as e:
-            self.logger.error(f"暂停按键监听器时出错: {e}")
-
-    def _resume_keyboard_listener(self):
-        """恢复按键监听器"""
-        try:
-            if self.keyboard_listener:
-                self.keyboard_listener.start()
-                self.logger.info("按键监听器已恢复")
-        except Exception as e:
-            self.logger.error(f"恢复按键监听器时出错: {e}")
-
+    
+    def _setup_action_mapping(self):
+        """设置动作映射"""
+        self.action_mapping = {
+            1: self._action_1,
+            2: self._action_2,
+            3: self._action_3,
+            4: self._action_4,
+            5: self._action_5,
+            6: self._action_6,
+            7: self._action_7,
+            8: self._action_8,
+            9: self._action_9
+        }
+    
+    def _action_1(self):
+        """动作1：模拟耗时任务"""
+        self.is_processing = True
+        print("\r" + " " * 20 + "\r", end="", flush=True)  # 清理提示信息
+        self.logger.info("执行动作1：开始")
+        time.sleep(self.config.PROCESSING_DELAY)
+        self.is_processing = False
+        self.logger.info("执行动作1：完成")
+    
+    def _action_2(self):
+        """动作2"""
+        print("\r" + " " * 20 + "\r", end="", flush=True)  # 清理提示信息
+        self.logger.info("执行动作2")
+    
+    def _action_3(self):
+        """动作3"""
+        print("\r" + " " * 20 + "\r", end="", flush=True)  # 清理提示信息
+        self.logger.info("执行动作3")
+    
+    def _action_4(self):
+        """动作4"""
+        print("\r" + " " * 20 + "\r", end="", flush=True)  # 清理提示信息
+        self.logger.info("执行动作4")
+    
+    def _action_5(self):
+        """动作5"""
+        print("\r" + " " * 20 + "\r", end="", flush=True)  # 清理提示信息
+        self.logger.info("执行动作5")
+    
+    def _action_6(self):
+        """动作6"""
+        print("\r" + " " * 20 + "\r", end="", flush=True)  # 清理提示信息
+        self.logger.info("执行动作6")
+    
+    def _action_7(self):
+        """动作7"""
+        print("\r" + " " * 20 + "\r", end="", flush=True)  # 清理提示信息
+        self.logger.info("执行动作7")
+    
+    def _action_8(self):
+        """动作8"""
+        print("\r" + " " * 20 + "\r", end="", flush=True)  # 清理提示信息
+        self.logger.info("执行动作8")
+    
+    def _action_9(self):
+        """动作9"""
+        print("\r" + " " * 20 + "\r", end="", flush=True)  # 清理提示信息
+        self.logger.info("执行动作9")
+    
     def key_processor(self):
         self.logger.info("按键处理线程启动")
         state = "category"  # category/function/exit

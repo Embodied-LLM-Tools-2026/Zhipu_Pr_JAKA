@@ -4,7 +4,7 @@ from ultralytics import YOLOE
 from ultralytics.models.yolo.yoloe import YOLOEVPSegPredictor
 
 class YOLOEProcessor:
-    def __init__(self, model_path="weights/yoloe-11s-seg.pt", text_prompt=None):
+    def __init__(self, model_path="weights/yoloe-11l-seg.pt", text_prompt=None):
         """
         Initialize YOLOE batch processor
         Args:
@@ -103,7 +103,7 @@ def main():
     # img = r"D:\VisualDetector\datasets\drink\drink_ref\维他_侧视.jpg"
     text_prompt = "the brown cuboid"  
     # Model path
-    model_path=r"D:\VisualDetector\weights\yoloe-11s-seg.pt"
+    model_path=r"D:\VisualDetector\weights\yoloe-11l-seg.pt"
     # box prompt
     visual_prompts = dict(
         # bboxes=np.array([[164, 107, 297, 476]]),  # 可乐
