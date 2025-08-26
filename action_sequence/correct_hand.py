@@ -1,6 +1,6 @@
 import numpy as np
 from scipy.spatial.transform import Rotation
-from agv_client import AGVClient
+from controller.agv_client import AGVClient
 import xapi.api as x5
 
 '''

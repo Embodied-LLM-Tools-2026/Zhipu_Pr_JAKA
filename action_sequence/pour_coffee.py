@@ -19,7 +19,7 @@ if PARENT_DIR not in sys.path:
 try:
     from controller.hand_controller import InspireHandR
     from controller.gripper_controller import GripperController
-    from action_sequence.agv_client import AGVClient
+    from controller.agv_client import AGVClient
 except ImportError as e:
     print(f"导入InspireHandR或AGVClient失败，请检查controller/hand_controller.py和controller/AGV_controller.py路径。错误信息: {e}")
     # 如果导入失败，创建占位类以避免NameError

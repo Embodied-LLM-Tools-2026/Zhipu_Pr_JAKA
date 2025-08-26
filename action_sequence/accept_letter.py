@@ -12,17 +12,13 @@ if PARENT_DIR not in sys.path:
 
 try:
     from controller.hand_controller import InspireHandR
-    from controller.gripper_controller import GripperController
-    from action_sequence.agv_client import AGVClient
+
 except ImportError as e:
-    print(f"导入InspireHandR或AGVClient失败，请检查controller/hand_controller.py和controller/AGV_controller.py路径。错误信息: {e}")
+    print(f"导入InspireHandR失败，请检查controller/hand_controller.py。错误信息: {e}")
     # 如果导入失败，创建占位类以避免NameError
     class InspireHandR:
         def __init__(self, *args, **kwargs):
             raise RuntimeError("InspireHandR类导入失败，请检查controller/hand_controller.py文件是否存在且无语法错误。")
-    class AGVClient:
-        def __init__(self, *args, **kwargs):
-            raise RuntimeError("AGVClient类导入失败，请检查controller/AGV_controller.py文件是否存在且无语法错误。")
 
 def accept_letter(handle_l, handle_r, hand_l, hand_r, add_data):
     accept_joint_l = x5.Joint(j1 =-41.416,j2 = -44.899, j3 = -20.344, j4 = -87.096, 

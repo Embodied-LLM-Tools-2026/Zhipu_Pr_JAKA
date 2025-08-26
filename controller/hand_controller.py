@@ -5,8 +5,6 @@
 import time
 import serial
 import numpy as np
-import serial.tools.list_ports
-import minimalmodbus
 
 class InspireHandR:
     def __init__(self, port: str = "COM11", baudrate: int = 115200, hand_id: int = 1):
@@ -15,7 +13,7 @@ class InspireHandR:
         self.ser.isOpen()
         self.hand_id = hand_id
         # self.reset() # 手部复原
-        #self.instrument = minimalmodbus.Instrument(self.port, 1)
+
     
     #把十六进制或十进制的数转成bytes
     def num2str(self,num):
@@ -320,8 +318,6 @@ class InspireHandR:
         read_num = self.ser.inWaiting()
         getdata= self.ser.read(read_num)
         print("写入响应:", getdata.hex(" "))
- 
-        
         return
 
     def get_joint_position(self):
@@ -369,46 +365,7 @@ class InspireHandR:
 
         Data = getdata.hex(" ").split(" ")
         print(Data)
-        # Joint_position = np.zeros(5)
-        # for i in range(1,10):
-        #     if i%2 == 0:
-        #         continue
-        #     else:
-        #         s1 = Data[5+i-1]
-        #         s2 = Data[5+i]
-        #         s = s2 + s1
-        #         setpower[int((i-1)/2)] = int(s, 16)
-        # # print('力传感器信息（依次为小指至大拇指的传感器的原始值）：(%.2f, %.2f, %.2f, %.2f, %.2f)'%(setpower[0], setpower[1], setpower[2], setpower[3], setpower[4]))
-        # return setpower
 
-    def grasp(self):
-        '''功能：使用灵巧手指尖抓力传感器实现物体抓取。
-        数据内容：无。
-        '''
-        i = [2000,2000,2000,2000,2000,2000] # 开始时手是张开的
-        force_former = self.get_force_sensor() # 读取初始压力
-        T = 19 # 迭代次数
-        while T:
-            T -= 1
-            for index in range(len(i)):
-                if i[index] > 0:
-                    i[index] -= 100
-            self.setpos(i[0],i[1],i[2],i[3],i[4],i[5])
-            force = self.get_force_sensor()
-            poor = force - force_former # 压力差，判断是否抓紧了
-            below_threshold_id = np.argwhere(poor>1500) # 得到压力差大于1500的手指
-            print(below_threshold_id)
-            if below_threshold_id.size != 0: 
-                for k in range(below_threshold_id.size): # 压力差大于1500的手指赋值-1
-                    if int(below_threshold_id[k]) == 4:
-                        i[4] = -1
-                        i[5] = -1
-                    else:
-                        i[int(below_threshold_id[k])] = -1
-
-            elif below_threshold_id.size == 5:
-                break
-    
     
     def close(self):
         self.ser.close()

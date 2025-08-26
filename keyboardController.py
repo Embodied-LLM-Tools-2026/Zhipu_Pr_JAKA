@@ -26,7 +26,7 @@ if PARENT_DIR not in sys.path:
 try:
     from controller.hand_controller import InspireHandR
     from controller.gripper_controller import GripperController
-    from action_sequence.agv_client import AGVClient
+    from controller.agv_client import AGVClient
     from action_sequence.pour_coffee import put_coffee_cup, press_button, get_coffee_cup_with_coffee
 except ImportError as e:
     logging.warning(f"导入控制器模块失败: {e}")

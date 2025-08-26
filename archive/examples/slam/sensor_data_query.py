@@ -6,7 +6,7 @@ from datetime import datetime
 
 # 添加父目录到路径，以便导入AGVClient
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
-from action_sequence.agv_client import AGVClient
+from controller.agv_client import AGVClient
 
 
 class SensorDataQuery:
