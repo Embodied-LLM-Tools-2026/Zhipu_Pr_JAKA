@@ -321,7 +321,7 @@ class DrinkFinder:
         self.overlap_threshold = overlap_threshold
         self.alignment_enabled = alignment_enabled
     
-    def find_drinks(self, current_mask: np.ndarray, position_template: Dict, quantity: int, grabbing_direction: Optional[str] = "left") -> Dict:
+    def find_drinks(self, current_mask: np.ndarray, position_template: Dict, quantity: int, grabbing_direction: Optional[str] = "left", total_drinks: int = 6) -> Dict:
         """
         查找指定数量的饮料位置
         Args:
@@ -356,10 +356,27 @@ class DrinkFinder:
                     "message": f"当前货架上只有{M}个饮料"
                 }
             else:
-                if grabbing_direction == "left":
-                    selected_positions = sorted_positions[:quantity]
+                if grabbing_direction == "auto":
+                    half_total_drinks = total_drinks // 2
+                    # 计算小于等于half_total_drinks的元素数量
+                    left_drinks_num = sum(1 for x in sorted_positions if x <= half_total_drinks)
+                    
+                    if left_drinks_num >= quantity:
+                        # 情况1：直接取前quantity个元素
+                        selected_positions = sorted_positions[:quantity]
+                    else:
+                        # 情况2：组合左半部分和右半部分
+                        left_part = sorted_positions[:left_drinks_num]
+                        # 计算需要从右半部分取的数量
+                        n = quantity - left_drinks_num
+                        # 取右半部分后n个元素并反转
+                        right_part = sorted_positions[-n:][::-1]
+                        selected_positions = left_part + right_part
                 else:
-                    selected_positions = sorted_positions[M-quantity:]
+                    if grabbing_direction == "left":
+                        selected_positions = sorted_positions[:quantity]
+                    else:
+                        selected_positions = sorted_positions[M-quantity:]
             
             return {
                 "success": True,
@@ -1121,7 +1138,7 @@ class DrinkShelfLocator:
         Args:
             drink_type: 饮料类型
             quantity: 需要数量
-            grabbing_direction: (可选) 夹取方向 ("left" or "right")
+            grabbing_direction: (可选) 夹取方向 ("left" or "right" or "auto")
             total_drinks: (可选) 货架总饮料数
         Returns:
             查找结果
@@ -1153,66 +1170,69 @@ class DrinkShelfLocator:
                 }
             
             # 如果提供了夹取方向和总数，则使用新策略
-            if grabbing_direction and total_drinks is not None:
-                print(f"使用新策略查找饮料，夹取方向: {grabbing_direction}, 总数: {total_drinks}")
+            # if grabbing_direction and total_drinks is not None:
+            #     print(f"使用新策略查找饮料，夹取方向: {grabbing_direction}, 总数: {total_drinks}")
                 
-                # 将当前检测到的mask分解为独立的个体位置
-                individual_positions, _ = self.finder._decompose_current_mask(current_masks)
-                M = len(individual_positions)
+            #     # 将当前检测到的mask分解为独立的个体位置
+            #     individual_positions, _ = self.finder._decompose_current_mask(current_masks)
+            #     M = len(individual_positions)
                 
-                if M == 0:
-                    return {
-                        "success": True,
-                        "positions": [],
-                        "found_count": 0,
-                        "total_available": 0,
-                        "message": f"当前货架上未检测到{drink_type}"
-                    }
+            #     if M == 0:
+            #         return {
+            #             "success": True,
+            #             "positions": [],
+            #             "found_count": 0,
+            #             "total_available": 0,
+            #             "message": f"当前货架上未检测到{drink_type}"
+            #         }
 
-                occupied_positions = []
-                if grabbing_direction.lower() == 'left':
-                    # 占用位置列表为[N-M+1,N-M+2,...,N-1,N]
-                    occupied_positions = list(range(total_drinks - M + 1, total_drinks + 1))
-                elif grabbing_direction.lower() == 'right':
-                    # 占用位置列表为[1,2,...,M-1,M]
-                    occupied_positions = list(range(1, M + 1))
-                else:
-                    # Invalid direction
-                    error_msg = f"无效的夹取方向: {grabbing_direction}。请使用 'left' 或 'right'。"
-                    print(error_msg)
-                    return {
-                        "success": False,
-                        "positions": [],
-                        "found_count": 0,
-                        "message": error_msg
-                    }
-                if quantity > M:
-                    return {
-                        "success": False,
-                        "positions": [],
-                        "found_count": M,
-                        "message": f"当前货架上只有{M}个{drink_type}"
-                    }
-                else:
-                    if grabbing_direction.lower() == 'left':
-                        selected_positions = occupied_positions[:quantity]
-                    else:   
-                        selected_positions = occupied_positions[M-quantity:]
+            #     occupied_positions = []
+            #     if grabbing_direction.lower() == 'left':
+            #         # 占用位置列表为[N-M+1,N-M+2,...,N-1,N]
+            #         occupied_positions = list(range(total_drinks - M + 1, total_drinks + 1))
+            #     elif grabbing_direction.lower() == 'right':
+            #         # 占用位置列表为[1,2,...,M-1,M]
+            #         occupied_positions = list(range(1, M + 1))
+            #     else:
+            #         # Invalid direction
+            #         error_msg = f"无效的夹取方向: {grabbing_direction}。请使用 'left' 或 'right'。"
+            #         print(error_msg)
+            #         return {
+            #             "success": False,
+            #             "positions": [],
+            #             "found_count": 0,
+            #             "message": error_msg
+            #         }
+            #     if quantity > M:
+            #         return {
+            #             "success": False,
+            #             "positions": [],
+            #             "found_count": M,
+            #             "message": f"当前货架上只有{M}个{drink_type}"
+            #         }
+            #     else:
+            #         if grabbing_direction.lower() == 'auto':
+            #             selected_positions = []
+            #         else:
+            #             if grabbing_direction.lower() == 'left':
+            #                 selected_positions = occupied_positions[:quantity]
+            #             else:   
+            #                 selected_positions = occupied_positions[M-quantity:]
                 
-                result = {
-                    "success": True,
-                    "positions": selected_positions,
-                    "found_count": len(selected_positions),
-                    "message": f"找到{len(selected_positions)}个位置: {selected_positions}"
-                }
-                print(f"查找完成: {result['message']}")
-                return result
+            #     result = {
+            #         "success": True,
+            #         "positions": selected_positions,
+            #         "found_count": len(selected_positions),
+            #         "message": f"找到{len(selected_positions)}个位置: {selected_positions}"
+            #     }
+            #     print(f"查找完成: {result['message']}")
+            #     return result
 
             # 3. 加载该饮料的位置模板
             position_template = self.calibrator.load_position_template(drink_type)
             
             # 4. 查找饮料位置
-            result = self.finder.find_drinks(current_masks, position_template, quantity, grabbing_direction)
+            result = self.finder.find_drinks(current_masks, position_template, quantity, grabbing_direction, total_drinks)
             
             print(f"查找完成: {result['message']}")
             return result

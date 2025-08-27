@@ -143,9 +143,7 @@ class VoiceRobotController:
 
         
         # 自我介绍关键词
-        self.intro_keywords = [
-            "介绍一下你自己", "你是谁", "自我介绍", "请介绍你自己", "你能做什么", "你的功能", "你的作用", "你是做什么的"
-        ]
+        self.intro_keywords = Config.INTRO_KEYWORDS
         
         # 初始化饮料货架定位器
         self.obj_locater = ObjectLocalization()
@@ -795,7 +793,7 @@ class VoiceRobotController:
     
     # 主要在这里调用后面视觉和实机执行的接口
     def _process_action_command(self, text: str) -> bool:
-        """处理动作指令（带拖延语机制，LLM+TTS整体流程超时1.5秒自动插入拖延语）"""
+        """处理动作指令"""
         # 性能监控 - 在函数最开头定义，确保所有代码路径都能访问
         total_start_time = time.time()
         print(f"⏱️ 开始处理指令: {text[:30]}...")
@@ -833,7 +831,7 @@ class VoiceRobotController:
         command_result = self.processor.process_command(text)
         intent = command_result.get("intent", "unknown") # 意图
         action = command_result.get("action", "unknown") # 具体动作
-        confidence = command_result.get("confidence", 0.0)
+        confidence = command_result.get("confidence", 0)
         description = command_result.get("description", "未知")
         llm_end_time = time.time()
 
@@ -858,16 +856,18 @@ class VoiceRobotController:
             print(f"🎯 识别动作: {description} (置信度: {confidence:.2f})")
             print("�� 开始异步TTS生成和播放（同时预热VAD）...")
             
-        else:
+        elif intent == "chat" and confidence == 1:
             print(f"小拓说：{description}")
             print("🎵 开始异步TTS生成和播放（同时预热VAD）...")
             audio_file_path = self._play_cached_audio(description, tts_ready_callback=tts_ready_callback)
-        
+        else:
+            print("❓ 录制到环境噪声，无法识别")
+
         # 性能监控 - TTS开始播放（不包括播放时间）
         tts_play_start_time = time.time()
         tts_prepare_duration = tts_play_start_time - tts_start_time
 
-        if intent == "command" and (action == "unknown" or confidence < 0.5):
+        if intent == "command" and (action == "unknown" or confidence != 1):
             print("❓ 抱歉，我不理解这个指令，请重新说一遍")
             error_audio_path = self._play_cached_audio("抱歉，我不理解这个指令，请重新说一遍")
             
