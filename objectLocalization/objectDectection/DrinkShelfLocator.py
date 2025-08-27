@@ -41,6 +41,7 @@ class CameraController:
         
         # 拍摄图像
         ret, frame = cap.read()
+        # 人为进行掩码，将货架的上下两边进行掩码，防止干扰
         frame[0:200,:,:] = 255
         frame[350:,:,:] = 255
 
@@ -141,6 +142,7 @@ class PositionCalibrator:
         for i, contour in enumerate(contours):
             # 过滤掉太小的区域
             area = cv2.contourArea(contour)
+            # 晒除掉面积较小的残缺的识别到的掩码块（这些掩码块大部分都是错检部分）
             if area < 100:  
                 continue
             
@@ -664,111 +666,6 @@ class DrinkFinder:
             
         except Exception as e:
             return current_mask
-    
-    def _detect_current_line(self, mask: np.ndarray) -> Dict:
-        """
-        检测当前掩码中的参考线
-        Args:
-            mask: 当前掩码
-        Returns:
-            参考线信息
-        """
-        try:
-            # 找到连通区域
-            contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-            
-            position_centers = []
-            for contour in contours:
-                area = cv2.contourArea(contour)
-                if area < 100:  # 过滤小区域
-                    continue
-                
-                # 计算中心点
-                M = cv2.moments(contour)
-                if M["m00"] != 0:
-                    cx = int(M["m10"] / M["m00"])
-                    cy = int(M["m01"] / M["m00"])
-                    position_centers.append((cx, cy))
-            
-            if len(position_centers) < 2:
-                return {"type": "insufficient_points"}
-            
-            # 提取参考线
-            return self._extract_line_from_points(position_centers)
-            
-        except Exception as e:
-            return {"type": "error"}
-    
-    def _extract_line_from_points(self, points: List[Tuple[int, int]]) -> Dict:
-        """
-        从点集中提取直线信息
-        Args:
-            points: 点坐标列表
-        Returns:
-            直线信息
-        """
-        points_array = np.array(points)
-        
-        if SKLEARN_AVAILABLE and RANSACRegressor is not None and len(points) >= 3:
-            try:
-                # 使用RANSAC拟合直线
-                X = points_array[:, 0].reshape(-1, 1)
-                y = points_array[:, 1]
-                
-                ransac = RANSACRegressor(random_state=42)
-                ransac.fit(X, y)
-                
-                k = ransac.estimator_.coef_[0]
-                b = ransac.estimator_.intercept_
-                
-                x_min, x_max = points_array[:, 0].min(), points_array[:, 0].max()
-                y_min, y_max = k * x_min + b, k * x_max + b
-                angle = np.arctan(k) * 180 / np.pi
-                
-                return {
-                    "type": "line",
-                    "slope": k,
-                    "intercept": b,
-                    "angle": angle,
-                    "start_point": (int(x_min), int(y_min)),
-                    "end_point": (int(x_max), int(y_max)),
-                    "center_points": points_array.tolist()
-                }
-                
-            except Exception as e:
-                # 降级到简单线性回归
-                return self._simple_line_fit_from_array(points_array)
-        else:
-            # 使用简单线性回归
-            return self._simple_line_fit_from_array(points_array)
-    
-    def _simple_line_fit_from_array(self, points_array: np.ndarray) -> Dict:
-        """
-        从数组使用简单最小二乘法拟合直线
-        Args:
-            points_array: 点坐标数组
-        Returns:
-            直线信息
-        """
-        if len(points_array) >= 2:
-            A = np.vstack([points_array[:, 0], np.ones(len(points_array))]).T
-            k, b = np.linalg.lstsq(A, points_array[:, 1], rcond=None)[0]
-            
-            x_min, x_max = points_array[:, 0].min(), points_array[:, 0].max()
-            y_min, y_max = k * x_min + b, k * x_max + b
-            angle = np.arctan(k) * 180 / np.pi
-            
-            return {
-                "type": "line",
-                "slope": k,
-                "intercept": b,
-                "angle": angle,
-                "start_point": (int(x_min), int(y_min)),
-                "end_point": (int(x_max), int(y_max)),
-                "center_points": points_array.tolist()
-            }
-        else:
-            return {"type": "insufficient_points"}
     
     def _compute_optimal_affine_transform(self, current_individual_positions: Dict[int, np.ndarray], 
                                          template_individual_positions: Dict[int, np.ndarray]) -> Optional[np.ndarray]:
