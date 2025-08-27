@@ -39,6 +39,8 @@ class ActionExecuter:
                 init_robot,
                 move_to_pick_height_pitch_angle,
                 move_to_shelf,
+                move_to_left_shelf,
+                move_to_right_shelf,
                 back_bar_station,
             )
             
@@ -73,6 +75,8 @@ class ActionExecuter:
             self.bowing = bow
             self.move_to_pick_height_pitch_angle = move_to_pick_height_pitch_angle
             self.move_to_shelf = move_to_shelf
+            self.move_to_left_shelf = move_to_left_shelf
+            self.move_to_right_shelf = move_to_right_shelf
             self.back_bar_station = back_bar_station
             self.move_to_coffee_machine_and_make_coffee = move_to_coffee_machine_and_make_coffee
             self.get_coffee_and_serve = get_coffee_and_serve
@@ -138,24 +142,41 @@ class ActionExecuter:
     # 拿一瓶饮料
     def execute_get_drink(
         self,
+        left_drink_id: int = None,
+        right_drink_id: int = None,
         drink_id: int = None,
         layer_number: int = None,
         head_angle: float = None,
         body_distance: float = None,
     ) -> bool:
+        """
+        参数说明：
+        left_drink_id: 左货架的饮料id
+        right_drink_id: 右货架的饮料id
+        drink_id: 用于抓取的饮料id
+        layer_number: 饮料所在的层数
+        head_angle: 机器人头部俯仰角
+        body_distance: 机器人身躯高度
+        """
         try:
             if self.handle_l is None or self.handle_r is None:
                 print("机器人不可用")
                 return True
 
-            if drink_id is None:  # 到达货架再到达对应层数
-                self.move_to_shelf()
+            if left_drink_id is None:  # 到达货架再到达对应层数
+                self.move_to_left_shelf()
+                self.move_to_pick_height_pitch_angle(
+                    self.handle_l, self.handle_r, self.add_data_1, body_distance, head_angle
+                )
+                print("到达对应层数")
+            elif right_drink_id is None:
+                self.move_to_right_shelf()
                 self.move_to_pick_height_pitch_angle(
                     self.handle_l, self.handle_r, self.add_data_1, body_distance, head_angle
                 )
                 print("到达对应层数")
             else:  # 到达对应位置
-                self.move_to_shelf()
+                # self.move_to_shelf()
                 self.move_to_pick_height_pitch_angle(
                     self.handle_l, self.handle_r, self.add_data_1, body_distance, head_angle
                 )
@@ -187,4 +208,3 @@ class ActionExecuter:
 
     def back_to_init_height_and_angle(self):
         self.move_to_pick_height_pitch_angle(self.handle_l, self.handle_r, self.add_data_1, 160, 0)
-

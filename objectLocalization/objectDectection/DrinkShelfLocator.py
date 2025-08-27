@@ -142,7 +142,7 @@ class PositionCalibrator:
         for i, contour in enumerate(contours):
             # 过滤掉太小的区域
             area = cv2.contourArea(contour)
-            # 晒除掉面积较小的残缺的识别到的掩码块（这些掩码块大部分都是错检部分）
+            # 晒除掉面积较小的残缺的识别到的掩码块（这些掩码块大部分都是错检部分） # TODO: 测试
             if area < 100:  
                 continue
             
@@ -1012,7 +1012,7 @@ class DrinkShelfLocator:
                 "message": error_msg
             }
     
-    def find_drinks(self, drink_type: str, quantity: int, grabbing_direction: Optional[str] = None, total_drinks: Optional[int] = None) -> Dict:
+    def find_drinks(self, drink_type: str, quantity: int, shelf_side: Optional[str] = None, grabbing_direction: Optional[str] = None, total_drinks: Optional[int] = None) -> Dict:
         """
         饮料查找接口
         Args:
