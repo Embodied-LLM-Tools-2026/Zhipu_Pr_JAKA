@@ -79,30 +79,6 @@ def move_to_shelf():
             agv.rotation(3.14)
             agv.go_to_point_in_world(-0.047,-0.033,0, 0)
 
-def move_to_left_shelf():
-    """
-    移动到货架
-    """
-    with AGVClient(ip='192.168.1.50') as agv:
-        pose_result = agv.get_pose()
-        if abs(pose_result[2]) < 0.4:
-            agv.go_to_point_in_world(-0.047,-0.033,0, 0)
-        else:
-            agv.rotation(3.14)
-            agv.go_to_point_in_world(-0.047,-0.033,0, 0)
-
-def move_to_right_shelf():
-    """
-    移动到货架
-    """
-    with AGVClient(ip='192.168.1.50') as agv:
-        pose_result = agv.get_pose()
-        if abs(pose_result[2]) < 0.4:
-            agv.go_to_point_in_world(-0.047,-0.033,0, 0)
-        else:
-            agv.rotation(3.14)
-            agv.go_to_point_in_world(-0.047,-0.033,0, 0)
-
 def back_bar_station():
     """
     移动到吧台

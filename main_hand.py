@@ -896,23 +896,17 @@ class VoiceRobotController:
                         # 获取饮料层数及对应的机器人头部俯仰角和身躯高度
                         layer_number,head_angle,body_distance = self.obj_locater.get_layer_number(obj_name=obj_name,num=num)
                         # 到达对应层数
-                        # 尝试去左边货架找饮料
-                        self.robot_controller.execute_get_drink(left_drink_id=None, right_drink_id=0, head_angle=head_angle, body_distance=body_distance)
+                        self.robot_controller.execute_get_drink(head_angle=head_angle, body_distance=body_distance)
                         # 获取饮料位置
-                        pos_list = self.obj_locater.observe(obj_name, num, shelf_side="left")
+                        pos_list = self.obj_locater.observe(obj_name, num)
                         pos_list = pos_list or []
-                        # 如果第一次去左边货架没有找到饮料，那么我们会去往右边货架寻找
-                        if not pos_list:
-                            self.robot_controller.execute_get_drink(left_drink_id=0, right_drink_id=None, head_angle=head_angle, body_distance=body_distance)
-                            pos_list = self.obj_locater.observe(obj_name, num, shelf_side="right")
-                            pos_list = pos_list or []
                         # pos_list = [5,4] # 测试用
                         print(f"💬 所在的层数：{layer_number}, 机器人头部俯仰角：{head_angle}, 机器人身躯高度：{body_distance}")
                         print(f"💬 饮料位置: {pos_list}")
                         if len(pos_list) > 0:
                             audio_file_path = self._play_cached_audio("饮料还够，我这就拿给您，请您稍等", tts_ready_callback=tts_ready_callback)
                             for i,pos in enumerate(pos_list):
-                                if not self.robot_controller.execute_get_drink(left_drink_id=0, right_drink_id=0, drink_id=pos, layer_number=layer_number, head_angle=head_angle, body_distance=body_distance):
+                                if not self.robot_controller.execute_get_drink(drink_id=pos,layer_number=layer_number,head_angle=head_angle,body_distance=body_distance):
                                     print("💬 不好意思，饮料不够了")
                                     self._play_cached_audio("不好意思，饮料不够了", tts_ready_callback=tts_ready_callback) 
                                     success = True

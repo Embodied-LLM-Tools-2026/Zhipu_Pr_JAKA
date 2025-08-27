@@ -115,7 +115,7 @@ class ObjectLocalization:
         else:
             print(f"警告：未找到对象 '{self.obj_name}' 的层号映射")
             return None
-    def observe(self, obj_name, quantity, shelf_side="left"):
+    def observe(self, obj_name, quantity):
         """
         观测方法，查找指定类型的饮料。
         该方法利用DrinkShelfLocator来定位饮料。
@@ -123,7 +123,7 @@ class ObjectLocalization:
         :param quantity: 要查找的数量
         :return: 包含推荐位置编号的列表，如果查找失败则返回None
         """
-        search_result = self.locator.find_drinks(obj_name, quantity, shelf_side=shelf_side, grabbing_direction="right")
+        search_result = self.locator.find_drinks(obj_name, quantity, grabbing_direction="right")
         
         if search_result and search_result.get("success"):
             return search_result.get("positions")
