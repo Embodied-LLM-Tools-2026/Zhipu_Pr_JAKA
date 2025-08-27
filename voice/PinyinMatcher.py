@@ -1,6 +1,7 @@
 # ================================
 # 拼音匹配模块
 # ================================
+from voice.config import Config
 
 class PinyinMatcher:
     """拼音匹配器，支持前后鼻音和平翘舌音模糊匹配"""
@@ -19,7 +20,7 @@ class PinyinMatcher:
         }
         
         # 支持多个唤醒词
-        self.wake_words = ["小拓", "小兔"]
+        self.wake_words = Config.WAKE_WORDS
         self.wake_pinyin_variants = {}
         
         for wake_word in self.wake_words:
@@ -39,39 +40,28 @@ class PinyinMatcher:
         variants = []
         for char_pinyin_list in original_pinyin:
             char_pinyin = char_pinyin_list[0].lower()
-            char_variants = [char_pinyin]
+            char_variants = set([char_pinyin])  # 使用set避免重复
             
             # 添加前后鼻音变体
             for original, variant in self.nasal_map.items():
                 if char_pinyin.endswith(original):
                     new_variant = char_pinyin[:-len(original)] + variant
-                    if new_variant not in char_variants:
-                        char_variants.append(new_variant)
+                    char_variants.add(new_variant)
             
-            # 添加平翘舌音变体
-            for original, variant in self.tongue_map.items():
+            # 添加平翘舌音变体 - 优先应用最长的匹配
+            # 按长度排序，优先处理较长的音素
+            tongue_rules = sorted(self.tongue_map.items(), key=lambda x: len(x[0]), reverse=True)
+            
+            for original, variant in tongue_rules:
                 if char_pinyin.startswith(original):
                     new_variant = variant + char_pinyin[len(original):]
-                    if new_variant not in char_variants:
-                        char_variants.append(new_variant)
+                    char_variants.add(new_variant)
+                    # 只应用一次音变规则，避免重复应用
+                    break
             
-            # 组合变体
-            combined_variants = []
-            for base_variant in char_variants[:]:
-                for original, variant in self.nasal_map.items():
-                    if base_variant.endswith(original):
-                        combined_variant = base_variant[:-len(original)] + variant
-                        if combined_variant not in char_variants:
-                            combined_variants.append(combined_variant)
-                
-                for original, variant in self.tongue_map.items():
-                    if base_variant.startswith(original):
-                        combined_variant = variant + base_variant[len(original):]
-                        if combined_variant not in char_variants:
-                            combined_variants.append(combined_variant)
-            
-            char_variants.extend(combined_variants)
-            variants.append(char_variants)
+            # 转换为列表并排序，确保结果的一致性
+            char_variants_list = sorted(list(char_variants))
+            variants.append(char_variants_list)
         
         return variants
     
@@ -96,7 +86,7 @@ class PinyinMatcher:
         if not text:
             return False, text
         
-        # 清理文本
+        # 清理文本中的非中文字符
         import re
         cleaned_text = re.sub(r'[^\u4e00-\u9fff，。！？、]', '', text)
         

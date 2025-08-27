@@ -29,6 +29,9 @@ class Config:
     # 缓存配置
     ENABLE_CACHE = True
     PRELOAD_COMMON_AUDIO = True
+
+    # 唤醒词
+    WAKE_WORDS = ["小拓", "小兔"]
     
     # 常用音频短语
     COMMON_PHRASES = [

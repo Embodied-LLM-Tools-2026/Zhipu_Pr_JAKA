@@ -121,6 +121,7 @@ class VoiceRobotController:
         }
         self.audio_play_end_time = None
         self.ready_for_next_input_time = None
+        self.use_voice_input = use_voice_input
         
         # 初始化组件
         self._init_components(use_voice_input, device, zhipuai_api_key)
@@ -654,8 +655,9 @@ class VoiceRobotController:
                             text = self.recognizer.recognize(audio_filename)
                         except Exception as asr_error:
                             print(f"⚠️ SenseVoice语音识别失败: {asr_error}")
-                            print("请手动输入:")
-                            return input().strip()
+                            # print("请手动输入:")
+                            # return input().strip()
+                            return ""
                         
                         asr_end_time = time.time()
                         asr_duration = asr_end_time - asr_start_time
@@ -670,14 +672,15 @@ class VoiceRobotController:
                         print(f"⏱️ 语音转文字耗时: {asr_duration:.2f}秒")
                         
                         # 检查是否是统计命令
-                        if "统计" in text or "计时" in text or "时间" in text:
+                        if not self.use_voice_input and ("统计" in text or "计时" in text or "时间" in text):
                             self._show_timing_stats()
                             return ""
-                        
                         return text
                     else:
-                        print("语音识别不可用，请手动输入:")
-                        return input().strip()
+                        # print("语音识别不可用，请手动输入:")
+                        # return input().strip()
+                        print("语音识别不可用")
+                        return ""
                         
                 finally:
                     # 立即删除临时录音文件
