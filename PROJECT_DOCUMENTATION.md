@@ -347,3 +347,12 @@ pip install xapi-3.1.11-cp310-cp310-linux_x86_64.whl  # Linux
 python main_hand.py  # 手部控制版本
 python keyboardController.py # 键盘控制版本
 ```
+
+## 2025/8/26 code review 代码调整
+
+1. 移除了已废弃的拖延语生成功能
+2. 解决了程序退出时没有正确清理临时音频文件的问题
+3. 移除了多余的独立录音缓冲区，统一使用环形缓冲区
+4. 移除了VAD内部的独立录音缓冲区，并且每次有足够数据就立即调用VAD进行检测，不等待固定间隔
+5. 移除了已废弃的事件对象speech_detected
+6. 当前代码中，事件对象recording_complete没有被显式清理，后续修改代码时需注意

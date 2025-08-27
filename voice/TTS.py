@@ -46,6 +46,9 @@ class TextToSpeechEngine:
         if not text.strip():
             return ""
         
+        # 初始化path变量
+        path = ""
+        
         try:
             import edge_tts
             import asyncio
@@ -127,11 +130,18 @@ class TextToSpeechEngine:
             except RuntimeError:
                 asyncio.run(create_speech())
             
+            # 验证生成的音频文件
             if os.path.exists(path) and os.path.getsize(path) > 0:
-                print(f"✅ TTS已生成音频文件: {filename} ({os.path.getsize(path)} bytes)")
+                print(f"✅ TTS已生成音频文件: {os.path.basename(path)} ({os.path.getsize(path)} bytes)")
                 return path
             else:
                 print("❌ TTS生成的音频文件为空或不存在")
+                # 清理可能存在的空文件
+                try:
+                    if os.path.exists(path):
+                        os.unlink(path)
+                except:
+                    pass
                 return ""
                 
         except ImportError:
@@ -139,4 +149,10 @@ class TextToSpeechEngine:
             return ""
         except Exception as e:
             print(f"❌ TTS生成失败: {e}")
+            # 清理可能存在的临时文件
+            try:
+                if path and os.path.exists(path):
+                    os.unlink(path)
+            except:
+                pass
             return ""
