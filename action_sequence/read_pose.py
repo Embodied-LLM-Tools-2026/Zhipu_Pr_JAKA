@@ -74,6 +74,47 @@ def parse_pose_data(input_str):
     
     return ', '.join(formatted)
 
+def add_pick_point(point_index, point_meaning, side='L', ip_left="192.168.1.9", ip_right="192.168.1.10"):
+    """
+    读取当前机器人关节数据，格式化为 PP_hand.py 风格的 Joint 定义字符串并打印。
+
+    :param point_index: 第几个点位（如 2, 3, 4...）
+    :param point_meaning: 该点位的意义（字符串）
+    :param side: 选择读取哪只手的关节数据，'L' 或 'R'
+    :param ip_left: 左手机器人 IP
+    :param ip_right: 右手机器人 IP
+    """
+    # 连接机器人
+    handle_l = x5.connect(ip_left)
+    handle_r = x5.connect(ip_right)
+
+    # 读取当前关节（与 main 中方式一致）
+    if str(side).upper() == 'R':
+        cjoint = str(x5.get_cjoint(handle_r))
+    else:
+        cjoint = str(x5.get_cjoint(handle_l))
+
+    # 使用已有的 format_joints 进行格式化（得到 "j1 = ..., j2 = ..." 的一行）
+    formatted = format_joints(cjoint)
+
+    # 拆分参数，按 PP_hand.py 风格换行对齐（前4个在第一行，其余在第二行，22个空格缩进）
+    args = [seg.strip() for seg in formatted.split(',')]
+    first_line_args = ', '.join(args[:4])
+    second_line_args = ', '.join(args[4:])
+
+    # 构造两行字符串
+    line1 = f"pick_{point_index} = x5.Joint({first_line_args}, "
+    line2 = f"{' ' * 22}{second_line_args})"
+
+    # 打印注释与结果
+    print(f"# {point_meaning}")
+    print(line1)
+    print(line2)
+    str_movJ = f"x5.movj(handle_{side}, pick_{point_index}, add_data)"
+    str_wait_move_done = f"x5.wait_move_done(handle_{side})"
+    print(str_movJ)
+    print(str_wait_move_done)
+
 def main():
     handle_l = x5.connect("192.168.1.9")
     handle_r = x5.connect("192.168.1.10")
@@ -88,4 +129,5 @@ def main():
     print(format_joints(cjoint))
     print(parse_pose_data(cpos))
 if __name__ == "__main__":
-    main()
+    # 示例：读取左手当前关节并输出 PP_hand.py 风格 Joint 定义
+    add_pick_point(3, "抓取点位", side='L')

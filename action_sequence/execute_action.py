@@ -3,14 +3,14 @@ import xapi.api as x5
 import copy
 
 # 初始化右臂
-INIT_POS_R = x5.Pose(x=-200, y=-245, z=5, a=170.075, b=-59.624, c=-16.416, e1=90, e2=0, e3=160)
+INIT_POS_R = x5.Pose(x=-166.48863412000844, y=-249.65707063473792, z=-18.802048871171785, a=169.26500545380372, b=-55.70720124022451, c=7.111138510153568, e1=48.61143291529611, e2=0.003999999999999999, e3=160.0)
 INIT_POINT_R = x5.Point(pose=INIT_POS_R, uf=0, tf=0, cfg=(0,0,0,7))
-INIT_JOINT_R = x5.Joint(j1=-7.277, j2=-80.381, j3=97.428, j4=-91.135, j5=-24.051, j6=-74.093, e1=12.445-90, e2=0, e3=160)
+INIT_JOINT_R = x5.Joint(j1 = 7.892, j2 = -58.596, j3 = 60.106, j4 = -89, j5 = 3.16, j6 = -79.671, e1 = -120, e2 = 0.004, e3 = 160)
 
 # 初始化左臂
-INIT_POS_L = x5.Pose(x=-200, y=245, z=5, a=172.652, b=-59.853, c=30.601, e1=-90, e2=0, e3=0)
+INIT_POS_L = x5.Pose(x=-149.3199993845242, y=240.45491129421245, z=-15.187910316510676, a=-172.05249999999998, b=-50.210699999999996, c=-6.759200000000021, e1=-48.61143290082501, e2=-0.009, e3=0.016)
 INIT_POINT_L = x5.Point(pose=INIT_POS_L, uf=0, tf=0, cfg=(0,0,0,7))
-INIT_JOINT_L = x5.Joint(j1=5.096, j2=-80.406, j3=-97.344, j4=-90.463, j5=23.051, j6=-77.647, e1=-20.340+90, e2=0, e3=0)
+INIT_JOINT_L = x5.Joint(j1 = -6.809, j2 = -55.111, j3 = -63.25, j4 = -94.793, j5 = 0.773, j6 = -75.875, e1 = 116.933, e2 = -0.009, e3 = 0.016)
 
 def wave(handle_l, handle_r, add_data):
     """
@@ -49,13 +49,6 @@ def wave(handle_l, handle_r, add_data):
     x5.movj(handle_r, bow_joint_pose2, add_data)
     x5.wait_move_done(handle_r)
 
-    ## 向左挥手
-    x5.movj(handle_r, bow_joint_pose1, add_data)
-    x5.wait_move_done(handle_r)
-    ## 向右挥手
-    x5.movj(handle_r, bow_joint_pose2, add_data)
-    x5.wait_move_done(handle_r)
-
     ## 回到初始点位
     x5.movj(handle_r, INIT_JOINT_R, add_data)
     x5.wait_move_done(handle_r)
@@ -70,8 +63,13 @@ def bow(handle_l, handle_r,add_data):
     bow_joint_pose.j5 = -75
     bow_joint_pose.j6 = -88
     
+    bow_joint_pose1 = x5.Joint(j1 = 7.892, j2 = -58.596, j3 = 60.106, j4 = -89, j5 = 3.16, j6 = -46.4, e1 = -120, e2 = 0.004, e3 = 160)
+    x5.movj(handle_r, bow_joint_pose1, add_data)
+    x5.wait_move_done(handle_r)
+
     # 向下鞠躬
-    x5.movj(handle_r, bow_joint_pose, add_data)
+    bow_joint_pose2 = x5.Joint(j1 = 7.887, j2 = -58.601, j3 = 60.103, j4 = -88.976, j5 = -77.456, j6 = -56.704, e1 = -120.003, e2 = 20.647, e3 = 159.99)
+    x5.movj(handle_r, bow_joint_pose2, add_data)
     x5.wait_move_done(handle_r)
     ## 回到初始点位
 
@@ -107,20 +105,20 @@ def Shake_head(handle_L,handle_R,add_data):
     """
     摇头
     """
-    if angle == None:
-        point_L_1 = copy.copy(INIT_POINT_L)
-        point_L_2 = copy.copy(INIT_POINT_L)
-        point_L_1.pose.e2 += 20
-        point_L_2.pose.e2 -= 20
-        x5.movl(handle_L, point_L_1, add_data)
-        x5.wait_move_done(handle_L)
-        x5.movl(handle_L, point_L_2, add_data)
-        x5.wait_move_done(handle_L)
-        x5.movl(handle_L, point_L_1, add_data)
-        x5.wait_move_done(handle_L)
-        x5.movl(handle_L, INIT_POINT_L, add_data)
-        x5.wait_move_done(handle_L)
- 
+
+    point_L_1 = copy.copy(INIT_POINT_L)
+    point_L_2 = copy.copy(INIT_POINT_L)
+    point_L_1.pose.e2 += 20
+    point_L_2.pose.e2 -= 20
+    x5.movl(handle_L, point_L_1, add_data)
+    x5.wait_move_done(handle_L)
+    x5.movl(handle_L, point_L_2, add_data)
+    x5.wait_move_done(handle_L)
+    x5.movl(handle_L, point_L_1, add_data)
+    x5.wait_move_done(handle_L)
+    x5.movl(handle_L, INIT_POINT_L, add_data)
+    x5.wait_move_done(handle_L)
+
  
 def rotate_head_to_angle(handle_L,handle_R,add_data, angle, incremental=False, back_to_init=False):
     """
@@ -154,8 +152,8 @@ def main():
     add_data_2 = x5.MovPointAdd(vel=100, cnt=100, acc=100, dec=100, offset =-1,
     offset_data=(10,0,0,0,0,0,0,0,0))
     # 连接机器人
-    handle_l = x5.connect("192.168.1.7")
-    handle_r = x5.connect("192.168.1.8")
+    handle_l = x5.connect("192.168.1.9")
+    handle_r = x5.connect("192.168.1.10")
     print("连接成功")
     init_robot(handle_l, handle_r, add_data_1)
     print("初始化成功")

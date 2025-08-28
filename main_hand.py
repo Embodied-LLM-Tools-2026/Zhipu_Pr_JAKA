@@ -905,56 +905,56 @@ class VoiceRobotController:
                             self._play_and_execute_action("我们这里没有这种饮料", "shake_head")
                         success = True
                     else:
-                        if obj_name in ["美式咖啡", "其它咖啡"]:
-                            if num != 1:
-                                print("💬 抱歉，一次只能做一杯美式咖啡哦")
-                                self._play_and_execute_action("抱歉，一次只能做一杯美式咖啡哦", "shake_head")
-                                success = True
-                            elif obj_name == "其它咖啡":
-                                print("💬 抱歉，只能做美式咖啡哦")
-                                self._play_and_execute_action("抱歉，只能做美式咖啡哦", "shake_head")
-                                success = True
-                            else:
-                                print("💬 好的，我这就去为您做咖啡")
-                                self._play_and_execute_action("好的，我这就去为您做咖啡", "nod")
-                                self.robot_controller.move_to_coffee_machine_and_make_coffee()
-                                self._play_cached_audio("咖啡正在制作中，请您稍等片刻", tts_ready_callback=tts_ready_callback)
-                                self.robot_controller.get_coffee_and_serve()
-                                self.robot_controller.execute_action(action="rotate_head_to_angle", angle=-40)
-                                self._play_cached_audio("请享用您的咖啡", tts_ready_callback=tts_ready_callback)
-                                self.robot_controller.execute_action(action="rotate_head_to_angle", angle=0, incremental=True, back_to_init=True)
-                                self.robot_controller.back_bar_station()
-                                self.robot_controller.back_to_init_height_and_angle()
-                                success = True
+                        # if obj_name in ["美式咖啡", "其它咖啡"]:
+                        #     if num != 1:
+                        #         print("💬 抱歉，一次只能做一杯美式咖啡哦")
+                        #         self._play_and_execute_action("抱歉，一次只能做一杯美式咖啡哦", "shake_head")
+                        #         success = True
+                        #     elif obj_name == "其它咖啡":
+                        #         print("💬 抱歉，只能做美式咖啡哦")
+                        #         self._play_and_execute_action("抱歉，只能做美式咖啡哦", "shake_head")
+                        #         success = True
+                        #     else:
+                        #         print("💬 好的，我这就去为您做咖啡")
+                        #         self._play_and_execute_action("好的，我这就去为您做咖啡", "nod")
+                        #         self.robot_controller.move_to_coffee_machine_and_make_coffee()
+                        #         self._play_cached_audio("咖啡正在制作中，请您稍等片刻", tts_ready_callback=tts_ready_callback)
+                        #         self.robot_controller.get_coffee_and_serve()
+                        #         self.robot_controller.execute_action(action="rotate_head_to_angle", angle=-40)
+                        #         self._play_cached_audio("请享用您的咖啡", tts_ready_callback=tts_ready_callback)
+                        #         self.robot_controller.execute_action(action="rotate_head_to_angle", angle=0, incremental=True, back_to_init=True)
+                        #         self.robot_controller.back_bar_station()
+                        #         self.robot_controller.back_to_init_height_and_angle()
+                        #         success = True
+                        # else:
+                        self._play_and_execute_action("好的，我去看看饮料还够不够", "nod")
+                        # 获取饮料层数及对应的机器人头部俯仰角和身躯高度
+                        layer_number,head_angle,body_distance = self.obj_locater.get_layer_number(obj_name=obj_name,num=num)
+                        # 到达对应层数
+                        self.robot_controller.execute_get_drink(head_angle=head_angle, body_distance=body_distance)
+                        # 获取饮料位置
+                        pos_list = self.obj_locater.observe(obj_name, num)
+                        pos_list = pos_list or []
+                        # pos_list = [5,4] # 测试用
+                        print(f"💬 所在的层数：{layer_number}, 机器人头部俯仰角：{head_angle}, 机器人身躯高度：{body_distance}")
+                        print(f"💬 饮料位置: {pos_list}")
+                        if len(pos_list) > 0:
+                            audio_file_path = self._play_cached_audio("饮料还够，我这就拿给您，请您稍等", tts_ready_callback=tts_ready_callback)
+                            for i,pos in enumerate(pos_list):
+                                if not self.robot_controller.execute_get_drink(drink_id=pos,layer_number=layer_number,head_angle=head_angle,body_distance=body_distance):
+                                    print("💬 不好意思，饮料不够了")
+                                    self._play_cached_audio("不好意思，饮料不够了", tts_ready_callback=tts_ready_callback) 
+                                    success = True
+                                    break
+                                audio_file_path = self._play_cached_audio("这是您要的饮料", tts_ready_callback=tts_ready_callback)
+                                if i < len(pos_list) - 1:
+                                    audio_file_path = self._play_cached_audio("下一瓶我这就去拿", tts_ready_callback=tts_ready_callback)
                         else:
-                            self._play_and_execute_action("好的，我去看看饮料还够不够", "nod")
-                            # 获取饮料层数及对应的机器人头部俯仰角和身躯高度
-                            layer_number,head_angle,body_distance = self.obj_locater.get_layer_number(obj_name=obj_name,num=num)
-                            # 到达对应层数
-                            self.robot_controller.execute_get_drink(head_angle=head_angle, body_distance=body_distance)
-                            # 获取饮料位置
-                            pos_list = self.obj_locater.observe(obj_name, num)
-                            pos_list = pos_list or []
-                            # pos_list = [5,4] # 测试用
-                            print(f"💬 所在的层数：{layer_number}, 机器人头部俯仰角：{head_angle}, 机器人身躯高度：{body_distance}")
-                            print(f"💬 饮料位置: {pos_list}")
-                            if len(pos_list) > 0:
-                                audio_file_path = self._play_cached_audio("饮料还够，我这就拿给您，请您稍等", tts_ready_callback=tts_ready_callback)
-                                for i,pos in enumerate(pos_list):
-                                    if not self.robot_controller.execute_get_drink(drink_id=pos,layer_number=layer_number,head_angle=head_angle,body_distance=body_distance):
-                                        print("💬 不好意思，饮料不够了")
-                                        self._play_cached_audio("不好意思，饮料不够了", tts_ready_callback=tts_ready_callback) 
-                                        success = True
-                                        break
-                                    audio_file_path = self._play_cached_audio("这是您要的饮料", tts_ready_callback=tts_ready_callback)
-                                    if i < len(pos_list) - 1:
-                                        audio_file_path = self._play_cached_audio("下一瓶我这就去拿", tts_ready_callback=tts_ready_callback)
-                            else:
-                                print("💬 不好意思，饮料不够了")
-                                self.robot_controller.back_bar_station()
-                                self.robot_controller.back_to_init_height_and_angle()
-                                self._play_cached_audio("不好意思，饮料不够了", tts_ready_callback=tts_ready_callback) 
-                            success = True
+                            print("💬 不好意思，饮料不够了")
+                            self.robot_controller.back_bar_station()
+                            self.robot_controller.back_to_init_height_and_angle()
+                            self._play_cached_audio("不好意思，饮料不够了", tts_ready_callback=tts_ready_callback) 
+                        success = True
                 else:
                     audio_file_path = self._play_cached_audio("好的", tts_ready_callback=tts_ready_callback)
                     success = self.robot_controller.execute_action(action)
