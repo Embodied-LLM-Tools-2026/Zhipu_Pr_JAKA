@@ -46,7 +46,7 @@ class ActionExecuter:
             self.back_bar_station = back_bar_station
             print(f"已连接到机器人: {robot_ip_left} 和 {robot_ip_right}")
             self.init_robot(self.handle_l, self.handle_r, self.add_data_1, self.hand_l, self.hand_r)
-            self.back_bar_station()
+            # self.back_bar_station()
             print("handle_l:", self.handle_l)
             print("handle_r:", self.handle_r)
         else:

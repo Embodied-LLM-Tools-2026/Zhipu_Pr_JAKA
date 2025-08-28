@@ -348,8 +348,8 @@ def main():
     model_type = "sam"  # Options: "mobile_sam", "sam", "fastsam"
     
     # Set input and output paths
-    input_folder = r"D:\VisualDetector\datasets\robot_view"
-    output_folder = r"D:\VisualDetector\datasets\robot_view_anno"
+    input_folder = r"C:\Users\Work\Documents\Pr_Stage1\archive\examples\images\images"
+    output_folder = r"C:\Users\Work\Documents\Pr_Stage1\archive\examples\images\images\output"
     
     # Create output folder
     os.makedirs(output_folder, exist_ok=True)

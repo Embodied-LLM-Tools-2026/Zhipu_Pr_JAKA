@@ -27,9 +27,9 @@ except ImportError as e:
 # from correct_hand import correct_left_arm, correct_right_arm
 
 # 初始化右臂
-INIT_POS_R = x5.Pose(x=-166.48863412000844, y=-249.65707063473792, z=-18.802048871171785, a=169.26500545380372, b=-55.70720124022451, c=7.111138510153568, e1=48.61143291529611, e2=0.003999999999999999, e3=250.0)
+INIT_POS_R = x5.Pose(x=-166.48863412000844, y=-249.65707063473792, z=-18.802048871171785, a=169.26500545380372, b=-55.70720124022451, c=7.111138510153568, e1=48.61143291529611, e2=0.003999999999999999, e3=-4)
 INIT_POINT_R = x5.Point(pose=INIT_POS_R, uf=0, tf=0, cfg=(0,0,0,7))
-INIT_JOINT_R = x5.Joint(j1 = 7.892, j2 = -58.596, j3 = 60.106, j4 = -89, j5 = 3.16, j6 = -79.671, e1 = -120, e2 = 0.004, e3 = 250)
+INIT_JOINT_R = x5.Joint(j1 = 7.892, j2 = -58.596, j3 = 60.106, j4 = -89, j5 = 3.16, j6 = -79.671, e1 = -120, e2 = 0.004, e3 = -4)
 
 # 初始化左臂
 INIT_POS_L = x5.Pose(x=-149.3199993845242, y=240.45491129421245, z=-15.187910316510676, a=-172.05249999999998, b=-50.210699999999996, c=-6.759200000000021, e1=-48.61143290082501, e2=-0.009, e3=0.016)
@@ -526,6 +526,9 @@ def pick_4_2(handle_L,handle_R,hand_l,hand_r,add_data):
     x5.wait_move_done(handle_L)
 
 
+
+
+
 def pick_4_3(handle_L,handle_R,hand_l,hand_r,add_data):
     """
     抓取
@@ -562,6 +565,429 @@ def pick_4_3(handle_L,handle_R,hand_l,hand_r,add_data):
     x5.movj(handle_L, pick_5, add_data)
     x5.wait_move_done(handle_L)
 
+def pick_3_6(handle_L,handle_R,hand_l,hand_r,add_data):
+
+    # 预抓取点位
+    pick_1 = x5.Joint(j1 = 39.58, j2 = -20.438, j3 = 39.117, j4 = -41.216, 
+                        j5 = 3.365, j6 = -66.254, e1 = -119.947, e2 = 0.012, e3 = 99.989)
+    x5.movj(handle_R, pick_1, add_data)
+    x5.wait_move_done(handle_R)
+
+    # 抓取点位
+    pick_2 = x5.Joint(j1 = 49.287, j2 = -45.391, j3 = 39.955, j4 = -48.966, 
+                        j5 = -5.95, j6 = -23.029, e1 = -119.947, e2 = 0.012, e3 = 99.979)
+    x5.movj(handle_R, pick_2, add_data)
+    x5.wait_move_done(handle_R)
+
+    # 抓取
+    hand_r.setpos(200,200,200,200,200,0)
+    time.sleep(1)
+
+    # 回收点位
+    pick_3 = x5.Joint(j1 = 44.377, j2 = -36.854, j3 = 33.311, j4 = -70.088, 
+                        j5 = -11.199, j6 = -69.693, e1 = -119.949, e2 = 0.013, e3 = 99.968)
+    x5.movj(handle_R, pick_3, add_data)
+    x5.wait_move_done(handle_R)
+    
+
+
+    # 初始化
+    pick_4  = x5.Joint(j1 = 7.892, j2 = -58.596, j3 = 60.106, j4 = -89, j5 = 3.16, j6 = -79.671, e1 = -120, e2 = 0.004, e3 = 100)
+
+    x5.movj(handle_R, pick_4, add_data)
+    x5.wait_move_done(handle_R)
+
+
+def pick_3_5(handle_L,handle_R,hand_l,hand_r,add_data):
+
+    # 预抓取点位
+    pick_1 = x5.Joint(j1 = 39.58, j2 = -20.438, j3 = 39.117, j4 = -41.216, 
+                        j5 = 3.365, j6 = -66.254, e1 = -119.947, e2 = 0.012, e3 = 99.989)
+    x5.movj(handle_R, pick_1, add_data)
+    x5.wait_move_done(handle_R)
+
+    # 抓取点位
+    pick_2 = x5.Joint(j1 = 56.055, j2 = -59.464, j3 = 43.088, j4 = -41.576, 
+                        j5 = -31.765, j6 = -35.79, e1 = -98.136, e2 = 0.015, e3 = 99.958)
+    x5.movj(handle_R, pick_2, add_data)
+    x5.wait_move_done(handle_R)
+
+    # 抓取
+    hand_r.setpos(200,200,200,200,200,0)
+    time.sleep(1)
+
+    # 回收点位
+    pick_3 = x5.Joint(j1 = 49.235, j2 = -43.974, j3 = 45.921, j4 = -54.912, 
+                        j5 = -27.381, j6 = -85.373, e1 = -98.134, e2 = 0.016, e3 = 99.947)
+    x5.movj(handle_R, pick_3, add_data)
+    x5.wait_move_done(handle_R)
+
+    # 初始化
+    pick_4  = x5.Joint(j1 = 7.892, j2 = -58.596, j3 = 60.106, j4 = -89, j5 = 3.16, j6 = -79.671, e1 = -120, e2 = 0.004, e3 = 100)
+
+    x5.movj(handle_R, pick_4, add_data)
+    x5.wait_move_done(handle_R)
+
+def pick_3_4(handle_L,handle_R,hand_l,hand_r,add_data):
+
+    # 预抓取点位
+    pick_1 = x5.Joint(j1 = 43.823, j2 = -32.824, j3 = 40.491, j4 = -68.263, 
+                        j5 = -12.603, j6 = -50.86, e1 = -119.948, e2 = 0.014, e3 = 99.978)
+    x5.movj(handle_R, pick_1, add_data)
+    x5.wait_move_done(handle_R)
+
+    # 抓取点位
+    pick_2 = x5.Joint(j1 = 58.247, j2 = -73.568, j3 = 29.492, j4 = -45.138, 
+                        j5 = -6.459, j6 = -17.953, e1 = -119.951, e2 = 0.014, e3 = 99.967)
+    x5.movj(handle_R, pick_2, add_data)
+    x5.wait_move_done(handle_R)
+
+    # 抓取
+    hand_r.setpos(200,200,200,200,200,0)
+    time.sleep(1)
+
+    # 回收点位
+    pick_3 = x5.Joint(j1 = 52.878, j2 = -49.751, j3 = 31.538, j4 = -59.4, 
+                        j5 = -12.463, j6 = -73.056, e1 = -119.958, e2 = 0.016, e3 = 99.957)
+    x5.movj(handle_R, pick_3, add_data)
+    x5.wait_move_done(handle_R)
+
+    # 初始化
+    pick_4  = x5.Joint(j1 = 7.892, j2 = -58.596, j3 = 60.106, j4 = -89, j5 = 3.16, j6 = -79.671, e1 = -120, e2 = 0.004, e3 = 100)
+
+    x5.movj(handle_R, pick_4, add_data)
+    x5.wait_move_done(handle_R)
+
+def pick_3_1(handle_L,handle_R,hand_l,hand_r,add_data):
+
+    # 预抓取点位
+    pick_1 = x5.Joint(j1 = -2.615, j2 = -34.249, j3 = -112.107, j4 = -52.21, 
+                        j5 = 28.699, j6 = -52.497, e1 = 116.924, e2 = -0.017, e3 = 0.034)
+    x5.movj(handle_L, pick_1, add_data)
+    x5.wait_move_done(handle_L)
+
+    # 抓取点位
+    pick_2 = x5.Joint(j1 = -37.4, j2 = -53.064, j3 = -85.732, j4 = -45.563, 
+                        j5 = 51.657, j6 = -25.626, e1 = 103.261, e2 = -0.021, e3 = 0.034)
+    x5.movj(handle_L, pick_2, add_data)
+    x5.wait_move_done(handle_L)
+
+    # 抓取
+    hand_l.setpos(200,200,200,200,200,0)
+    time.sleep(1)
+
+    # 回收点位
+    pick_3 = x5.Joint(j1 = -19.5, j2 = -34.156, j3 = -96.74, j4 = -48.957, 
+                        j5 = 36.1, j6 = -78.256, e1 = 103.221, e2 = -0.025, e3 = 0.034)
+    x5.movj(handle_L, pick_3, add_data)
+    x5.wait_move_done(handle_L)
+
+    # 初始化
+    pick_4  = INIT_JOINT_L
+    x5.movj(handle_L, pick_4, add_data)
+    x5.wait_move_done(handle_L)
+
+
+def pick_3_2(handle_L,handle_R,hand_l,hand_r,add_data):
+
+    # 预抓取点位
+    pick_1 = x5.Joint(j1 = -2.615, j2 = -34.249, j3 = -112.107, j4 = -52.21, 
+                        j5 = 28.699, j6 = -52.497, e1 = 116.924, e2 = -0.017, e3 = 0.034)
+    x5.movj(handle_L, pick_1, add_data)
+    x5.wait_move_done(handle_L)
+
+    # 抓取点位
+    pick_2 = x5.Joint(j1 = -42.001, j2 = -61.299, j3 = -81.827, j4 = -46.141, 
+                        j5 = 53.542, j6 = -38.65, e1 = 102.943, e2 = -0.021, e3 = 0.035)
+    x5.movj(handle_L, pick_2, add_data)
+    x5.wait_move_done(handle_L)
+
+    # 抓取
+    hand_l.setpos(200,200,200,200,200,0)
+    time.sleep(1)
+
+    # 回收点位
+    pick_3 = x5.Joint(j1 = -28.195, j2 = -43.366, j3 = -97.17, j4 = -54.19, 
+                        j5 = 42.163, j6 = -84.639, e1 = 102.943, e2 = -0.022, e3 = 0.037)
+    x5.movj(handle_L, pick_3, add_data)
+    x5.wait_move_done(handle_L)
+    # 初始化
+    pick_4  = INIT_JOINT_L
+    x5.movj(handle_L, pick_4, add_data)
+    x5.wait_move_done(handle_L)
+
+def pick_3_3(handle_L,handle_R,hand_l,hand_r,add_data):
+
+    # 预抓取点位
+    pick_1 = x5.Joint(j1 = -33.236, j2 = -37.704, j3 = -75.426, j4 = -41.537, 
+                        j5 = 23.671, j6 = -81.401, e1 = 116.618, e2 = -0.019, e3 = 0.033)
+    x5.movj(handle_L, pick_1, add_data)
+    x5.wait_move_done(handle_L)
+
+    # 抓取点位
+    pick_2 = x5.Joint(j1 = -52.892, j2 = -66.558, j3 = -52.519, j4 = -43.137, 
+                        j5 = 46.98, j6 = -33.423, e1 = 98.367, e2 = -0.023, e3 = 0.038)
+    x5.movj(handle_L, pick_2, add_data)
+    x5.wait_move_done(handle_L)
+
+    # 抓取
+    hand_l.setpos(200,200,200,200,200,0)
+    time.sleep(1)
+
+    # 回收点位
+    pick_3 = x5.Joint(j1 = -43.473, j2 = -47.539, j3 = -57.017, j4 = -59.179, 
+                        j5 = 35.185, j6 = -79.344, e1 = 98.356, e2 = -0.021, e3 = 0.05)
+    x5.movj(handle_L, pick_3, add_data)
+    x5.wait_move_done(handle_L)
+
+    # 初始化
+    pick_4  = INIT_JOINT_L
+    x5.movj(handle_L, pick_4, add_data)
+    x5.wait_move_done(handle_L)
+
+def pick_2_6(handle_L,handle_R,hand_l,hand_r,add_data):
+
+    # 预抓取点位
+    pick_1 = x5.Joint(j1 = 7.892, j2 = -58.596, j3 = 60.106, j4 = -89, 
+                      j5 = 3.16, j6 = -79.671, e1 = -120, e2 = 12, e3 = -4)
+    x5.movj(handle_R, pick_1, add_data)
+    x5.wait_move_done(handle_R)
+
+    # 预抓取点位1
+    pick_2 = x5.Joint(j1 = 15.97, j2 = -42.211, j3 = 78.523, j4 = -53.807, 
+                        j5 = -34.631, j6 = -83.103, e1 = -120.787, e2 = 12.007, e3 = -3.974)
+    x5.movj(handle_R, pick_2, add_data)
+    x5.wait_move_done(handle_R)
+
+    # 预抓取点位2
+    pick_3 = x5.Joint(j1 = -6.772, j2 = -35.457, j3 = 91.026, j4 = -35.515, 
+                        j5 = 5.385, j6 = -78.953, e1 = -120.831, e2 = 12.009, e3 = -3.983)
+    x5.movj(handle_R, pick_3, add_data)
+    x5.wait_move_done(handle_R)
+
+    # 抓取点位
+    pick_4 = x5.Joint(j1 = 31.445, j2 = -56.502, j3 = 76.01, j4 = -40.658, 
+                        j5 = -23.192, j6 = -44.024, e1 = -120.839, e2 = 12.005, e3 = -3.982)
+    x5.movj(handle_R, pick_4, add_data)
+    x5.wait_move_done(handle_R)
+
+    # 抓取
+    hand_r.setpos(200,200,200,200,200,0)
+    time.sleep(1)
+
+    # 回收点位
+    pick_5 = x5.Joint(j1 = 15.97, j2 = -42.211, j3 = 78.523, j4 = -53.807, 
+                        j5 = -34.631, j6 = -83.103, e1 = -120.787, e2 = 12.007, e3 = -3.974)
+    x5.movj(handle_R, pick_5, add_data)
+    x5.wait_move_done(handle_R)
+
+    # 初始化
+    pick_6  = x5.Joint(j1 = 7.892, j2 = -58.596, j3 = 60.106, j4 = -89, 
+                      j5 = 3.16, j6 = -79.671, e1 = -120, e2 = 0, e3 = -4)
+    x5.movj(handle_R, pick_6, add_data)
+    x5.wait_move_done(handle_R)
+
+def pick_2_5(handle_L,handle_R,hand_l,hand_r,add_data):
+
+    # 预抓取点位
+    pick_1 = x5.Joint(j1 = 7.892, j2 = -58.596, j3 = 60.106, j4 = -89, 
+                      j5 = 3.16, j6 = -79.671, e1 = -120, e2 = 12, e3 = -4)
+    x5.movj(handle_R, pick_1, add_data)
+    x5.wait_move_done(handle_R)
+
+    # 预抓取点位
+    pick_2 = x5.Joint(j1 = -4.804, j2 = -46.527, j3 = 92.587, j4 = -58.862, 
+                        j5 = -20.283, j6 = -71.241, e1 = -120.81, e2 = 12.011, e3 = -3.974)
+    x5.movj(handle_R, pick_2, add_data)
+    x5.wait_move_done(handle_R)
+
+    # 抓取点位
+    pick_3 = x5.Joint(j1 = 27.896, j2 = -72.543, j3 = 79.058, j4 = -50.903, 
+                        j5 = -36.548, j6 = -34.792, e1 = -125.793, e2 = 12.014, e3 = -3.957)
+    x5.movj(handle_R, pick_3, add_data)
+    x5.wait_move_done(handle_R)
+
+    # 抓取
+    hand_r.setpos(200,200,200,200,200,0)
+    time.sleep(1)
+
+    # 回收点位
+    pick_4 = x5.Joint(j1 = 18.975, j2 = -61.19, j3 = 76.538, j4 = -56.183, 
+                        j5 = -41.6, j6 = -78.724, e1 = -125.787, e2 = 12.017, e3 = -3.949)
+    x5.movj(handle_R, pick_4, add_data)
+    x5.wait_move_done(handle_R)
+
+    # 初始化
+    pick_5  = x5.Joint(j1 = 7.892, j2 = -58.596, j3 = 60.106, j4 = -89, 
+                      j5 = 3.16, j6 = -79.671, e1 = -120, e2 = 0, e3 = -4)
+    x5.movj(handle_R, pick_5, add_data)
+    x5.wait_move_done(handle_R)
+
+def pick_2_4(handle_L,handle_R,hand_l,hand_r,add_data):
+
+    # 预抓取点位
+    pick_1 = x5.Joint(j1 = 7.892, j2 = -58.596, j3 = 60.106, j4 = -89, 
+                      j5 = 3.16, j6 = -79.671, e1 = -120, e2 = 12, e3 = -4)
+    x5.movj(handle_R, pick_1, add_data)
+    x5.wait_move_done(handle_R)
+
+    # 预抓取点位
+    pick_2 = x5.Joint(j1 = -0.281, j2 = -59.864, j3 = 97.932, j4 = -77.822, 
+                        j5 = -45.538, j6 = -69.418, e1 = -120.756, e2 = 12.015, e3 = -3.958)
+    x5.movj(handle_R, pick_2, add_data)
+    x5.wait_move_done(handle_R)
+
+    # 抓取点位
+    pick_3 = x5.Joint(j1 = 32.502, j2 = -81.829, j3 = 63.443, j4 = -55.343, 
+                        j5 = -40.537, j6 = -18.329, e1 = -120.791, e2 = 12.013, e3 = -3.965)
+    x5.movj(handle_R, pick_3, add_data)
+    x5.wait_move_done(handle_R)
+
+    # 抓取
+    hand_r.setpos(200,200,200,200,200,0)
+    time.sleep(1)
+
+    # 回收点位
+    pick_4 = x5.Joint(j1 = 24.144, j2 = -63.103, j3 = 60.458, j4 = -61.822, 
+                        j5 = -40.603, j6 = -75.122, e1 = -120.731, e2 = 12.013, e3 = -3.957)
+    x5.movj(handle_R, pick_4, add_data)
+    x5.wait_move_done(handle_R)
+
+    # 初始化
+    pick_5  = x5.Joint(j1 = 7.892, j2 = -58.596, j3 = 60.106, j4 = -89, 
+                      j5 = 3.16, j6 = -79.671, e1 = -120, e2 = 0, e3 = -4)
+    x5.movj(handle_R, pick_5, add_data)
+    x5.wait_move_done(handle_R)
+
+def pick_2_1(handle_L,handle_R,hand_l,hand_r,add_data):
+
+    # 预抓取点位
+    pick_1 = x5.Joint(j1 = 7.892, j2 = -58.596, j3 = 60.106, j4 = -89, 
+                      j5 = 3.16, j6 = -79.671, e1 = -120, e2 = 12, e3 = -4)
+    x5.movj(handle_R, pick_1, add_data)
+    x5.wait_move_done(handle_R)
+
+    # 预抓取点位
+    pick_2 = x5.Joint(j1 = 11.514, j2 = -70.096, j3 = -119.124, j4 = -55.812, 
+                        j5 = 33.134, j6 = -83.594, e1 = 117.719, e2 = -0.025, e3 = 0.036)
+    x5.movj(handle_L, pick_2, add_data)
+    x5.wait_move_done(handle_L)
+
+    # 预抓取点位
+    pick_3 = x5.Joint(j1 = 2.676, j2 = -69.196, j3 = -147.519, j4 = -60.14, 
+                        j5 = 52.495, j6 = -58.844, e1 = 118.186, e2 = -0.024, e3 = 0.041)
+    x5.movj(handle_L, pick_3, add_data)
+    x5.wait_move_done(handle_L)
+
+    # 抓取点位
+    pick_4 = x5.Joint(j1 = -17.859, j2 = -56.368, j3 = -91.748, j4 = -59.248, 
+                        j5 = 30.285, j6 = -18.912, e1 = 118.553, e2 = -0.018, e3 = 0.038)
+    x5.movj(handle_L, pick_4, add_data)
+    x5.wait_move_done(handle_L)
+
+    # 抓取
+    hand_l.setpos(200,200,200,200,200,0)
+    time.sleep(1)
+
+    # 回收点位
+    pick_5 = x5.Joint(j1 = 5.254, j2 = -40.816, j3 = -96.389, j4 = -63.25, 
+                        j5 = 25.862, j6 = -80.231, e1 = 118.541, e2 = -0.024, e3 = 0.041)
+    x5.movj(handle_L, pick_5, add_data)
+    x5.wait_move_done(handle_L)
+
+
+    pick_6  = x5.Joint(j1 = 7.892, j2 = -58.596, j3 = 60.106, j4 = -89, 
+                      j5 = 3.16, j6 = -79.671, e1 = -120, e2 = 0, e3 = -4)
+    x5.movj(handle_R, pick_6, add_data)
+    # x5.wait_move_done(handle_R)
+
+    # 左手初始化
+    pick_7  = INIT_JOINT_L
+    x5.movj(handle_L, pick_7, add_data)
+    x5.wait_move_done(handle_L)
+
+def pick_2_2(handle_L,handle_R,hand_l,hand_r,add_data):
+
+    # 预抓取点位
+    pick_1 = x5.Joint(j1 = 7.892, j2 = -58.596, j3 = 60.106, j4 = -89, 
+                      j5 = 3.16, j6 = -79.671, e1 = -120, e2 = 12, e3 = -4)
+    x5.movj(handle_R, pick_1, add_data)
+    x5.wait_move_done(handle_R)
+
+    # 预抓取点位
+    pick_2 = x5.Joint(j1 = 19.776, j2 = -80.761, j3 = -138.309, j4 = -76.183, 
+                        j5 = 43.189, j6 = -70.341, e1 = 117.712, e2 = -0.03, e3 = 0.03)
+    x5.movj(handle_L, pick_2, add_data)
+    x5.wait_move_done(handle_L)
+
+    # 抓取点位
+    pick_3 = x5.Joint(j1 = -19.416, j2 = -76.338, j3 = -101.654, j4 = -62.529, 
+                        j5 = 54.584, j6 = -31.216, e1 = 117.713, e2 = -0.03, e3 = 0.038)
+    x5.movj(handle_L, pick_3, add_data)
+    x5.wait_move_done(handle_L)
+
+    # 抓取
+    hand_l.setpos(200,200,200,200,200,0)
+    time.sleep(1)
+
+    # 回收点位
+    pick_4 = x5.Joint(j1 = -2.114, j2 = -58.361, j3 = -117.083, j4 = -69.272, 
+                        j5 = 55.285, j6 = -81.055, e1 = 117.713, e2 = -0.033, e3 = 0.038)
+    x5.movj(handle_L, pick_4, add_data)
+    x5.wait_move_done(handle_L)
+
+    pick_6  = x5.Joint(j1 = 7.892, j2 = -58.596, j3 = 60.106, j4 = -89, 
+                      j5 = 3.16, j6 = -79.671, e1 = -120, e2 = 0, e3 = -4)
+    x5.movj(handle_R, pick_6, add_data)
+    # x5.wait_move_done(handle_R)
+
+    # 左手初始化
+    pick_7  = INIT_JOINT_L
+    x5.movj(handle_L, pick_7, add_data)
+    x5.wait_move_done(handle_L)
+
+
+def pick_2_3(handle_L,handle_R,hand_l,hand_r,add_data):
+
+    # 预抓取点位
+    pick_1 = x5.Joint(j1 = 7.892, j2 = -58.596, j3 = 60.106, j4 = -89, 
+                      j5 = 3.16, j6 = -79.671, e1 = -120, e2 = 12, e3 = -4)
+    x5.movj(handle_R, pick_1, add_data)
+    x5.wait_move_done(handle_R)
+
+    # 预抓取点位
+    pick_2 = x5.Joint(j1 = 21.425, j2 = -87.472, j3 = -139.533, j4 = -84.092, 
+                        j5 = 49.332, j6 = -71.906, e1 = 118.194, e2 = -0.033, e3 = 0.03)
+    x5.movj(handle_L, pick_2, add_data)
+    x5.wait_move_done(handle_L)
+
+    # 抓取点位
+    pick_3 = x5.Joint(j1 = -27.24, j2 = -81.771, j3 = -86.351, j4 = -58.552, 
+                        j5 = 60.369, j6 = -27.594, e1 = 119.146, e2 = -0.033, e3 = 0.034)
+    x5.movj(handle_L, pick_3, add_data)
+    x5.wait_move_done(handle_L)
+
+    # 抓取
+    hand_l.setpos(200,200,200,200,200,0)
+    time.sleep(1)
+
+    # 回收点位
+    pick_4 = x5.Joint(j1 = -10.475, j2 = -72.344, j3 = -80.381, j4 = -66.309, 
+                        j5 = 46.784, j6 = -76.387, e1 = 119.145, e2 = -0.031, e3 = 0.036)
+    x5.movj(handle_L, pick_4, add_data)
+    x5.wait_move_done(handle_L)
+
+    pick_6  = x5.Joint(j1 = 7.892, j2 = -58.596, j3 = 60.106, j4 = -89, 
+                      j5 = 3.16, j6 = -79.671, e1 = -120, e2 = 0, e3 = -4)
+    x5.movj(handle_R, pick_6, add_data)
+    # x5.wait_move_done(handle_R)
+
+    # 左手初始化
+    pick_7  = INIT_JOINT_L
+    x5.movj(handle_L, pick_7, add_data)
+    x5.wait_move_done(handle_L)
+
+
 def move_to_pick_height_pitch_angle(handle_L,handle_R,add_data, height, pitch_angle):
     """
     到达抓取的高度和头的俯仰角
@@ -592,7 +1018,7 @@ def main():
     handle_r = x5.connect("192.168.1.10")
     # move_to_pick_height_pitch_angle(handle_l,handle_r,add_data_1, -4, 28)
     init_robot(handle_l, handle_r, add_data_1, hand_l, hand_r)
-    pick_4_3(handle_l, handle_r, hand_l, hand_r, add_data_1)
+    pick_2_3(handle_l, handle_r, hand_l, hand_r, add_data_1)
 
 if __name__ == "__main__":
     main()

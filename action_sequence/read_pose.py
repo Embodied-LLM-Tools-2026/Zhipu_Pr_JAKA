@@ -130,4 +130,14 @@ def main():
     print(parse_pose_data(cpos))
 if __name__ == "__main__":
     # 示例：读取左手当前关节并输出 PP_hand.py 风格 Joint 定义
-    add_pick_point(3, "抓取点位", side='L')
+    # add_pick_point(4, "收回点位", side='R')
+    # add_pick_point(2, "预抓取点位2", side='R')
+    # add_pick_point(3, "抓取点位", side='R')
+
+    # add_pick_point(2, "预抓取点位", side='R')
+    # add_pick_point(3, "抓取点位", side='R')
+    # add_pick_point(4, "回收点位", side='R')
+
+    # add_pick_point(2, "预抓取点位", side='L')
+    # add_pick_point(3, "抓取点位", side='L')
+    add_pick_point(2, "预抓取点位", side='L')

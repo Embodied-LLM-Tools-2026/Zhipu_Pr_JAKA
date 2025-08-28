@@ -205,8 +205,8 @@ if __name__ == "__main__":
     model_type = "sam"  # Options: "mobile_sam", "sam", "fastsam"
     
     # Set input and output paths
-    img = "/home/tanyz/Project/ultralytics/datasets/iphone/images/train/train_1751894421211.png"  # Input image file
-    out = "/home/tanyz/Project/ultralytics/tmp/result.png"   # Output result file
+    img = r"C:\Users\Work\Documents\Pr_Stage1\archive\examples\images\images\image_1.jpg"  # Input image file
+    out = r"C:\Users\Work\Documents\Pr_Stage1\archive\examples\images\images\image_100.jpg"   # Output result file
 
     processor = SAMProcessor(model_type=model_type)
     masks, box = processor.process_image(img, [1381, 1092], [1], save_path=out, get_box=True)
