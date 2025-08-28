@@ -35,17 +35,20 @@ class ActionExecuter:
             # 初始化灵巧手
             from controller.hand_controller import InspireHandR
             import time
-            from action_sequence.PP_hand import (
+            from action_sequence.PP_hand_new_shelf import (
                 init_robot,
                 move_to_pick_height_pitch_angle,
                 move_to_shelf,
+                move_to_photoshop,
                 back_bar_station,
+                place_left,
+                place_right,
             )
             
             # 尝试导入所有可能的pick函数
-            import action_sequence.PP_hand as pp_hand_module
-            for layer in range(1, 6):  # layer_number: 1~4
-                for drink in range(1, 6):  # drink_id: 1~5
+            import action_sequence.PP_hand_new_shelf as pp_hand_module
+            for layer in range(2, 6):  # layer_number: 2~5
+                for drink in range(1, 7):  # drink_id: 1~6
                     function_name = f"pick_{layer}_{drink}"
                     try:
                         if hasattr(pp_hand_module, function_name):
@@ -56,10 +59,10 @@ class ActionExecuter:
                             print(f"跳过不存在的函数: {function_name}")
                     except Exception as e:
                         print(f"导入函数 {function_name} 时出错: {e}")
-            from action_sequence.pour_coffee import (
-                move_to_coffee_machine_and_make_coffee,
-                get_coffee_and_serve,
-            )
+            # from action_sequence.pour_coffee import (
+            #     move_to_coffee_machine_and_make_coffee,
+            #     get_coffee_and_serve,
+            # )
             self.hand_l = InspireHandR(port="COM12", baudrate=115200, hand_id=1)
             self.hand_r = InspireHandR(port="COM14", baudrate=115200, hand_id=2)
             self.hand_l.set_default_speed(100, 100, 100, 100, 100, 100)
@@ -73,9 +76,12 @@ class ActionExecuter:
             self.bowing = bow
             self.move_to_pick_height_pitch_angle = move_to_pick_height_pitch_angle
             self.move_to_shelf = move_to_shelf
+            self.move_to_photoshop = move_to_photoshop
             self.back_bar_station = back_bar_station
-            self.move_to_coffee_machine_and_make_coffee = move_to_coffee_machine_and_make_coffee
-            self.get_coffee_and_serve = get_coffee_and_serve
+            self.place_left = place_left
+            self.place_right = place_right
+            # self.move_to_coffee_machine_and_make_coffee = move_to_coffee_machine_and_make_coffee
+            # self.get_coffee_and_serve = get_coffee_and_serve
             self.rotate_head_to_angle = rotate_head_to_angle
             
             print(f"已连接到机器人: {robot_ip_left} 和 {robot_ip_right}")
@@ -149,7 +155,7 @@ class ActionExecuter:
                 return True
 
             if drink_id is None:  # 到达货架再到达对应层数
-                self.move_to_shelf()
+                self.move_to_photoshop()
                 self.move_to_pick_height_pitch_angle(
                     self.handle_l, self.handle_r, self.add_data_1, body_distance, head_angle
                 )
@@ -172,6 +178,23 @@ class ActionExecuter:
                             self.hand_r,
                             self.add_data_1,
                         )
+                        self.back_bar_station()
+                        if drink_id in (1,2,3):
+                            self.place_left(
+                                self.handle_l,
+                                self.handle_r,
+                                self.hand_l,
+                                self.hand_r,
+                                self.add_data_1,
+                            )
+                        else:
+                            self.place_right(
+                                self.handle_l,
+                                self.handle_r,
+                                self.hand_l,
+                                self.hand_r,
+                                self.add_data_1,
+                            )
                     else:
                         print(f"警告：函数 {pick_function_name} 不存在")
                         return False

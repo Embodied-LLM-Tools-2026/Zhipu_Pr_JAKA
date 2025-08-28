@@ -1029,7 +1029,7 @@ class DrinkShelfLocator:
                 "message": error_msg
             }
     
-    def find_drinks(self, drink_type: str, quantity: int, shelf_side: Optional[str] = None, grabbing_direction: Optional[str] = None, total_drinks: Optional[int] = None) -> Dict:
+    def find_drinks(self, drink_type: str, quantity: int, grabbing_direction: Optional[str] = None, total_drinks: Optional[int] = 6) -> Dict:
         """
         饮料查找接口
         Args:
@@ -1048,6 +1048,9 @@ class DrinkShelfLocator:
                 save_path=f"search_{drink_type}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jpg"
             )
             
+            print("start sleep")
+            import time
+            time.sleep(10)
             # 2. 分割当前图像中的目标饮料
             
             visual_prompts = self.get_visual_prompts(drink_type)
@@ -1189,7 +1192,7 @@ class DrinkShelfLocator:
         
         # 如果找不到对应的饮料类型，可以决定是返回 None 还是抛出错误
         if bboxes_data is None:
-            # 或者 raise ValueError(f"不支持的饮料类型: {drink_type}")
+            raise ValueError(f"不支持的饮料类型: {drink_type}")
             return None
 
         return {

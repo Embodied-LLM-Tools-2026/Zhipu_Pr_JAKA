@@ -320,7 +320,7 @@ def interactive_mode():
         print("1. 查看已标定的饮料类型")
         print("2. 标定新饮料位置")
         print("3. 查找饮料")
-        print("4. 移动机器人到货架处")
+        print("4. 移动机器人到拍摄处")
         print("0. 退出")
         
         choice = input("请选择操作 (0-4): ").strip()
@@ -404,16 +404,16 @@ def interactive_mode():
             print("请调整货架，然后按回车开始查找...")
             input("准备好后按回车: ")
             
-            result = locator.find_drinks(drink_type, quantity)
+            result = locator.find_drinks(drink_type, quantity, "auto")
             print(f"查找结果: {result['message']}")
             if result["success"]:
                 print(f"推荐位置: {result['positions']}")
         
         elif choice == "4":
-            print("机器人将会移动到货架处")
+            print("机器人将会移动到拍摄处")
             input("准备好后请按回车确认: ")
-            action_executer.move_to_shelf()
-            print("机器人已移动到货架处")
+            action_executer.move_to_photoshop()
+            print("机器人已移动到拍摄处")
 
         
         else:

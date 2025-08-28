@@ -140,4 +140,4 @@ if __name__ == "__main__":
 
     # add_pick_point(2, "预抓取点位", side='L')
     # add_pick_point(3, "抓取点位", side='L')
-    add_pick_point(2, "预抓取点位", side='L')
+    add_pick_point(2, "收回点位1", side='L')

@@ -123,13 +123,17 @@ class ObjectLocalization:
         :param quantity: 要查找的数量
         :return: 包含推荐位置编号的列表，如果查找失败则返回None
         """
-        search_result = self.locator.find_drinks(obj_name, quantity, grabbing_direction="auto")
+        search_result = self.locator.find_drinks(
+            drink_type=obj_name,
+            quantity=quantity, 
+            grabbing_direction="auto")
         
         if search_result and search_result.get("success"):
+            print("查找成功")
             return search_result.get("positions")
         else:
-            # message = search_result.get("message", "未知错误")
-            # print(f"查找失败: {message}")
+            message = search_result.get("message", "未知错误")
+            print(f"查找失败: {message}")
             return []
 
 def main():

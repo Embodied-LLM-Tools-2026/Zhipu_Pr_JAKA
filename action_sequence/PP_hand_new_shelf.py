@@ -62,9 +62,9 @@ def init_robot(handle_l, handle_r, add_data, hand_l, hand_r):
     # 初始化右臂
     x5.movj(handle_r, INIT_JOINT_R, add_data)
     x5.wait_move_done(handle_r)
-    hand_r.setpos(1000,1000,1000,1000,1000,0)
+    hand_r.setpos(600,600,600,600,600,0)
     time.sleep(1)
-    hand_l.setpos(1000,1000,1000,1000,1000,0)
+    hand_l.setpos(600,600,600,600,600,0)
     time.sleep(1)
 
 def move_to_shelf():
@@ -74,10 +74,22 @@ def move_to_shelf():
     with AGVClient(ip='192.168.1.50') as agv:
         pose_result = agv.get_pose()
         if abs(pose_result[2]) < 0.4:
-            agv.go_to_point_in_world(-0.047,-0.033,0, 0)
+            agv.go_to_point_in_world(-0.02,-0.02,-0.01, 0)
         else:
             agv.rotation(3.14)
-            agv.go_to_point_in_world(-0.047,-0.033,0, 0)
+            agv.go_to_point_in_world(-0.02,-0.02,-0.01, 0)
+            
+def move_to_photoshop():
+    """
+    移动到拍水位置
+    """
+    with AGVClient(ip='192.168.1.50') as agv:
+        pose_result = agv.get_pose()
+        if abs(pose_result[2]) < 0.4:
+            agv.go_to_point_in_world(-0.132,-0.02,-0.01, 0)
+        else:
+            agv.rotation(3.14)
+            agv.go_to_point_in_world(-0.132,-0.02,-0.01, 0)
 
 def back_bar_station():
     """
@@ -85,7 +97,7 @@ def back_bar_station():
     """
     with AGVClient(ip='192.168.1.50') as agv:
         pose_result = agv.get_pose()
-        bar_pose = [-0.770,-0.028,3.14,1]
+        bar_pose = [-1.292,-0.001,3.14159265359,1]
         err = sum(abs(x - y) for x, y in zip(pose_result[:3], bar_pose[:3]))
         print(f"当前与吧台位置之间的误差：{err}")
         if err > 0.15:
@@ -365,7 +377,7 @@ def pick_4_6(handle_L,handle_R,hand_l,hand_r,add_data):
     x5.wait_move_done(handle_R)
 
     # 抓取
-    hand_r.setpos(200,200,200,200,200,0)
+    hand_r.setpos(200,200,200,200,400,0)
     time.sleep(1)
 
     # 收回点位
@@ -589,8 +601,6 @@ def pick_3_6(handle_L,handle_R,hand_l,hand_r,add_data):
     x5.movj(handle_R, pick_3, add_data)
     x5.wait_move_done(handle_R)
     
-
-
     # 初始化
     pick_4  = x5.Joint(j1 = 7.892, j2 = -58.596, j3 = 60.106, j4 = -89, j5 = 3.16, j6 = -79.671, e1 = -120, e2 = 0.004, e3 = 100)
 
@@ -987,6 +997,60 @@ def pick_2_3(handle_L,handle_R,hand_l,hand_r,add_data):
     x5.movj(handle_L, pick_7, add_data)
     x5.wait_move_done(handle_L)
 
+def place_right(handle_L,handle_R,hand_l,hand_r,add_data):
+    # 放置点位
+    pick_1 = x5.Joint(j1 = 44.083, j2 = -78.027, j3 = 66.083, j4 = -35.886, 
+                        j5 = -23.533, j6 = -13.747, e1 = -133.877, e2 = 0.001, e3 = 99.977)
+    x5.movj(handle_R, pick_1, add_data)
+    x5.wait_move_done(handle_R)
+
+    
+    time.sleep(1)
+    # 松手
+
+    # 收回点位
+    pick_2 = x5.Joint(j1 = 17.472, j2 = -69.855, j3 = 94.736, j4 = -61.017, 
+                        j5 = -16.951, j6 = -48.737, e1 = -134.865, e2 = 0.001, e3 = 99.966)
+    x5.movj(handle_R, pick_2, add_data)
+    hand_r.setpos(1000,1000,1000,1000,1000,0)
+    x5.wait_move_done(handle_R)
+
+    # time.sleep(1)
+
+    # 右手+身高初始化
+    pick_4  = x5.Joint(j1 = 7.892, j2 = -58.596, j3 = 60.106, j4 = -89, j5 = 3.16, j6 = -79.671, e1 = -120, e2 = 0.004, e3 = 160)
+    x5.movj(handle_R, pick_4, add_data)
+    x5.wait_move_done(handle_R)
+
+
+def place_left(handle_L,handle_R,hand_l,hand_r,add_data):
+    # 放置点位
+    pick_1 = x5.Joint(j1 = -29.342, j2 = -65.571, j3 = -81.213, j4 = -53.507, 
+                        j5 = 35.217, j6 = -8.878, e1 = 119.137, e2 = -0.016, e3 = 0.02)
+    x5.movj(handle_L, pick_1, add_data)
+    x5.wait_move_done(handle_L)
+
+    
+    time.sleep(1)
+    # 松手
+
+    # 收回点位
+    pick_2 = x5.Joint(j1 = 0.286, j2 = -76.513, j3 = -117.929, j4 = -79.825, 
+                        j5 = 27.359, j6 = -32.393, e1 = 120.629, e2 = -0.017, e3 = 0.021)
+    x5.movj(handle_L, pick_2, add_data)
+    hand_l.setpos(1000,1000,1000,1000,1000,0)
+    x5.wait_move_done(handle_R)
+
+    # time.sleep(1)
+
+    # 左手初始化
+    pick_7  = INIT_JOINT_L
+    x5.movj(handle_L, pick_7, add_data)
+    x5.wait_move_done(handle_L)
+
+    # 身高初始化
+    move_to_pick_height_pitch_angle(handle_L,handle_R,add_data, 160, 0)
+
 
 def move_to_pick_height_pitch_angle(handle_L,handle_R,add_data, height, pitch_angle):
     """
@@ -1014,11 +1078,22 @@ def main():
     add_data_2 = x5.MovPointAdd(vel=100, cnt=100, acc=100, dec=100, offset =-1,
     offset_data=(10,0,0,0,0,0,0,0,0))
     # 连接机器人
+    print(1111)
     handle_l = x5.connect("192.168.1.9")
     handle_r = x5.connect("192.168.1.10")
-    # move_to_pick_height_pitch_angle(handle_l,handle_r,add_data_1, -4, 28)
+    print(2222)
+
     init_robot(handle_l, handle_r, add_data_1, hand_l, hand_r)
-    pick_2_3(handle_l, handle_r, hand_l, hand_r, add_data_1)
+    # move_to_shelf()
+    # move_to_pick_height_pitch_angle(handle_l,handle_r,add_data_1, 100, 0)
+    # pick_3_3(handle_l, handle_r, hand_l, hand_r, add_data_1)
+    # back_bar_station()
+    # # # place_right(handle_l,handle_r,hand_l,hand_r,add_data_1)
+    # # move_to_pick_height_pitch_angle(handle_l,handle_r,add_data_1, 100, 0)
+    # place_left(handle_l,handle_r,hand_l,hand_r,add_data_1)
+
+
+
 
 if __name__ == "__main__":
     main()

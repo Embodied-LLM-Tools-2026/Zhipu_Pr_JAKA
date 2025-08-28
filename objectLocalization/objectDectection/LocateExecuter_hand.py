@@ -34,10 +34,11 @@ class ActionExecuter:
             # 初始化灵巧手
             from controller.hand_controller import InspireHandR
             import time
-            from action_sequence.PP_hand import (
+            from action_sequence.PP_hand_new_shelf import (
                 init_robot,
                 move_to_pick_height_pitch_angle,
                 move_to_shelf,
+                move_to_photoshop,
                 back_bar_station,
             )
             
@@ -50,6 +51,7 @@ class ActionExecuter:
             self.init_robot = init_robot
             self.move_to_pick_height_pitch_angle = move_to_pick_height_pitch_angle
             self.move_to_shelf = move_to_shelf
+            self.move_to_photoshop = move_to_photoshop
             self.back_bar_station = back_bar_station
             
             print(f"已连接到机器人: {robot_ip_left} 和 {robot_ip_right}")
