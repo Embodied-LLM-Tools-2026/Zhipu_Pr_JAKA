@@ -101,6 +101,9 @@ class VoiceRobotController:
                  use_voice_input: Optional[bool] = None):
         """初始化语音机器人控制器"""
         
+        # 启动时清理旧临时文件
+        self._cleanup_old_temp_files()
+        
         # 性能优化：添加缓存机制
         self.tts_cache = {}
         self.device_cache = {}
@@ -118,6 +121,7 @@ class VoiceRobotController:
         }
         self.audio_play_end_time = None
         self.ready_for_next_input_time = None
+        self.use_voice_input = use_voice_input
         
         # 初始化组件
         self._init_components(use_voice_input, device, zhipuai_api_key)
@@ -125,9 +129,10 @@ class VoiceRobotController:
         # 机器人状态管理
         self.robot_state = "sleeping"  # sleeping: 休眠状态, awake: 唤醒状态
         
-        # 音频文件管理
+        # 音频文件管理 - 增强版
         self.session_audio_files = set()  # 本次运行生成的音频文件
         self.persistent_audio_files = set()  # 持久化的预制音频文件
+        self.temp_audio_files = set()  # 临时录音文件
         
         # 性能优化：预缓存常用音频
         if Config.PRELOAD_COMMON_AUDIO:
@@ -136,14 +141,9 @@ class VoiceRobotController:
         # 初始化机器人控制器
         self.robot_controller = ActionExecuter(robot_ip_left, robot_ip_right, deps.robot_available)
 
-        # 性能优化：预缓存拖延语音频
-        self.delay_phrase_cache = {}
-        self._preload_delay_phrases()
         
         # 自我介绍关键词
-        self.intro_keywords = [
-            "介绍一下你自己", "你是谁", "自我介绍", "请介绍你自己", "你能做什么", "你的功能", "你的作用", "你是做什么的"
-        ]
+        self.intro_keywords = Config.INTRO_KEYWORDS
         
         # 初始化饮料货架定位器
         self.obj_locater = ObjectLocalization()
@@ -160,14 +160,16 @@ class VoiceRobotController:
     
     def _cleanup_session_audio(self):
         """清理本次运行生成的音频文件，保留预制音频"""
-        if not self.session_audio_files:
+        all_temp_files = self.session_audio_files | self.temp_audio_files
+        
+        if not all_temp_files:
             print("📁 没有需要清理的运行时音频文件")
             return
         
         cleaned_count = 0
         failed_count = 0
         
-        for audio_file in self.session_audio_files:
+        for audio_file in all_temp_files:
             try:
                 if os.path.exists(audio_file):
                     os.remove(audio_file)
@@ -179,7 +181,54 @@ class VoiceRobotController:
         
         print(f"📊 清理完成: 成功删除 {cleaned_count} 个文件，失败 {failed_count} 个文件")
         self.session_audio_files.clear()
+        self.temp_audio_files.clear()
     
+    def _cleanup_old_temp_files(self):
+        """清理旧的临时音频文件"""
+        # 清理recordings目录中的临时文件
+        recordings_dir = os.path.join(os.getcwd(), "recordings")
+        if os.path.exists(recordings_dir):
+            cleaned_count = 0
+            for filename in os.listdir(recordings_dir):
+                file_path = os.path.join(recordings_dir, filename)
+                # 清理TTS临时文件和录音临时文件
+                if (filename.startswith("tts_") and filename.endswith(".wav")) or \
+                   (filename.startswith("tmp") and filename.endswith(".wav")):
+                    try:
+                        if os.path.isfile(file_path):
+                            os.remove(file_path)
+                            cleaned_count += 1
+                            print(f"🗑️ 清理旧临时文件: {filename}")
+                    except Exception as e:
+                        print(f"❌ 清理旧临时文件失败: {filename} - {e}")
+            
+            if cleaned_count > 0:
+                print(f"📊 启动时清理了 {cleaned_count} 个旧临时文件")
+            else:
+                print("📁 没有发现需要清理的旧临时文件")
+        
+        # 清理系统临时目录中的相关文件
+        temp_dir = tempfile.gettempdir()
+        if os.path.exists(temp_dir):
+            temp_cleaned_count = 0
+            for filename in os.listdir(temp_dir):
+                if filename.endswith(".wav") and ("tts_" in filename or "tmp" in filename):
+                    file_path = os.path.join(temp_dir, filename)
+                    try:
+                        if os.path.isfile(file_path):
+                            # 检查文件是否超过1小时
+                            file_time = os.path.getctime(file_path)
+                            current_time = time.time()
+                            if current_time - file_time > 3600:  # 1小时
+                                os.remove(file_path)
+                                temp_cleaned_count += 1
+                                print(f"🗑️ 清理系统临时文件: {filename}")
+                    except Exception as e:
+                        print(f"❌ 清理系统临时文件失败: {filename} - {e}")
+            
+            if temp_cleaned_count > 0:
+                print(f"📊 启动时清理了 {temp_cleaned_count} 个系统临时文件")
+
     def _get_persistent_audio_path(self, text: str, category: str = "common") -> str:
         """获取持久化音频文件路径"""
         import hashlib
@@ -265,28 +314,7 @@ class VoiceRobotController:
                 print(f"⚠️ 预加载音频失败: {phrase[:10]}... - {e}")
         
         print(f"✅ 预加载完成，缓存了 {len(self.tts_cache)} 个音频")
-    
-    def _preload_delay_phrases(self):
-        """预生成所有拖延语音频，优先使用持久化文件"""
-        print("🔄 预生成拖延语音频...")
-        for phrase in Config.DELAY_PHRASES:
-            try:
-                # 首先检查是否有持久化的音频文件
-                persistent_path = self._check_persistent_audio(phrase, "delay")
-                if persistent_path:
-                    self.delay_phrase_cache[phrase] = persistent_path
-                    print(f"📁 使用持久化拖延语: {phrase[:20]}...")
-                else:
-                    # 如果没有持久化文件，生成新的音频文件
-                    audio_path = self.tts_engine.text_to_speech(phrase)
-                    if audio_path:
-                        self.delay_phrase_cache[phrase] = audio_path
-                        self.session_audio_files.add(audio_path)
-                        # 保存为持久化文件
-                        self._save_persistent_audio(phrase, audio_path, "delay")
-            except Exception as e:
-                print(f"⚠️ 拖延语音频生成失败: {phrase[:10]}... - {e}")
-        print(f"✅ 拖延语音频缓存: {len(self.delay_phrase_cache)} 条")
+
 
     def _get_cached_tts(self, text: str) -> str:
         """获取缓存的TTS音频文件路径"""
@@ -302,11 +330,10 @@ class VoiceRobotController:
             self.session_audio_files.add(audio_path)
         return audio_path
     
-    def _play_cached_audio_with_delay(self, text: str, tts_ready_callback=None, tts_timeout=2.0):
+    def _play_cached_audio(self, text: str, tts_ready_callback=None):
         """用户输入结束3秒后播放拖延语，主回答音频生成后等待拖延语播放完成再衔接"""
         audio_path = None
         tts_done = threading.Event()
-        delay_played = threading.Event()
         
         def tts_task():
             nonlocal audio_path
@@ -344,11 +371,6 @@ class VoiceRobotController:
             print(f"🗣️ 音频生成失败: {text[:20]}...")
         
         return audio_path
-
-    def _play_cached_audio(self, text: str, tts_ready_callback=None):
-        """播放缓存的音频（统一使用带拖延语机制的播放方法）"""
-        # 使用统一的带拖延语机制的播放方法
-        return self._play_cached_audio_with_delay(text, tts_ready_callback=tts_ready_callback)
     
     def _play_audio_async_with_vad_warmup(self, text: str, tts_ready_callback=None):
         """异步播放音频，同时预热VAD系统"""
@@ -400,7 +422,7 @@ class VoiceRobotController:
             return
         sentences = self._split_by_sentences(text)
         if len(sentences) == 1:
-            self._play_cached_audio_with_delay(text, tts_ready_callback=tts_ready_callback)
+            self._play_cached_audio(text, tts_ready_callback=tts_ready_callback)
             return
         print(f"🎵 开始智能流式TTS播放 ({len(sentences)}个句子)")
         audio_paths = self._generate_audio_parallel(sentences)
@@ -614,8 +636,13 @@ class VoiceRobotController:
                 with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp_file:
                     audio_filename = tmp_file.name
                 
+                # 将临时录音文件添加到管理列表
+                self.temp_audio_files.add(audio_filename)
+                
                 if not self.recorder.save_audio(audio_filename):
                     print("录音失败")
+                    # 录音失败时也要清理临时文件
+                    self.temp_audio_files.discard(audio_filename)
                     return ""
                 
                 try:
@@ -626,8 +653,9 @@ class VoiceRobotController:
                             text = self.recognizer.recognize(audio_filename)
                         except Exception as asr_error:
                             print(f"⚠️ SenseVoice语音识别失败: {asr_error}")
-                            print("请手动输入:")
-                            return input().strip()
+                            # print("请手动输入:")
+                            # return input().strip()
+                            return ""
                         
                         asr_end_time = time.time()
                         asr_duration = asr_end_time - asr_start_time
@@ -642,21 +670,26 @@ class VoiceRobotController:
                         print(f"⏱️ 语音转文字耗时: {asr_duration:.2f}秒")
                         
                         # 检查是否是统计命令
-                        if "统计" in text or "计时" in text or "时间" in text:
+                        if not self.use_voice_input and ("统计" in text or "计时" in text or "时间" in text):
                             self._show_timing_stats()
                             return ""
-                        
                         return text
                     else:
-                        print("语音识别不可用，请手动输入:")
-                        return input().strip()
+                        # print("语音识别不可用，请手动输入:")
+                        # return input().strip()
+                        print("语音识别不可用")
+                        return ""
                         
                 finally:
+                    # 立即删除临时录音文件
                     try:
-                        os.unlink(audio_filename)
-                    except:
-                        pass
-                        
+                        if os.path.exists(audio_filename):
+                            os.unlink(audio_filename)
+                            self.temp_audio_files.discard(audio_filename)
+                            print(f"🗑️ 已删除临时录音文件: {os.path.basename(audio_filename)}")
+                    except Exception as e:
+                        print(f"⚠️ 删除临时录音文件失败: {e}")
+                        # 保留在temp_audio_files中，等待程序结束时统一清理
             finally:
                 if self.recorder:
                     self.recorder.cleanup()
@@ -760,7 +793,7 @@ class VoiceRobotController:
     
     # 主要在这里调用后面视觉和实机执行的接口
     def _process_action_command(self, text: str) -> bool:
-        """处理动作指令（带拖延语机制，LLM+TTS整体流程超时1.5秒自动插入拖延语）"""
+        """处理动作指令"""
         # 性能监控 - 在函数最开头定义，确保所有代码路径都能访问
         total_start_time = time.time()
         print(f"⏱️ 开始处理指令: {text[:30]}...")
@@ -798,7 +831,7 @@ class VoiceRobotController:
         command_result = self.processor.process_command(text)
         intent = command_result.get("intent", "unknown") # 意图
         action = command_result.get("action", "unknown") # 具体动作
-        confidence = command_result.get("confidence", 0.0)
+        confidence = command_result.get("confidence", 0)
         description = command_result.get("description", "未知")
         llm_end_time = time.time()
 
@@ -821,18 +854,20 @@ class VoiceRobotController:
         
         if intent == "command":
             print(f"🎯 识别动作: {description} (置信度: {confidence:.2f})")
-            print("🎵 开始异步TTS生成和播放（同时预热VAD）...")
+            print("�� 开始异步TTS生成和播放（同时预热VAD）...")
             
-        else:
+        elif intent == "chat" and confidence == 1:
             print(f"小拓说：{description}")
             print("🎵 开始异步TTS生成和播放（同时预热VAD）...")
             audio_file_path = self._play_cached_audio(description, tts_ready_callback=tts_ready_callback)
-        
+        else:
+            print("❓ 录制到环境噪声，无法识别")
+
         # 性能监控 - TTS开始播放（不包括播放时间）
         tts_play_start_time = time.time()
         tts_prepare_duration = tts_play_start_time - tts_start_time
 
-        if intent == "command" and (action == "unknown" or confidence < 0.5):
+        if intent == "command" and (action == "unknown" or confidence != 1):
             print("❓ 抱歉，我不理解这个指令，请重新说一遍")
             error_audio_path = self._play_cached_audio("抱歉，我不理解这个指令，请重新说一遍")
             
@@ -1061,8 +1096,6 @@ class VoiceRobotController:
 
 def main():
     """主函数"""
-    if not deps._get_check_result():
-        return
     # 获取API密钥
     api_key = Config.ZHIPUAI_API_KEY
     if not api_key:
@@ -1074,8 +1107,6 @@ def main():
             return
     
     # 获取机器人IP
-    # robot_ip = input(f"请输入机器人IP地址 (默认{Config.ROBOT_IP_DEFAULT}): ").strip()
-    # if not robot_ip:
     robot_ip_left = Config.ROBOT_IP_LEFT
     robot_ip_right = Config.ROBOT_IP_RIGHT
 

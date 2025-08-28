@@ -29,6 +29,14 @@ class Config:
     # 缓存配置
     ENABLE_CACHE = True
     PRELOAD_COMMON_AUDIO = True
+
+    # 唤醒词
+    WAKE_WORDS = ["小拓", "小兔"]
+
+    # 自我介绍关键词
+    INTRO_KEYWORDS = [
+        "介绍一下你自己", "你是谁", "自我介绍", "介绍你自己", "你能做什么", "你的功能", "你的作用", "你是做什么的"
+    ]
     
     # 常用音频短语
     COMMON_PHRASES = [
@@ -70,14 +78,6 @@ class Config:
         "请享用您的咖啡",
     ]
     
-    # 拖延语备选
-    DELAY_PHRASES = [
-        "嗯...让我想一想。",
-        "嗯，这个问题有点意思。",
-        "这是个好问题。",
-        "我查一下。",
-        "我想一想……",
-    ]
     
     # 动作映射
     ACTION_MAP = {

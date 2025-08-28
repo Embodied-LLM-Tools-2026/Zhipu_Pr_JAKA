@@ -291,6 +291,52 @@ class SileroVAD:
             print(f"⚠️ Silero VAD检测失败: {e}")
             return 0.0
     
+    def detect_speech_from_buffer(self, audio_data):
+        """从预处理的音频数据直接检测语音 - 用于环形缓冲区"""
+        try:
+            import torch
+            import numpy as np
+            
+            # 确保音频是numpy数组格式
+            if isinstance(audio_data, bytes):
+                audio_array = np.frombuffer(audio_data, dtype=np.int16)
+            else:
+                audio_array = audio_data.copy()
+            
+            # 重采样到Silero VAD要求的精确样本数
+            resampled_audio = self._resample_audio(audio_array)
+            
+            # 确保重采样后的样本数严格等于target_samples
+            if len(resampled_audio) != self.target_samples:
+                if len(resampled_audio) > self.target_samples:
+                    resampled_audio = resampled_audio[:self.target_samples]
+                else:
+                    # 填充到目标长度
+                    padded_array = np.zeros(self.target_samples, dtype=resampled_audio.dtype)
+                    padded_array[:len(resampled_audio)] = resampled_audio
+                    resampled_audio = padded_array
+            
+            # 转换为float32并归一化
+            if resampled_audio.dtype != np.float32:
+                resampled_audio = resampled_audio.astype(np.float32) / 32768.0
+            
+            # 验证样本数（调试用）
+            if len(resampled_audio) != self.target_samples:
+                print(f"⚠️ 样本数不匹配: 期望{self.target_samples}，实际{len(resampled_audio)}")
+                return 0.0
+            
+            # 转换为torch tensor
+            audio_tensor = torch.from_numpy(resampled_audio)
+            
+            # 使用模型检测
+            speech_prob = self.model(audio_tensor, self.target_sample_rate).item()
+            
+            return speech_prob
+            
+        except Exception as e:
+            print(f"⚠️ Silero VAD检测失败: {e}")
+            return 0.0
+    
     def reset_buffer(self):
         """重置音频缓冲区"""
         self.audio_buffer = []
@@ -526,6 +572,65 @@ class CircularBuffer:
         self.buffer.fill(0)
         self.write_pos = 0
         self.is_full = False
+    
+    def get_sample_count(self):
+        """获取当前缓冲区中的样本数量"""
+        if self.is_full:
+            return self.max_samples
+        else:
+            return self.write_pos
+    
+    def read_last_samples(self, sample_count):
+        """读取最后N个样本"""
+        import numpy as np
+        
+        # 确保不超过缓冲区大小
+        sample_count = min(sample_count, self.max_samples)
+        
+        if not self.is_full and self.write_pos < sample_count:
+            # 缓冲区还未满，且数据不够
+            return None
+        
+        # 计算读取位置
+        if self.is_full:
+            # 缓冲区已满，需要计算正确的读取位置
+            start_pos = (self.write_pos - sample_count) % self.max_samples
+            
+            if start_pos + sample_count <= self.max_samples:
+                # 数据连续，直接读取
+                return self.buffer[start_pos:start_pos + sample_count].copy()
+            else:
+                # 数据跨越边界，需要分两段读取
+                result = np.zeros(sample_count, dtype=self.dtype)
+                first_part_size = self.max_samples - start_pos
+                result[:first_part_size] = self.buffer[start_pos:]
+                result[first_part_size:] = self.buffer[:sample_count - first_part_size]
+                return result
+        else:
+            # 缓冲区未满
+            start_pos = max(0, self.write_pos - sample_count)
+            return self.buffer[start_pos:self.write_pos].copy()
+    
+    def get_last_samples_range(self, sample_count):
+        """获取最后N个样本在缓冲区中的范围（用于重合率计算）"""
+        # 确保不超过缓冲区大小
+        sample_count = min(sample_count, self.max_samples)
+        
+        if not self.is_full and self.write_pos < sample_count:
+            # 缓冲区还未满，且数据不够
+            return None
+        
+        # 计算读取位置
+        if self.is_full:
+            # 缓冲区已满，需要计算正确的读取位置
+            start_pos = (self.write_pos - sample_count) % self.max_samples
+            end_pos = self.write_pos
+        else:
+            # 缓冲区未满
+            start_pos = max(0, self.write_pos - sample_count)
+            end_pos = self.write_pos
+        
+        return (start_pos, end_pos, sample_count)
 
 
 class AdvancedVoiceActivityDetector:
@@ -538,7 +643,7 @@ class AdvancedVoiceActivityDetector:
                  silence_timeout=1.0,      # 静音超时（秒）
                  min_speech_duration=0.4,  # 最小语音时长（秒）- 允许更短语音
                  speech_threshold=0.3,     # Silero VAD阈值 - 提高敏感度
-                 check_interval_ms=10):    # 检测间隔（毫秒）- 优化响应速度
+                 overlap_threshold=0.8):   # 样本重合率阈值 - 避免重复检测
         
         self.sample_rate = sample_rate
         self.buffer_duration = buffer_duration
@@ -546,7 +651,7 @@ class AdvancedVoiceActivityDetector:
         self.silence_timeout = silence_timeout
         self.min_speech_duration = min_speech_duration
         self.speech_threshold = speech_threshold
-        self.check_interval_ms = check_interval_ms
+        self.overlap_threshold = overlap_threshold
         
         # 初始化组件 - 启用优化版Silero VAD
         # if deps.silero_vad_available and deps.torch_available:
@@ -578,7 +683,7 @@ class AdvancedVoiceActivityDetector:
         self.is_speech_active = False
         self.speech_start_time = None
         self.silence_start_time = None
-        self.last_check_time = 0
+        self.last_detection_samples = None  # 记录上次检测的样本范围
         
         # 回退VAD（能量检测）
         if not self.vad_available:
@@ -591,46 +696,130 @@ class AdvancedVoiceActivityDetector:
         print(f"🎯 高级VAD初始化完成:")
         print(f"   缓冲区: {buffer_duration}s, 回溯: {lookback_duration}s")
         print(f"   静音超时: {silence_timeout}s, 最小语音: {min_speech_duration}s")
-        print(f"   检测间隔: {check_interval_ms}ms")
+        print(f"   重合率阈值: {overlap_threshold}")
     
     def feed_audio(self, audio_data):
-        """向环形缓冲区输入音频数据"""
+        """向环形缓冲区输入音频数据，并基于数据累积触发VAD检测"""
         self.buffer.write(audio_data)
         
-        # 检查是否需要进行VAD检测
-        current_time = time.time() * 1000  # 毫秒
-        if current_time - self.last_check_time >= self.check_interval_ms:
-            self.last_check_time = current_time
-            return self._check_voice_activity(audio_data)
-        
-        return None
+        # 检查环形缓冲区是否有足够数据进行VAD检测
+        if self.vad_available:
+            return self._check_voice_activity_with_silero()
+        else:
+            return self._check_voice_activity_with_fallback(audio_data)
     
-    def _check_voice_activity(self, latest_audio):
-        """检查语音活动状态"""
+    def _check_voice_activity_with_silero(self):
+        """使用Silero VAD检查语音活动状态 - 基于环形缓冲区数据"""
         current_time = time.time()
         
-        if self.vad_available:
-            # 使用Silero VAD
-            speech_prob = self.silero_vad.detect_speech(latest_audio)
-            is_speech = speech_prob > self.speech_threshold
-        else:
-            # 使用回退VAD（能量检测）
-            # 注意：这里我们需要将音频数据转换为字节格式供回退VAD使用
-            if isinstance(latest_audio, bytes):
-                audio_bytes = latest_audio
-            else:
-                import numpy as np
-                if latest_audio.dtype != np.int16:
-                    audio_int16 = (latest_audio * 32767).astype(np.int16)
-                else:
-                    audio_int16 = latest_audio
-                audio_bytes = audio_int16.tobytes()
-            
-            # 使用回退VAD的能量检测
-            energy = self.fallback_vad._calculate_energy(audio_bytes)
-            is_speech = energy > 0.005  # 使用较低的阈值
+        # 检查Silero VAD是否可用
+        if not self.silero_vad or not hasattr(self.silero_vad, 'target_samples'):
+            print("⚠️ Silero VAD不可用，回退到基础VAD")
+            return None
         
-        # 状态机逻辑
+        # 计算Silero VAD需要的输入样本数
+        required_input_samples = int(self.silero_vad.target_samples * 
+                                   (self.sample_rate / self.silero_vad.target_sample_rate))
+        
+        # 检查环形缓冲区是否有足够数据
+        if self.buffer.get_sample_count() < required_input_samples:
+            return None  # 数据不足，等待更多数据
+        
+        # 检查样本重合率，避免重复检测
+        current_range = self.buffer.get_last_samples_range(required_input_samples)
+        if current_range is None:
+            return None  # 数据不足
+        
+        if self._is_overlap_too_high(current_range):
+            return None  # 重合率过高，跳过本次检测
+        
+        # 从环形缓冲区取出最新的足够样本进行检测
+        window_audio = self.buffer.read_last_samples(required_input_samples)
+        
+        if window_audio is None or len(window_audio) < required_input_samples:
+            return None  # 数据不足
+        
+        # 使用Silero VAD检测
+        try:
+            speech_prob = self.silero_vad.detect_speech_from_buffer(window_audio)
+            is_speech = speech_prob > self.speech_threshold
+        except Exception as e:
+            print(f"⚠️ Silero VAD检测失败: {e}")
+            return None
+        
+        # 更新上次检测的样本范围
+        self.last_detection_samples = current_range
+        
+        return self._process_vad_result(is_speech, current_time)
+    
+    def _is_overlap_too_high(self, current_range):
+        """检查当前检测样本与上次检测样本的重合率是否过高"""
+        if self.last_detection_samples is None:
+            return False  # 第一次检测，没有重合
+        
+        # 解包范围信息
+        current_start, current_end, current_count = current_range
+        last_start, last_end, last_count = self.last_detection_samples
+        
+        # 计算重合的样本数
+        overlap_count = 0
+        
+        # 处理环形缓冲区的边界情况
+        if self.buffer.is_full:
+            # 缓冲区已满，需要考虑环形边界
+            if current_start <= current_end:
+                # 当前范围不跨越边界
+                current_samples = set(range(current_start, current_end))
+            else:
+                # 当前范围跨越边界
+                current_samples = set(range(current_start, self.buffer.max_samples)) | set(range(0, current_end))
+            
+            if last_start <= last_end:
+                # 上次范围不跨越边界
+                last_samples = set(range(last_start, last_end))
+            else:
+                # 上次范围跨越边界
+                last_samples = set(range(last_start, self.buffer.max_samples)) | set(range(0, last_end))
+        else:
+            # 缓冲区未满，简单范围比较
+            current_samples = set(range(current_start, current_end))
+            last_samples = set(range(last_start, last_end))
+        
+        # 计算重合样本数
+        overlap_count = len(current_samples & last_samples)
+        
+        # 计算重合率
+        overlap_ratio = overlap_count / min(current_count, last_count)
+        
+        # 调试信息
+        if overlap_ratio > 0.5:  # 只在重合率较高时打印调试信息
+            print(f"🔍 样本重合率: {overlap_ratio:.2f} ({overlap_count}/{min(current_count, last_count)})")
+        
+        return overlap_ratio > self.overlap_threshold
+    
+    def _check_voice_activity_with_fallback(self, latest_audio):
+        """使用回退VAD检查语音活动状态"""
+        current_time = time.time()
+        
+        # 转换为字节格式供回退VAD使用
+        if isinstance(latest_audio, bytes):
+            audio_bytes = latest_audio
+        else:
+            import numpy as np
+            if latest_audio.dtype != np.int16:
+                audio_int16 = (latest_audio * 32767).astype(np.int16)
+            else:
+                audio_int16 = latest_audio
+            audio_bytes = audio_int16.tobytes()
+        
+        # 使用回退VAD的能量检测
+        energy = self.fallback_vad._calculate_energy(audio_bytes)
+        is_speech = energy > 0.005  # 使用较低的阈值
+        
+        return self._process_vad_result(is_speech, current_time)
+    
+    def _process_vad_result(self, is_speech, current_time):
+        """处理VAD检测结果的状态机逻辑"""
         if is_speech:
             if not self.is_speech_active:
                 # 语音开始 - 立即触发

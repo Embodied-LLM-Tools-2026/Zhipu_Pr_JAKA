@@ -15,8 +15,8 @@ class SenseVoiceRecognizer:
         self.model = AutoModel(
             model="iic/SenseVoiceSmall",
             trust_remote_code=True,
-            vad_model="fsmn-vad",
-            vad_kwargs={"max_single_segment_time": 30000},
+            # vad_model="fsmn-vad",
+            # vad_kwargs={"max_single_segment_time": 30000},
             device=device,
             disable_update=True
         )
@@ -31,8 +31,8 @@ class SenseVoiceRecognizer:
                 language="zh",  # 中文
                 use_itn=True,   # 使用逆文本标准化
                 batch_size_s=60,
-                merge_vad=True,
-                merge_length_s=15,
+                # merge_vad=True,
+                # merge_length_s=15,
             )
             text = self.rich_transcription_postprocess(res[0]["text"])
             return text

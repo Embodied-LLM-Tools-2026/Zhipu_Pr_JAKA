@@ -620,7 +620,7 @@ class SimplifiedVoiceRecorder:
                 silence_timeout=1.0,      # 1.0秒静音超时（更快结束）
                 min_speech_duration=0.4,  # 最小语音400ms（更短语音）
                 speech_threshold=0.3,     # VAD阈值（更敏感）
-                check_interval_ms=20      # 20ms检测间隔（更快响应）
+                overlap_threshold=0.3      # 重合率阈值（更快响应）
             )
             self.vad_enabled = True
             if self.advanced_vad.vad_available:
@@ -779,11 +779,8 @@ class SimplifiedVoiceRecorder:
             self.is_listening = True
             self.is_recording = False
             self.audio_data = None
-            speech_detected = threading.Event()
+            # speech_detected = threading.Event()
             recording_complete = threading.Event()
-            
-            # 新增：独立的录音缓冲区
-            recording_buffer = []
             
             def audio_callback(indata, frames_count, time, status):
                 if status:
@@ -811,30 +808,20 @@ class SimplifiedVoiceRecorder:
                         # 语音开始，通知主线程
                         if not self.is_recording:
                             self.is_recording = True
-                            recording_buffer.clear()  # 清空录音缓冲区
-                            # 新增：把环形缓冲区的回溯音频加进来
-                            if hasattr(self.advanced_vad, 'buffer') and hasattr(self.advanced_vad, 'lookback_duration'):
-                                lookback_audio = self.advanced_vad.buffer.read_last_seconds(self.advanced_vad.lookback_duration)
-                                if lookback_audio is not None and len(lookback_audio) > 0:
-                                    recording_buffer.append(lookback_audio.copy())
-                            speech_detected.set()
+                            # speech_detected.set()
                             print("🔴 开始录音...")
                     
-                    # 新增：只要在录音状态，就把音频append进录音缓冲区
-                    if self.is_recording:
-                        recording_buffer.append(audio_int16.copy())
-                    
                     if vad_result == "speech_end":
-                        # 语音结束，获取完整语音数据
+                        # 语音结束，从环形缓冲区获取完整语音数据
                         if self.is_recording:
                             try:
-                                if recording_buffer:
-                                    self.audio_data = np.concatenate(recording_buffer, axis=0)
+                                speech_audio = self.advanced_vad.get_speech_audio()
+                                if speech_audio is not None and len(speech_audio) > 0:
+                                    self.audio_data = speech_audio
                                     print(f"✅ 录音完成: {len(self.audio_data)}样本")
                                 else:
-                                    print("⚠️ 录音缓冲区为空，回退到环形缓冲区回溯")
-                                    speech_audio = self.advanced_vad.get_speech_audio()
-                                    self.audio_data = speech_audio
+                                    print("⚠️ 未能获取语音数据")
+                                    self.audio_data = None
                             except Exception as audio_error:
                                 print(f"⚠️ 获取语音数据失败: {audio_error}")
                                 self.audio_data = None

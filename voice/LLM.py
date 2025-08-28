@@ -74,7 +74,8 @@ class RobotCommandProcessor:
         text = self.replace_zhusu(text)
 
         prompt = f"""
-        请分析以下中文语音文本，判断用户的意图。
+        请你扮演一台语音交互机器人上的决策模块，以下中文语音文本是用户对你说的话，请你判断用户的意图，并将判断结果以JSON格式返回。
+        特别注意：若用户文本明显不是在与你沟通，如文本不完整、无意义、内容杂乱，判断结果的confidence必须设为0。
 
         语音文本："{text}"
 
@@ -82,24 +83,24 @@ class RobotCommandProcessor:
         1. 聊天 - 普通对话内容（关键词：你好、天气、新闻、笑话等）
         2. 指令 - 控制机器人执行具体的动作（支持的动作类型：打招呼/摆手、摇头、点头、鞠躬、其他）
         请先判断用户的意图（特别地，如果用户说的话询问机器人是否能执行某个具体的动作，也请判断为对应的指令；但如果用户是询问能否做一些动作或者表演几个动作，请判断为聊天）
-        如果你判断意图为聊天，请正常输出回答，intent设置为chat，action设置为unknown，confidence设置为1.0，description设置为识别到的意图或动作
-        如果你判断意图为指令，请输出JSON格式，intent设置为command，action设置为识别到的动作，obj_name设置为识别到的饮料，num设置为要拿的饮料数量，confidence设置为1.0，description设置为识别到的意图或动作，指令对应的动作类型只包括greet, shake_head, nod, bow, get_drink, others这六种动作，前面五种就是具体的动作，而others就是除了前面五种动作之外的所有动作，比如握手就属于others。
+        如果你判断意图为聊天，请正常输出回答，intent设置为chat，action设置为unknown，confidence设置为1(特别地，如果用户的文本不完整、无意义或内容杂乱，则confidence设为0)，description设置为识别到的意图或动作
+        如果你判断意图为指令，请输出JSON格式，intent设置为command，action设置为识别到的动作，obj_name设置为识别到的饮料，num设置为要拿的饮料数量，confidence设置为1，description设置为识别到的意图或动作，指令对应的动作类型只包括greet, shake_head, nod, bow, get_drink, others这六种动作，前面五种就是具体的动作，而others就是除了前面五种动作之外的所有动作，比如握手就属于others。
         但是请注意让你讲一些东西不算动作，比如背诵、讲一个xx、介绍一个xx这种，这些要判断为chat。
         另外打招呼这个动作和摆摆手这个动作是等价的，所以打招呼和摆摆手都对应greet动作类型。
         如果你判断意图为指令，输出的标准格式如下：
         {{
             "intent": "command"或"chat",
             "action": "动作类型（仅当intent为command时有效，使用英文描述，动作类型只有可能是：greet, shake_head, nod, bow, get_drink, others）",
-            "obj_name": "饮料类型（仅当action为get_drink时有效，使用中文描述，饮料类型只有可能是：饮料类型只有可能是：{self.drink_list}这{len(self.drink_list)}种，如果识别到的饮料是咖啡但不是美式咖啡（如拿铁、卡布奇诺、玛奇朵、澳瑞白、浓缩、意式等），则归类为其它咖啡）",
+            "obj_name": "饮料类型（仅当action为get_drink时有效，使用中文描述，饮料类型只有可能是：饮料类型只有可能是：{self.drink_list}这{len(self.drink_list)}种）",
             "num": "数量（仅当action为get_drink时有效，使用数字描述，如1，2，3，4，5，6，7，8，9，10）",
-            "confidence": 0.0到1.0之间的置信度,
+            "confidence": 0或1,
             "description": "意图或动作描述"
         }}
 
         注意：
         1. 如果意图为指令，只返回JSON，不要其他内容
         2. 如果无法识别明确意图，intent设为"chat"
-        3. confidence表示识别的置信度
+        3. confidence=1的条件：用户文本明显是在与机器人沟通，且意图明确，内容完整，无杂乱信息；否则将confidence设为0
         4. description用中文描述识别到的意图或动作
         """
         
@@ -126,7 +127,7 @@ class RobotCommandProcessor:
                 print(f"大模型响应: {result_text}")
                 
                 # 优化：如果意图是聊天，直接在这里一次性生成响应
-                if result.get("intent") == "chat":
+                if result.get("intent") == "chat" and result.get("confidence") == 1:
                     
                     # 判断是否需要联网搜索
                     needs_search = self.needs_web_search(text)
@@ -223,36 +224,36 @@ class RobotCommandProcessor:
                 return result
             except json.JSONDecodeError as e:
                 print(f"JSON解析失败: {e}")
-                return {"intent": "chat", "action": "unknown", "confidence": 0.0, "description": "解析失败"}
+                return {"intent": "chat", "action": "unknown", "confidence": 0, "description": "解析失败"}
                 
         except Exception as e:
             print(f"大模型处理错误: {e}")
-            return {"intent": "chat", "action": "unknown", "confidence": 0.0, "description": "处理失败"}
+            return {"intent": "chat", "action": "unknown", "confidence": 0, "description": "处理失败"}
 
-    def generate_chat_response(self, user_input: str) -> str:
-        """生成聊天响应"""
-        # if not deps.zhipuai_available:
-        #     return "智谱AI库未安装，无法生成聊天响应"
+    # def generate_chat_response(self, user_input: str) -> str:
+    #     """生成聊天响应"""
+    #     # if not deps.zhipuai_available:
+    #     #     return "智谱AI库未安装，无法生成聊天响应"
         
-        prompt = f"用户说：{user_input}\n请生成一个自然简洁的对话响应（不超过100字）。"
-        try:
-            response = self.client.chat.completions.create(
-                model=self.model,
-                messages=[
-                    {"role": "user", "content": prompt}
-                ],
-                max_tokens=150,
-                temperature=0.3
-            )
+    #     prompt = f"用户说：{user_input}\n请生成一个自然简洁的对话响应（不超过100字）。"
+    #     try:
+    #         response = self.client.chat.completions.create(
+    #             model=self.model,
+    #             messages=[
+    #                 {"role": "user", "content": prompt}
+    #             ],
+    #             max_tokens=150,
+    #             temperature=0.3
+    #         )
             
-            if hasattr(response, 'choices') and response.choices:
-                message = response.choices[0].message
-                if hasattr(message, 'content') and message.content:
-                    return message.content.strip()
-            return "无法生成响应"
-        except Exception as e:
-            print(f"生成聊天响应时出错: {e}")
-            return "生成聊天响应时出错"
+    #         if hasattr(response, 'choices') and response.choices:
+    #             message = response.choices[0].message
+    #             if hasattr(message, 'content') and message.content:
+    #                 return message.content.strip()
+    #         return "无法生成响应"
+    #     except Exception as e:
+    #         print(f"生成聊天响应时出错: {e}")
+    #         return "生成聊天响应时出错"
     
     # 将文本中的住宿变为注塑
     def replace_zhusu(self, text: str) -> str:
