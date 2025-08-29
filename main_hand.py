@@ -140,13 +140,13 @@ class VoiceRobotController:
         
         # 初始化机器人控制器
         self.robot_controller = ActionExecuter(robot_ip_left, robot_ip_right, deps.robot_available)
-
         
         # 自我介绍关键词
         self.intro_keywords = Config.INTRO_KEYWORDS
         
         # 初始化饮料货架定位器
         self.obj_locater = ObjectLocalization()
+
 
         # 注册信号处理器
         signal.signal(signal.SIGINT, self._signal_handler)
@@ -932,10 +932,14 @@ class VoiceRobotController:
                         layer_number,head_angle,body_distance = self.obj_locater.get_layer_number(obj_name=obj_name,num=num)
                         # 到达对应层数
                         self.robot_controller.execute_get_drink(head_angle=head_angle, body_distance=body_distance)
+                        print(f"head_angle={head_angle}")
+                        print(f"body_distance={body_distance}")
                         # 获取饮料位置
                         pos_list = self.obj_locater.observe(obj_name, num)
                         pos_list = pos_list or []
                         # pos_list = [5,4] # 测试用
+                        head_angle = 0
+                        body_distance = self.robot_controller.grab_height_mapping.get(obj_name)
                         print(f"💬 所在的层数：{layer_number}, 机器人头部俯仰角：{head_angle}, 机器人身躯高度：{body_distance}")
                         print(f"💬 饮料位置: {pos_list}")
                         if len(pos_list) > 0:

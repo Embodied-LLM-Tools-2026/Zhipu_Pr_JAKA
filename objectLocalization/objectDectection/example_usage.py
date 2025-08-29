@@ -403,7 +403,25 @@ def interactive_mode():
             
             print("请调整货架，然后按回车开始查找...")
             input("准备好后按回车: ")
+
+            # 获取饮料的层数映射
+            if drink_type not in layer_mapping:
+                print(f"错误：未找到 {drink_type} 的层数映射")
+                return None, None
             
+            layer, pitch_angle, body_distance = layer_mapping[drink_type]
+            print(f"当前设置：层{layer}, 俯仰角{pitch_angle}, 高度{body_distance}")
+            
+            # 移动机器人到指定位置
+            print("正在移动机器人到拍摄位置...")
+            action_executer.move_to_pick_height_pitch_angle(
+                action_executer.handle_l, 
+                action_executer.handle_r, 
+                action_executer.add_data_1, 
+                body_distance, 
+                pitch_angle
+            )
+
             result = locator.find_drinks(drink_type, quantity, "auto")
             print(f"查找结果: {result['message']}")
             if result["success"]:
@@ -412,6 +430,8 @@ def interactive_mode():
         elif choice == "4":
             print("机器人将会移动到拍摄处")
             input("准备好后请按回车确认: ")
+            action_executer.hand_l.setpos(600,600,600,600,600,0)
+            action_executer.hand_r.setpos(600,600,600,600,600,0)
             action_executer.move_to_photoshop()
             print("机器人已移动到拍摄处")
 

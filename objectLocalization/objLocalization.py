@@ -62,12 +62,14 @@ class ObjectLocalization:
         """初始化对象定位类"""
         self.obj_name = None
         self.num = None
+        load_layer_mapping()
         base_path = os.path.join("objectLocalization", "objectDectection")
         self.locator = DrinkShelfLocator(
             model_path=os.path.join(base_path, "weights/yoloe-11l-seg.pt"),
             reference_dir=os.path.join(base_path, "reference_images"),
             template_dir=os.path.join(base_path, "position_templates"),
-            camera_id=0
+            camera_id=0,
+            config_dir="objectLocalization/objectDectection/config"                    # 配置文件目录
         )
     
     def get_layer_number(self, json_file_path=None, obj_name=None, num=None):

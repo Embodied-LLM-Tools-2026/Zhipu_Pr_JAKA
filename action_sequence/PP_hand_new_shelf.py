@@ -62,9 +62,9 @@ def init_robot(handle_l, handle_r, add_data, hand_l, hand_r):
     # 初始化右臂
     x5.movj(handle_r, INIT_JOINT_R, add_data)
     x5.wait_move_done(handle_r)
-    hand_r.setpos(600,600,600,600,600,0)
-    time.sleep(1)
-    hand_l.setpos(600,600,600,600,600,0)
+    hand_r.setpos(1000,1000,1000,1000,1000,0)
+    # time.sleep(1)
+    hand_l.setpos(1000,1000,1000,1000,1000,0)
     time.sleep(1)
 
 def move_to_shelf():
@@ -1039,7 +1039,7 @@ def place_left(handle_L,handle_R,hand_l,hand_r,add_data):
                         j5 = 27.359, j6 = -32.393, e1 = 120.629, e2 = -0.017, e3 = 0.021)
     x5.movj(handle_L, pick_2, add_data)
     hand_l.setpos(1000,1000,1000,1000,1000,0)
-    x5.wait_move_done(handle_R)
+    x5.wait_move_done(handle_L)
 
     # time.sleep(1)
 

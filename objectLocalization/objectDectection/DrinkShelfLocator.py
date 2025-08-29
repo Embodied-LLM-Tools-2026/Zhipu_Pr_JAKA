@@ -143,8 +143,8 @@ class PositionCalibrator:
             # 过滤掉太小的区域
             area = cv2.contourArea(contour)
             # 晒除掉面积较小的残缺的识别到的掩码块（这些掩码块大部分都是错检部分） # TODO: 测试
-            if area < 100:  
-                continue
+            # if area < 100:  
+            #     continue
             
             # 创建该位置的独立掩码
             position_mask = np.zeros_like(mask)
@@ -439,8 +439,8 @@ class DrinkFinder:
         for i, contour in enumerate(contours):
             # 过滤掉太小的区域
             area = cv2.contourArea(contour)
-            if area < 100:  # 最小面积阈值
-                continue
+            # if area < 100:  # 最小面积阈值
+            #     continue
             
             
             # 创建该位置的独立mask
@@ -769,11 +769,11 @@ class DrinkFinder:
         base_translation = template_center_mean - current_center_mean
         
         # 蒙特卡洛搜索参数范围
-        angle_std = 15.0  # 角度标准差（度）
-        translation_std = 20.0  # 平移标准差（像素）
+        angle_std = 2.0  # 角度标准差（度）
+        translation_std = 10.0  # 平移标准差（像素）
         
-        # 执行100次蒙特卡洛采样
-        for iteration in range(100):
+        # 执行50次蒙特卡洛采样
+        for iteration in range(50):
             
             # 随机采样变换参数
             # 角度：正态分布，均值0，标准差15度
@@ -1048,9 +1048,9 @@ class DrinkShelfLocator:
                 save_path=f"search_{drink_type}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jpg"
             )
             
-            print("start sleep")
-            import time
-            time.sleep(10)
+            # print("start sleep")
+            # import time
+            # time.sleep(1)
             # 2. 分割当前图像中的目标饮料
             
             visual_prompts = self.get_visual_prompts(drink_type)

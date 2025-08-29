@@ -1,5 +1,5 @@
 import multiprocessing as mp
-import copy
+import time
 import os, sys
 from voice.config import Config
 
@@ -83,6 +83,13 @@ class ActionExecuter:
             # self.move_to_coffee_machine_and_make_coffee = move_to_coffee_machine_and_make_coffee
             # self.get_coffee_and_serve = get_coffee_and_serve
             self.rotate_head_to_angle = rotate_head_to_angle
+
+            self.grab_height_mapping = {
+                "水": -4,
+                "奶茶": 100,
+                "可乐": 250,
+                "雪碧": 450
+            }
             
             print(f"已连接到机器人: {robot_ip_left} 和 {robot_ip_right}")
             self.init_robot(self.handle_l, self.handle_r, self.add_data_1, self.hand_l, self.hand_r)
@@ -159,14 +166,18 @@ class ActionExecuter:
                 self.move_to_pick_height_pitch_angle(
                     self.handle_l, self.handle_r, self.add_data_1, body_distance, head_angle
                 )
+                self.hand_r.setpos(600,600,600,600,600,0)
+                self.hand_l.setpos(600,600,600,600,600,0)
                 print("到达对应层数")
             else:  # 到达对应位置
+                self.hand_r.setpos(1000,1000,1000,1000,1000,0)
+                self.hand_l.setpos(1000,1000,1000,1000,1000,0)
                 self.move_to_shelf()
                 self.move_to_pick_height_pitch_angle(
                     self.handle_l, self.handle_r, self.add_data_1, body_distance, head_angle
                 )
                 # 检查layer_number和drink_id是否在有效范围内
-                if isinstance(layer_number, int) and 1 <= layer_number <= 5 and isinstance(drink_id, int) and 1 <= drink_id <= 5:
+                if isinstance(layer_number, int) and 1 <= layer_number <= 5 and isinstance(drink_id, int) and 1 <= drink_id <= 6:
                     # 动态调用pick函数
                     pick_function_name = f"pick_{layer_number}_{drink_id}"
                     if hasattr(self, pick_function_name):
@@ -177,6 +188,10 @@ class ActionExecuter:
                             self.hand_l,
                             self.hand_r,
                             self.add_data_1,
+                        )
+                        time.sleep(1)
+                        self.move_to_pick_height_pitch_angle(
+                            self.handle_l, self.handle_r, self.add_data_1, height=100, pitch_angle=0
                         )
                         self.back_bar_station()
                         if drink_id in (1,2,3):
@@ -201,6 +216,7 @@ class ActionExecuter:
                 else:
                     print(f"无效的参数：layer_number={layer_number}, drink_id={drink_id}")
                     return False
+                time.sleep(1)
                 self.init_robot(self.handle_l, self.handle_r, self.add_data_1, self.hand_l, self.hand_r)
                 print("到达对应位置")
             return True
