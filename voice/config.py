@@ -15,6 +15,8 @@ class Config:
     ZAI_API_KEY = os.getenv("ZAI_API_KEY")
     # VLM_NAME = "qwen3-vl-flash"
     VLM_NAME = "qwen3-vl-plus"
+    ZERO_GRASP_CAMERA_CFG = os.getenv("ZEROGRASP_CAMERA_CFG")
+    ZERO_GRASP_WS_URL = os.getenv("ZEROGRASP_WS_URL")
     # 机器人默认配置
     ROBOT_IP_LEFT = "192.168.1.9"
     ROBOT_IP_RIGHT = "192.168.1.10"

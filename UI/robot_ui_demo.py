@@ -1,6 +1,6 @@
-import io, os, threading, time, base64, random
+import io, os, threading, time, base64, random, math
 from pathlib import Path
-from typing import List, Tuple, Optional, Any
+from typing import List, Tuple, Optional, Any, Dict, Callable
 
 import numpy as np
 from PIL import Image, ImageDraw
@@ -8,6 +8,8 @@ from fastapi import FastAPI, Response, Query
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
+
+from tools.zerograsp_wrapper import get_shared_zerograsp_runner
 
 # 尝试使用摄像头；若不可用则用占位图
 try:
@@ -340,6 +342,18 @@ class OrbbecStreamBase:
                 print(f"⚠️  Stream '{self.name}' loop error: {exc}")
                 time.sleep(0.05)
 
+    @staticmethod
+    def _to_serializable(value: Any) -> Any:
+        if isinstance(value, np.ndarray):
+            return value.tolist()
+        if isinstance(value, (np.floating, np.integer)):
+            return value.item()
+        if isinstance(value, dict):
+            return {k: OrbbecStreamBase._to_serializable(v) for k, v in value.items()}
+        if isinstance(value, (list, tuple)):
+            return [OrbbecStreamBase._to_serializable(v) for v in value]
+        return value
+
     def get_jpeg_bytes(self, w: Optional[int] = None, h: Optional[int] = None) -> bytes:
         width = w or FRONT_WIDTH
         height = h or FRONT_HEIGHT
@@ -419,34 +433,232 @@ class OrbbecStreamBase:
             return out
 
         bbox_pixels = [(ix, iy) for ix in range(x_min, x_max) for iy in range(y_min, y_max)]
-        coordinate_3d = project_pixels(bbox_pixels)
-        if not coordinate_3d:
+        object_points = project_pixels(bbox_pixels)
+        if not object_points:
+            return None
+        cx = (x_min + x_max) // 2
+        cy = (y_min + y_max) // 2
+        object_points_np = np.asarray(object_points)
+        coordinate_3d_array = np.mean(object_points_np, axis=0)
+        obj_center_depth = float(coordinate_3d_array[2])
+
+        support_points = self._collect_support_points(
+            depth_data=depth_data,
+            depth_intrinsics=depth_intrinsics,
+            extrinsic=extrinsic,
+            depth_width=depth_width,
+            depth_height=depth_height,
+            bbox=(x_min, x_max, y_min, y_max),
+            center_px=(cx, cy),
+            center_depth=obj_center_depth,
+            project_pixels=project_pixels,
+        )
+
+        return {
+            "center": coordinate_3d_array,
+            "object_points": object_points_np,
+            "support_points": support_points,
+            "bbox": (x_min, x_max, y_min, y_max),
+            "depth_width": depth_width,
+            "depth_height": depth_height,
+            "depth_data": depth_data.copy(),
+        }
+
+    def _collect_support_points(
+        self,
+        *,
+        depth_data: np.ndarray,
+        depth_intrinsics,
+        extrinsic,
+        depth_width: int,
+        depth_height: int,
+        bbox: Tuple[int, int, int, int],
+        center_px: Tuple[int, int],
+        center_depth: float,
+        project_pixels: Callable[[List[Tuple[int, int]]], List[List[float]]],
+    ) -> np.ndarray:
+        """采样目标周围的点云用于估计桌面/柜面边缘方向。"""
+        x_min, x_max, y_min, y_max = bbox
+        cx, cy = center_px
+        base_w = max(8, self.obj_range_width // 2)
+        base_h = max(6, self.obj_range_height // 2)
+        depth_threshold = max(80.0, abs(center_depth) * 0.15)
+
+        sampled_pixels: List[Tuple[int, int]] = []
+        for scale in (1.0, 1.5, 2.0, 2.5):
+            half_w = int(base_w * scale)
+            half_h = int(base_h * scale)
+            stride = max(1, int(self.obj_range_stride * scale))
+            for ix in range(cx - half_w, cx + half_w + 1, stride):
+                for iy in range(cy - half_h, cy + half_h + 1, stride):
+                    if x_min <= ix < x_max and y_min <= iy < y_max:
+                        continue  # 跳过目标内部像素
+                    if 0 <= ix < depth_width and 0 <= iy < depth_height:
+                        depth_val = float(depth_data[iy, ix])
+                        if depth_val <= 0:
+                            continue
+                        if abs(depth_val - center_depth) <= depth_threshold:
+                            sampled_pixels.append((ix, iy))
+
+        # 限制采样数量，避免后续拟合过慢
+        max_samples = 1200
+        if len(sampled_pixels) > max_samples:
+            sampled_pixels = random.sample(sampled_pixels, max_samples)
+
+        support_points = project_pixels(sampled_pixels)
+        if not support_points:
+            return np.empty((0, 3))
+        return np.asarray(support_points)
+
+    def _fit_edge_orientation(self, points: np.ndarray) -> Dict[str, Any]:
+        """基于采样点估计桌/柜边缘方向，返回斜率及置信度。"""
+        result: Dict[str, Any] = {
+            "slope": None,
+            "angle": None,
+            "confidence": 0.0,
+            "method": None,
+            "inlier_count": 0,
+            "total_points": int(points.shape[0]) if points is not None else 0,
+            "residual": None,
+        }
+        if points is None or len(points) < 8:
+            return result
+
+        x = points[:, 0]
+        z = points[:, 2]
+        pts = np.column_stack([x, z])
+        total = len(pts)
+
+        best_inliers = 0
+        best_model = None
+        rng = random.Random(42)
+        residual_threshold = 0.02  # 2cm 容差
+        max_trials = 120
+        min_inliers = max(10, total // 6)
+
+        for _ in range(max_trials):
+            if total < 2:
+                break
+            i1, i2 = rng.sample(range(total), 2)
+            (x1, z1), (x2, z2) = pts[i1], pts[i2]
+            denom = (x2 - x1)
+            if abs(denom) < 1e-6:
+                slope = np.sign(z2 - z1) * 1e6  # 接近竖直
+                intercept = z1 - slope * x1
+            else:
+                slope = (z2 - z1) / denom
+                intercept = z1 - slope * x1
+
+            residuals = np.abs(z - (slope * x + intercept))
+            inlier_mask = residuals < residual_threshold
+            inlier_count = int(inlier_mask.sum())
+            if inlier_count > best_inliers:
+                best_inliers = inlier_count
+                best_model = (slope, intercept, inlier_mask)
+                if best_inliers > total * 0.85:
+                    break
+
+        if best_model and best_inliers >= min_inliers:
+            slope_init, _, inlier_mask = best_model
+            inlier_pts = pts[inlier_mask]
+            slope, intercept = np.polyfit(inlier_pts[:, 0], inlier_pts[:, 1], 1)
+            residuals = np.abs(inlier_pts[:, 1] - (slope * inlier_pts[:, 0] + intercept))
+            rms = float(np.sqrt(np.mean(residuals**2))) if len(residuals) else None
+            angle = math.atan(slope)
+            result.update(
+                {
+                    "slope": float(slope),
+                    "angle": float(angle),
+                    "confidence": best_inliers / total,
+                    "method": "ransac",
+                    "inlier_count": best_inliers,
+                    "residual": rms,
+                }
+            )
+            return result
+
+        # RANSAC失败时，退化为PCA主方向
+        centered = pts - pts.mean(axis=0, keepdims=True)
+        cov = centered.T @ centered / max(total - 1, 1)
+        eig_vals, eig_vecs = np.linalg.eigh(cov)
+        principal = eig_vecs[:, np.argmax(eig_vals)]
+        dx, dz = principal
+        if abs(dx) < 1e-6:
+            slope = np.sign(dz) * 1e6
+        else:
+            slope = dz / dx
+        angle = math.atan(slope)
+        result.update(
+            {
+                "slope": float(slope),
+                "angle": float(angle),
+                "confidence": 0.2,
+                "method": "pca",
+                "inlier_count": total,
+            }
+        )
+        return result
+
+    def _run_zero_grasp_inference(
+        self,
+        *,
+        transform_result: Dict[str, Any],
+        bbox: Tuple[int, int, int, int],
+    ) -> Optional[Dict[str, Any]]:
+        ws_url = os.getenv("ZEROGRASP_WS_URL")
+        if not ws_url:
+            return None
+        runner = get_shared_zerograsp_runner(
+            ws_url=ws_url,
+            camera_cfg_path=os.getenv("ZEROGRASP_CAMERA_CFG"),
+        )
+        if runner is None:
             return None
 
-        coordinate_3d_array = np.mean(coordinate_3d, axis=0)
-        obj_center_depth = coordinate_3d_array[2]
+        depth_data = transform_result.get("depth_data")
+        if depth_data is None or depth_data.size == 0:
+            return None
 
-        half_w = self.obj_range_width // 2
-        half_h = self.obj_range_height // 2
-        cx, cy = self.obj_pixel_center
-        candidate_pixels: List[Tuple[int, int]] = []
-        for ix in range(cx - half_w, cx + half_w, self.obj_range_stride):
-            for iy in range(cy - half_h, cy + half_h, self.obj_range_stride):
-                if x_min <= ix < x_max and y_min <= iy < y_max:
-                    continue
-                if 0 <= ix < depth_width and 0 <= iy < depth_height:
-                    depth = float(depth_data[iy, ix])
-                    if depth > 0 and abs(depth - obj_center_depth) < self.obj_depth_threshold:
-                        candidate_pixels.append((ix, iy))
+        rgb_frame = None
+        with self.lock:
+            if isinstance(self.frame, np.ndarray):
+                rgb_frame = self.frame.copy()
+        if rgb_frame is None:
+            return None
 
-        coordinate_3d_range = project_pixels(candidate_pixels)
-        coordinate_3d_range.append(coordinate_3d_array.tolist())
-        k= (
-            fit_line_ols(np.asarray(coordinate_3d_range))
-            if len(coordinate_3d_range) >= 2
-            else None
-        )
-        return coordinate_3d_array, k
+        depth_height, depth_width = depth_data.shape
+        if rgb_frame.shape[0] != depth_height or rgb_frame.shape[1] != depth_width:
+            if cv2 is None:
+                return None
+            rgb_frame = cv2.resize(
+                rgb_frame, (depth_width, depth_height), interpolation=cv2.INTER_AREA
+            )
+
+        mask = np.zeros((depth_height, depth_width), dtype=np.uint8)
+        x_min, x_max, y_min, y_max = bbox
+        x_min = max(0, int(x_min))
+        x_max = min(depth_width, int(x_max))
+        y_min = max(0, int(y_min))
+        y_max = min(depth_height, int(y_max))
+        if x_min >= x_max or y_min >= y_max:
+            return None
+        mask[y_min:y_max, x_min:x_max] = 255
+
+        try:
+            result = runner.infer(
+                rgb_image=rgb_frame.astype(np.uint8, copy=False),
+                depth_image=depth_data.astype(np.uint16, copy=False),
+                mask_image=mask,
+            )
+        except Exception as exc:  # noqa: B902
+            print(f"[ZeroGrasp] Runtime error: {exc}")
+            return None
+
+        if result is None:
+            return None
+        if isinstance(result, dict):
+            return OrbbecStreamBase._to_serializable(result)
+        return {"raw": OrbbecStreamBase._to_serializable(result)}
 
 
     def coordinate_in_depth_frame(self,bbox : List[int]):
@@ -466,9 +678,37 @@ class OrbbecStreamBase:
         if depth_data_size != width * height * 2:
             print("Error: depth frame data size does not match")
             return None
-        obj_center_3d , k  = self.transform_points(color_frame, depth_frame,bbox)
-        tune_angle = np.arctan(k)
-        return obj_center_3d.tolist(),tune_angle
+        transform_result = self.transform_points(color_frame, depth_frame, bbox)
+        if transform_result is None:
+            return None
+
+        obj_center_3d = transform_result["center"]
+        support_points = transform_result["support_points"]
+
+        edge_info = self._fit_edge_orientation(support_points)
+        tune_angle = edge_info.get("angle")
+        if tune_angle is None:
+            tune_angle_value = 0.0
+        else:
+            tune_angle_value = float(tune_angle)
+
+        zerograsp_result = self._run_zero_grasp_inference(
+            transform_result=transform_result,
+            bbox=transform_result["bbox"],
+        )
+
+        result_payload = {
+            "obj_center_3d": obj_center_3d.tolist(),
+            "tune_angle": tune_angle_value,
+            "edge_confidence": edge_info.get("confidence"),
+            "edge_method": edge_info.get("method"),
+            "edge_inliers": edge_info.get("inlier_count"),
+            "edge_total_points": edge_info.get("total_points"),
+            "edge_residual": edge_info.get("residual"),
+        }
+        if zerograsp_result is not None:
+            result_payload["zerograsp"] = zerograsp_result
+        return result_payload
 
 def fit_line_ols(xy: np.ndarray):
     """xy: (N,3) -> return dict: {'type':'slope','k':k,'b':b} or {'type':'vertical','x0':x0}"""
@@ -1393,10 +1633,12 @@ async def api_vlm_result(request: Request):
       src = CAMERAS.get("front")
       if src:
           stream = src.streams.get("color")
-          obj_center_3d , tune_angle= stream.coordinate_in_depth_frame(bbox)
-
-          return {"ok": True, "obj_center_3d": obj_center_3d,"tune_angle":tune_angle}
-  return {"ok": True, "obj_center_3d": None,"tune_angle":None}
+          pose_info = stream.coordinate_in_depth_frame(bbox) if stream else None
+          if pose_info:
+              response_payload = {"ok": True}
+              response_payload.update(pose_info)
+              return response_payload
+  return {"ok": True, "obj_center_3d": None, "tune_angle": None}
 
 # VLM结果获取接口（UI端轮询）
 @APP.get("/api/vlm/latest")

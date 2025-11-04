@@ -3,7 +3,7 @@ import os
 import sys
 import time
 import math
-from typing import Optional, Dict, Any, List, Tuple
+from typing import Optional, Dict, Any, List, Tuple, Callable
 import requests
 from PIL import Image, ImageDraw
 import numpy as np
@@ -284,12 +284,20 @@ class RobotCommandProcessor:
 class TaskProcessor:
     """任务处理器"""
     
-    def __init__(self):
+    def __init__(self, navigator=None):
+        self.navigator = navigator
         self.vlm_api_key = os.getenv("Zhipu_real_demo_API_KEY")
         self.vlm_model = Config.VLM_NAME
         self.target_resolution = (1000, 1000)
         self.target_distance = 0.5  # 目标距离，单位米
         self.moved_to_center = False
+        self.action_registry: Dict[str, Callable[..., bool]] = {}
+        self._register_default_actions()
+        # 阈值与策略配置
+        self.search_distance_threshold = 3.0  # 阈值（米）：超过则继续探索靠近
+        self.default_forward_step = 0.4       # 默认前进步长（米）
+        self.max_forward_attempts = 8         # 最大前进次数，防止撞击
+        self.max_total_rotation_deg = 720.0   # 最大搜索旋转角度
         # ========================================
         # 摄像头标定参数（2K 80° 摄像头）
         # ========================================
@@ -303,6 +311,214 @@ class TaskProcessor:
         # 视场角参数
         self.camera_fov_h_deg = 80.0  # 水平视场角（度）
         self.camera_fov_h_rad = math.radians(self.camera_fov_h_deg)  # 转换为弧度
+
+    def _register_default_actions(self):
+        """注册默认的原子动作函数，供VLM按需组合调用。"""
+        self.action_registry = {
+            "rotate_chassis": self._action_rotate_chassis,
+            "move_target_to_center": self._action_move_target_to_center,
+            "move_forward": self._action_move_forward,
+            "finalize_target_pose": self._action_finalize_target_pose,
+        }
+
+    def register_action(self, name: str, handler: Callable[..., bool]) -> None:
+        """允许外部扩展动作集合。"""
+        self.action_registry[name] = handler
+
+    def execute_action(
+        self,
+        action: Dict[str, Any],
+        context: Dict[str, Any],
+        navigator=None,
+    ) -> bool:
+        """执行单个动作，失败时返回False并记录日志。"""
+        navigator = navigator or self.navigator
+        name = action.get("name")
+        if not name:
+            log_warning("⚠️ 动作缺少 name 字段，已跳过")
+            return False
+
+        handler = self.action_registry.get(name)
+        if handler is None:
+            log_warning(f"⚠️ 未注册的动作: {name}")
+            return False
+
+        params = action.get("params") or {}
+        try:
+            success = bool(handler(context=context, navigator=navigator, **params))
+            if success:
+                log_success(f"✅ 动作执行完成: {name}")
+            else:
+                log_warning(f"⚠️ 动作执行未成功: {name}")
+            return success
+        except TypeError as type_err:
+            log_error(f"❌ 动作参数错误 {name}: {type_err}")
+            return False
+        except Exception as exc:
+            log_error(f"❌ 执行动作 {name} 异常: {exc}")
+            return False
+
+    def _action_rotate_chassis(
+        self,
+        *,
+        angle_deg: float = 30.0,
+        context: Dict[str, Any],
+        navigator=None,
+    ) -> bool:
+        """调用底盘旋转动作，默认每次旋转30度。"""
+        navigator = navigator or self.navigator
+        if navigator is None:
+            log_error("❌ rotate_chassis 动作失败：缺少导航控制器")
+            return False
+        try:
+            turn_angle = math.radians(float(angle_deg))
+        except (TypeError, ValueError):
+            log_warning(f"⚠️ 旋转角度非法: {angle_deg}")
+            return False
+        return self.control_turn_around(navigator, turn_angle)
+
+    def _action_move_target_to_center(
+        self,
+        *,
+        context: Dict[str, Any],
+        navigator=None,
+        bbox: Optional[List[float]] = None,
+        image_size: Optional[List[int]] = None,
+        tolerance_px: Optional[float] = None,
+    ) -> bool:
+        """根据当前检测结果将目标移至视野中央。"""
+        navigator = navigator or self.navigator
+        bbox = bbox or context.get("bbox")
+        image_size = image_size or context.get("image_size")
+        if not bbox or not image_size:
+            log_warning("⚠️ move_target_to_center 需要 bbox 和 image_size")
+            return False
+        return self.control_chassis_to_center(
+            bbox,
+            image_size,
+            navigator=navigator,
+            tolerance_px=tolerance_px,
+        )
+
+    def _action_move_forward(
+        self,
+        *,
+        context: Dict[str, Any],
+        navigator=None,
+        distance: Optional[float] = None,
+    ) -> bool:
+        """控制底盘直线前进或后退。"""
+        navigator = navigator or self.navigator
+        if distance is None:
+            vlm_result = context.get("vlm_result") or {}
+            distance = vlm_result.get("forward_distance", 0.0)
+        try:
+            distance_val = float(distance)
+        except (TypeError, ValueError):
+            log_warning(f"⚠️ move_forward 距离参数非法: {distance}")
+            return False
+        return self.control_chassis_forward(distance_val, navigator=navigator)
+
+    def _action_finalize_target_pose(
+        self,
+        *,
+        context: Dict[str, Any],
+        navigator=None,
+    ) -> bool:
+        """根据前端返回的三维坐标调整底盘最终位姿。"""
+        navigator = navigator or self.navigator
+        if navigator is None:
+            log_error("❌ finalize_target_pose 动作失败：缺少导航控制器")
+            return False
+
+        frontend_response = context.get("frontend_response")
+        if frontend_response is None:
+            log_warning("⚠️ finalize_target_pose 缺少三维识别结果，尝试重新推送检测信息")
+            frontend_response = self._push_detection_to_frontend(context)
+            if frontend_response is None:
+                return False
+            context["frontend_response"] = frontend_response
+
+        response_data = frontend_response.get("data") if isinstance(frontend_response, dict) else {}
+        if not response_data:
+            log_error("❌ 前端返回数据为空，无法完成最终对位")
+            return False
+
+        try:
+            cam_obj_center_3d = response_data.get("obj_center_3d", [0.0, 0.0, 0.0])
+            tune_angle = response_data.get("tune_angle", 0.0)
+            vec = np.array([cam_obj_center_3d.copy() + [1.0]])
+            T_mat = np.array(
+                [
+                    [0, -1, 0],
+                    [0, 0, -1],
+                    [1, 0, 0],
+                    [0, 180, -50],
+                ]
+            )
+
+            jaka_obj_center_3d = vec @ T_mat
+            jaka_obj_center_3d_list = jaka_obj_center_3d.tolist()
+
+            pose = navigator.get_current_pose()
+            X_OA = pose["x"] * 1000
+            Y_OA = pose["y"] * 1000
+            theta_OA = pose["theta"]
+            X_AB, Y_AB, Z_AB = jaka_obj_center_3d.ravel()
+            X_OB = X_OA + (X_AB * math.cos(theta_OA) - Y_AB * math.sin(theta_OA))
+            Y_OB = Y_OA + (X_AB * math.sin(theta_OA) + Y_AB * math.cos(theta_OA))
+            target_theta = theta_OA + tune_angle
+            target_x = (X_OB - self.target_distance * 1000 * math.cos(target_theta)) / 1000
+            target_y = (Y_OB - self.target_distance * 1000 * math.sin(target_theta)) / 1000
+
+            log_info(
+                f"🎯 计算底盘目标位置: ({target_x:.2f}, {target_y:.2f}), 目标朝向 θ={target_theta:.2f}rad"
+            )
+            log_info(f"🎯 目标物体 3D 中心点(jaka坐标): {jaka_obj_center_3d_list}")
+            log_info(f"🎯 垂直目标需要转向 : {tune_angle * 180 / np.pi} 度")
+
+            success = navigator.move_to_position(target_theta, target_x, target_y)
+            if success:
+                context["task_completed"] = True
+                return True
+            return False
+        except Exception as exc:
+            log_error(f"❌ finalize_target_pose 计算失败: {exc}")
+            return False
+
+    def _push_detection_to_frontend(self, context: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """将检测结果推送给前端，并返回响应数据。"""
+        import requests
+
+        payload = context.get("frontend_payload")
+        if payload is None:
+            log_warning("⚠️ _push_detection_to_frontend 缺少 payload")
+            return None
+        try:
+            response = requests.post(
+                "http://127.0.0.1:8000/api/vlm/result",
+                json=payload,
+                timeout=3,
+            )
+            data = response.json()
+            edge_conf = data.get("edge_confidence")
+            if edge_conf is not None:
+                log_info(f"🧭 桌面/柜面夹角置信度: {edge_conf:.2f}")
+            zerograsp_info = data.get("zerograsp")
+            if zerograsp_info:
+                summary = zerograsp_info
+                if isinstance(zerograsp_info, dict):
+                    summary = {
+                        key: zerograsp_info[key]
+                        for key in list(zerograsp_info.keys())[:5]
+                    }
+                log_info(f"🖐️ ZeroGrasp 输出: {summary}")
+            result = {"payload": payload, "data": data}
+            log_success("✓ 标注结果已推送前端")
+            return result
+        except Exception as exc:
+            log_error(f"❌ 推送VLM结果至前端失败: {exc}")
+            return None
 
     def capture_image(self, cam_name: str = "front") -> str:
         import requests
@@ -364,7 +580,94 @@ class TaskProcessor:
 
         return info
 
-    def control_chassis_to_center(self, bbox, image_size, navigator=None):
+    def _build_search_prompt(
+        self,
+        target_name: str,
+        step: int,
+        max_iter: int,
+        last_action_feedback: List[Dict[str, Any]],
+        image_size: Tuple[int, int],
+    ) -> str:
+        """构造探索阶段的VLM提示词。"""
+        available_actions_lines = [
+            "可调用的原子动作函数（一次最多返回两个动作，按顺序执行后会重新观测）：",
+            "1. rotate_chassis(angle_deg): 控制底盘原地旋转，正角度左转，负角度右转。",
+            "2. move_forward(distance): 底盘沿当前朝向前进(>0)或后退(<0)指定米数。",
+            "3. move_target_to_center(tolerance_px): 将目标移至画面中心，tolerance默认50像素。",
+            "4. finalize_target_pose(): 当目标已近在咫尺且抓取入口正面时调用，会触发深度定位。",
+        ]
+        last_actions_str = json.dumps(last_action_feedback, ensure_ascii=False)
+        prompt_parts = [
+            f"你是一个服务机器人，任务是抓取“{target_name}”。当前处于探索阶段。",
+            f"当前是第 {step} 步（最多 {max_iter} 步）。上一步动作反馈: {last_actions_str}",
+            f"图片分辨率: {image_size[0]}x{image_size[1]}。",
+            "请分析图像目标情况并估计目标与机器人的距离range_estimate（米，允许近似）。",
+            f"当 range_estimate > {self.search_distance_threshold}m 或没有看到目标时，请优先通过旋转或小步前进来寻找目标。",
+            f"当 range_estimate <= {self.search_distance_threshold}m 且目标清晰居中时，可建议调用 finalize_target_pose。",
+            *available_actions_lines,
+            "返回严格的JSON：",
+            "{",
+            '  "found": true/false,',
+            '  "bbox": [x_min, y_max, x_max, y_min],',
+            '  "image_size": [width, height],',
+            '  "range_estimate": number,  // 估计距离（米），若无法估计给出-1',
+            '  "confidence": number,      // 0-1',
+            '  "analysis": "<简短中文分析>",',
+            '  "actions": [',
+            '    {"name": "<动作名>", "params": {...}, "reason": "<原因描述>"}',
+            "  ]",
+            "}",
+            "如果未找到目标，请至少给出一个 rotate_chassis 动作；动作数组最多两个。",
+        ]
+        return "\n".join(prompt_parts)
+
+    def _build_approach_prompt(
+        self,
+        target_name: str,
+        step: int,
+        max_iter: int,
+        last_action_feedback: List[Dict[str, Any]],
+        image_size: Tuple[int, int],
+    ) -> str:
+        """构造靠近阶段的VLM提示词。"""
+        available_actions_lines = [
+            "可调用的原子动作函数：",
+            "1. move_target_to_center(tolerance_px): 将目标调整到画面中心，默认容差50像素。",
+            "2. move_forward(distance): 如果仍需微小前进，可设置0.1-0.4米的小步。",
+            "3. finalize_target_pose(): 当姿态合适时调用，触发精确定位并结束探索。",
+        ]
+        last_actions_str = json.dumps(last_action_feedback, ensure_ascii=False)
+        prompt_parts = [
+            f"你是一个服务机器人，任务是抓取“{target_name}”。当前已接近目标，处于精对位阶段。",
+            f"当前是第 {step} 步（最多 {max_iter} 步）。上一步动作反馈: {last_actions_str}",
+            f"图片分辨率: {image_size[0]}x{image_size[1]}。",
+            "请分析目标是否居中、距离是否适合抓取，并估计range_estimate（米）。",
+            "如果目标已经正面、居中且距离小于等于阈值，请优先建议 finalize_target_pose。",
+            "如需微调，可建议 move_target_to_center 或 move_forward 小步靠近。",
+            *available_actions_lines,
+            "返回严格JSON：",
+            "{",
+            '  "found": true/false,',
+            '  "bbox": [x_min, y_max, x_max, y_min],',
+            '  "image_size": [width, height],',
+            '  "range_estimate": number,',
+            '  "confidence": number,',
+            '  "analysis": "<简短中文分析>",',
+            '  "actions": [',
+            '    {"name": "<动作名>", "params": {...}, "reason": "<原因描述>"}',
+            "  ]",
+            "}",
+            "动作最多两个，若判断可以抓取请确保第一个动作是 finalize_target_pose。",
+        ]
+        return "\n".join(prompt_parts)
+
+    def control_chassis_to_center(
+        self,
+        bbox,
+        image_size,
+        navigator=None,
+        tolerance_px: Optional[float] = None,
+    ):
         """
         控制底盘将目标移至视野中心
         
@@ -416,8 +719,8 @@ class TaskProcessor:
             # 其中 fx 是摄像头焦距（1000×1000 分辨率下）
             
             # 判断是否已对齐（容差 50 像素）
-            tolerance_px = 50.0
-            if abs(dx_pixels) < tolerance_px and abs(dy_pixels) < tolerance_px:
+            tolerance = tolerance_px if tolerance_px is not None else 50.0
+            if abs(dx_pixels) < tolerance and abs(dy_pixels) < tolerance:
                 print(f"✅ [底盘控制] 目标已在视野中心，无需调整")
                 log_success(f"✅ 目标已在视野中心")
                 self.moved_to_center = False
@@ -646,30 +949,43 @@ class TaskProcessor:
             "url": self._path_to_static_url(annotated_path),
         }
 
+
+
     def process_grasp_task(self, target_name: str, navigator, cam_name: str = "front") -> dict:
-        """执行抓取任务视觉-控制-反馈循环。"""
+        """执行抓取任务视觉-控制-反馈循环，由VLM在探索/精对位两阶段组合原子动作。"""
         max_iter = 20
         log_info(f"🤖 开始抓取任务: 目标={target_name}")
-        
-        for step in range(max_iter):
-            print(f"[Step {step + 1}] 采集图片并VLM推理...")
-            log_info(f"[Step {step + 1}/{max_iter}] 采集图片...")
+        last_action_feedback: List[Dict[str, Any]] = []
+        phase = "search"  # search 或 approach
+        forward_attempts = 0
+        total_rotation_deg = 0.0
+
+        def compute_forward_step(range_estimate: Optional[float]) -> float:
+            if range_estimate is None or range_estimate <= 0:
+                return self.default_forward_step
+            gap = max(0.0, range_estimate - self.search_distance_threshold)
+            step = min(max(gap, 0.2), 0.6)
+            return max(0.2, step)
+
+        for step in range(1, max_iter + 1):
+            print(f"[Step {step}] 采集图片并VLM推理...")
+            log_info(f"[Step {step}/{max_iter}] 采集图片...")
 
             image_path = self.capture_image(cam_name)
             if not image_path:
-                log_error(f"❌ 采集图片失败")
+                log_error("❌ 采集图片失败")
                 return {"success": False, "reason": "采集图片失败"}
-            
-            log_success(f"✓ 图片采集成功")
-            
+
+            log_success("✓ 图片采集成功")
+
             prep_info = self._prepare_image_for_vlm(image_path)
             processed_image_path = prep_info["path"]
             original_size = prep_info["original_size"]
             actual_size = prep_info["processed_size"]
-            
+
             if prep_info["resized"]:
                 log_info(f"📐 图片尺寸调整: {original_size} → {actual_size}")
-            
+
             if actual_size == [0, 0]:
                 try:
                     with Image.open(processed_image_path) as img_check:
@@ -678,48 +994,20 @@ class TaskProcessor:
                     log_error(f"❌ 读取图片失败: {open_err}")
                     return {"success": False, "reason": "读取图片失败"}
 
-            log_info(f"📤 上传图片到VLM...")
-            upload_start = time.time()
+            prompt = (
+                self._build_search_prompt(target_name, step, max_iter, last_action_feedback, tuple(actual_size))
+                if phase == "search"
+                else self._build_approach_prompt(target_name, step, max_iter, last_action_feedback, tuple(actual_size))
+            )
+
+            log_info("🧠 VLM推理中...")
+            decision_start = time.time()
             try:
                 image_url = upload_file_and_get_url(
                     api_key=self.vlm_api_key,
                     model_name=self.vlm_model,
                     file_path=processed_image_path,
                 )
-            except Exception as upload_err:
-                log_error(f"❌ 上传图片失败: {upload_err}")
-                return {"success": False, "reason": "图片上传失败"}
-
-            if not image_url:
-                log_warning(f"⚠️ 上传结果为空，使用兜底图像")
-                image_url = "https://dashscope.oss-cn-beijing.aliyuncs.com/images/dog_and_girl.jpeg"
-            upload_end = time.time()
-            upload_duration = upload_end - upload_start
-            log_info(f"📤 图片上传耗时: {upload_duration:.2f} 秒")
-            log_success(f"✓ 图片上传成功")
-
-            prompt = f"""
-你是一个视觉感知机器人，当前任务是抓取物品：{target_name}。
-请根据下方图片，判断是否有目标物品，并返回如下JSON：
-{{
-  "found": true/false,
-  "bbox": [x_min, y_max, x_max, y_min],//表示目标边界框左上角和右下角坐标
-  "prepared_for_grasp": true/false,
-  "image_size": [w, h],//返回图片的实际尺寸
-  "forward_distance": d
-  
-}}
-说明：
-1. bbox时，图片的坐标原点位于图片左下角，x 轴向右，y 轴向上。
-2. 如果没有目标物品，found=false，bbox=[]。
-3. 只返回 JSON，不要额外文本。
-4. 当你认为与目标的距离适合抓取，机器人本体已经站在抓取平面跟前（身体紧挨着桌子边缘，视野中只能看到部分或完全看不到靠近侧的桌子边缘），已经可以交给抓取模块时prepared_for_grasp返回true，此时forward_distance字段应为0。
-5. forward_distance 表示底盘前进/后退的距离，单位米，建议范围-0.75-1.5米之间。
-            """
-
-            log_info(f"🧠 VLM推理中...")
-            move_decition_start = time.time()
-            try:
                 response = dashscope.MultiModalConversation.call(
                     api_key=self.vlm_api_key,
                     model=self.vlm_model,
@@ -732,95 +1020,122 @@ class TaskProcessor:
                             ],
                         }
                     ],
-                    max_tokens=200,
+                    max_tokens=400,
                     temperature=0.01,
                     response_format={"type": "json_object"},
                 )
                 content = response.output.choices[0].message.content
                 print(f"[VLM响应] {content}")
-                move_decition_end = time.time()
-                move_decition_duration = move_decition_end - move_decition_start
-                log_info(f"🧠 VLM推理动作行为耗时: {move_decition_duration:.2f} 秒")
+                decision_duration = time.time() - decision_start
+                log_info(f"🧠 决策耗时: {decision_duration:.2f} 秒")
                 if isinstance(content, list):
-                    parsed = None
-                    for item in content:
-                        if isinstance(item, dict) and "text" in item:
-                            parsed = item["text"]
-                            break
-                    if parsed is None:
-                        parsed = str(content)
+                    if content and isinstance(content[0], dict) and "text" in content[0]:
+                        result_text = content[0]["text"]
+                    else:
+                        raise ValueError("VLM返回格式异常: 非预期的列表结构")
                 elif isinstance(content, dict):
-                    parsed = content.get("text", content)
+                    if "text" in content:
+                        result_text = content["text"]
+                    else:
+                        raise ValueError("VLM返回格式异常: 字典缺少'text'")
                 else:
-                    parsed = content
+                    result_text = str(content)
 
-                if isinstance(parsed, str):
-                    result = json.loads(parsed)
-                elif isinstance(parsed, dict):
-                    result = parsed
-                else:
-                    raise ValueError("无法解析VLM返回内容")
-            except Exception as e:
-                log_error(f"❌ VLM推理失败: {e}")
+                try:
+                    result = json.loads(result_text)
+                except json.JSONDecodeError:
+                    if isinstance(result_text, dict):
+                        result = result_text
+                    else:
+                        raise ValueError("无法解析VLM返回内容")
+            except Exception as exc:
+                log_error(f"❌ VLM推理失败: {exc}")
                 return {"success": False, "reason": "VLM推理失败"}
 
-            found = result.get("found", False)
+            found = bool(result.get("found", False))
             bbox = result.get("bbox", [])
-            prepared_for_grasp = result.get("prepared_for_grasp", True)
-            reported_size = result.get("image_size")
-            if reported_size and list(reported_size) != actual_size:
-                log_warning(f"⚠️ VLM返回的图像尺寸{reported_size}与实际尺寸{actual_size}不一致")
+            confidence = float(result.get("confidence", 0))
+            range_estimate_raw = result.get("range_estimate")
+            if range_estimate_raw in (None, "", "-1"):
+                range_estimate = None
+            else:
+                try:
+                    range_estimate = float(range_estimate_raw)
+                    if range_estimate <= 0:
+                        range_estimate = None
+                except (TypeError, ValueError):
+                    range_estimate = None
+            if range_estimate is None:
+                try:
+                    fallback_distance = float(result.get("forward_distance", 0.0) or 0.0)
+                    if fallback_distance > 0:
+                        range_estimate = fallback_distance
+                except (TypeError, ValueError):
+                    range_estimate = None
+
             image_size = actual_size
             result["image_size"] = image_size
-            forward_distance = float(result.get("forward_distance", 0.5) or 0.5)
-            # if prepared_for_grasp:
-            #     log_success(f"✓ VLM探索结束，准备交给位置微调工具")
-            #     return {"success": True, "result": result, "annotated_url": ""}
 
             if found:
                 log_success(f"✓ 目标已检测到: bbox={bbox}")
             else:
-                log_warning(f"⚠️ 未检测到目标物品")
+                log_warning("⚠️ 未检测到目标物品")
+
+            context: Dict[str, Any] = {
+                "step": step,
+                "phase": phase,
+                "target_name": target_name,
+                "image_path": image_path,
+                "processed_image_path": processed_image_path,
+                "original_size": original_size,
+                "image_size": image_size,
+                "vlm_result": result,
+                "bbox": bbox,
+                "last_actions": last_action_feedback,
+                "range_estimate": range_estimate,
+                "confidence": confidence,
+            }
+
             def remap_bbox_to_original(
-                bbox: List[float],
+                bbox_local: List[float],
                 processed_size: Tuple[int, int],
-                original_size: Tuple[int, int],
+                original_size_local: Tuple[int, int],
             ) -> List[int]:
-                if not bbox or len(bbox) != 4:
+                if not bbox_local or len(bbox_local) != 4:
                     return []
 
                 proc_w, proc_h = processed_size
-                orig_w, orig_h = original_size
+                orig_w, orig_h = original_size_local
 
                 sx = orig_w / proc_w
                 sy = orig_h / proc_h
 
-                x_min, y_max, x_max, y_min = bbox
-                # 先把坐标缩放回 1280×800
+                x_min, y_max, x_max, y_min = bbox_local
                 x_min *= sx
                 x_max *= sx
                 y_min *= sy
                 y_max *= sy
 
-                # 如果后面仍要用“左上角为原点”的坐标系，就再翻一下 y 轴
                 top = y_max
                 bottom = y_min
 
                 return [int(x_min), int(top), int(x_max), int(bottom)]
-            def convert_bbox(box, size):
-                if not box or len(box) != 4:
+
+            def convert_bbox(box_local, size_local):
+                if not box_local or len(box_local) != 4:
                     return None
-                w, h = size
-                x_min, y_max, x_max, y_min = box
+                w, h = size_local
+                x_min, y_max, x_max, y_min = box_local
                 x_min = max(0, min(w, x_min))
                 x_max = max(0, min(w, x_max))
-                y1 = y_max
-                y2 = y_min
-                y1 = max(0, min(h, y1))
-                y2 = max(0, min(h, y2))
+                y1 = max(0, min(h, y_max))
+                y2 = max(0, min(h, y_min))
                 return [int(x_min), int(y1), int(x_max), int(y2)]
 
             boxes_for_ui: List[List[int]] = []
+            mapped_bbox: List[int] = []
+            annotated_url = self._path_to_static_url(image_path)
+
             if isinstance(bbox, list) and found:
                 if bbox and isinstance(bbox[0], (int, float)):
                     mapped_bbox = remap_bbox_to_original(bbox, actual_size, original_size)
@@ -833,82 +1148,120 @@ class TaskProcessor:
                         if converted:
                             boxes_for_ui.append(converted)
 
-                log_info(f"🎨 生成标注图片...")
-                try:
-                    annotated_info = self._save_annotated_image(image_path, boxes_for_ui)
-                    annotated_url = annotated_info["url"]
-                    log_success(f"✓ 标注图片已生成")
-                except Exception as annotate_err:
-                    log_warning(f"⚠️ 生成标注图片失败: {annotate_err}")
-                    annotated_url = self._path_to_static_url(image_path)
-                self.control_chassis_to_center(bbox, image_size,navigator)
-                if self.moved_to_center:
-                    self.moved_to_center = False
-                    continue
-                try:
-                    import requests
+                if boxes_for_ui:
+                    log_info("🎨 生成标注图片...")
+                    try:
+                        annotated_info = self._save_annotated_image(image_path, boxes_for_ui)
+                        annotated_url = annotated_info["url"]
+                        log_success("✓ 标注图片已生成")
+                    except Exception as annotate_err:
+                        log_warning(f"⚠️ 生成标注图片失败: {annotate_err}")
+                        annotated_url = self._path_to_static_url(image_path)
 
-                    payload = {
-                        "found": found,
-                        "boxes": boxes_for_ui,
-                        "original_bbox": bbox,
-                        "mapped_bbox": mapped_bbox,
-                        "image_size": image_size,
-                        "original_size": original_size,
-                        "prepared_for_grasp": prepared_for_grasp,
-                        "forward_distance": forward_distance,
-                        "step": step + 1,
-                        "target": target_name,
+            context.update(
+                {
+                    "boxes_for_ui": boxes_for_ui,
+                    "mapped_bbox": mapped_bbox,
+                    "annotated_url": annotated_url,
+                    "prepared_for_grasp": result.get("prepared_for_grasp", False),
+                }
+            )
+
+            if found:
+                payload = {
+                    "found": found,
+                    "boxes": boxes_for_ui,
+                    "original_bbox": bbox,
+                    "mapped_bbox": mapped_bbox,
+                    "image_size": image_size,
+                    "original_size": original_size,
+                    "prepared_for_grasp": result.get("prepared_for_grasp", False),
+                    "range_estimate": range_estimate,
+                    "step": step,
+                    "target": target_name,
+                    "annotated_url": annotated_url,
+                }
+            context["frontend_payload"] = payload
+            frontend_result = self._push_detection_to_frontend(context)
+            if frontend_result:
+                context["frontend_response"] = frontend_result
+                response_data = frontend_result.get("data")
+                if isinstance(response_data, dict):
+                    context["zerograsp"] = response_data.get("zerograsp")
+                    if context["zerograsp"]:
+                        log_info("🖐️ 已获取ZeroGrasp抓取候选")
+
+            actions_raw = result.get("actions") or []
+            if not isinstance(actions_raw, list):
+                actions_raw = []
+            actions: List[Dict[str, Any]] = [action for action in actions_raw if isinstance(action, dict)]
+
+            if not found:
+                actions = [{"name": "rotate_chassis", "params": {"angle_deg": 30}, "reason": "未找到目标，继续扫描"}]
+            else:
+                if range_estimate is not None and range_estimate <= self.search_distance_threshold:
+                    phase = "approach"
+                    if not any(a.get("name") == "finalize_target_pose" for a in actions):
+                        actions.insert(0, {"name": "finalize_target_pose", "params": {}, "reason": "距离合适，触发精确定位"})
+                else:
+                    phase = "search"
+                    if not any(a.get("name") == "move_forward" for a in actions):
+                        step_distance = compute_forward_step(range_estimate)
+                        actions.insert(0, {"name": "move_forward", "params": {"distance": step_distance}, "reason": "继续靠近目标"})
+
+                if not any(a.get("name") == "move_target_to_center" for a in actions) and mapped_bbox:
+                    img_w, img_h = image_size
+                    bbox_center_x = (mapped_bbox[0] + mapped_bbox[2]) / 2
+                    offset_px = abs(bbox_center_x - img_w / 2)
+                    if offset_px > 80:
+                        actions.insert(0, {"name": "move_target_to_center", "params": {"tolerance_px": 40}, "reason": "目标偏离中心"})
+
+            if not actions:
+                actions = [{"name": "rotate_chassis", "params": {"angle_deg": 25}, "reason": "兜底搜索"}]
+
+            current_feedback: List[Dict[str, Any]] = []
+            for action in actions[:2]:
+                name = action.get("name")
+                params = action.get("params") or {}
+
+                if name == "move_forward" and "distance" not in params:
+                    params["distance"] = compute_forward_step(range_estimate)
+                action["params"] = params
+
+                success = self.execute_action(action, context=context, navigator=navigator)
+                feedback = {
+                    "name": name,
+                    "success": success,
+                    "params": params,
+                    "reason": action.get("reason", ""),
+                }
+                current_feedback.append(feedback)
+
+                if name == "move_forward" and success:
+                    forward_attempts += 1
+                    if forward_attempts > self.max_forward_attempts:
+                        log_error("❌ 前进次数超出安全阈值，终止任务")
+                        return {"success": False, "reason": "前进次数过多，任务终止"}
+                if name == "rotate_chassis" and success:
+                    angle = abs(params.get("angle_deg", 0))
+                    try:
+                        angle = float(angle)
+                    except (TypeError, ValueError):
+                        angle = 0.0
+                    total_rotation_deg += angle
+                    if total_rotation_deg > self.max_total_rotation_deg:
+                        log_error("❌ 旋转角度累计过大，终止任务")
+                        return {"success": False, "reason": "旋转过多未找到目标"}
+
+                if name == "finalize_target_pose" and success:
+                    log_success("🎯 底盘定位完成，任务结束")
+                    return {
+                        "success": True,
+                        "result": result,
                         "annotated_url": annotated_url,
                     }
-                    print("payload:", payload)
-                    response = requests.post(
-                        "http://127.0.0.1:8000/api/vlm/result",
-                        json=payload,
-                        timeout=3,
-                    )
-                    # print("response:", response.text )
-                    cam_obj_center_3d = response.json().get("obj_center_3d", [0.0, 0.0, 0.0])
-                    tune_angle = response.json().get("tune_angle", 0.0)
-                    vec = np.array([cam_obj_center_3d.copy()+[1.0]])
-                    T_mat = np.array([[0,-1,0],
-                                     [0,0,-1],
-                                     [1,0,0],
-                                     [0,180,-50]])
-                    
-                    jaka_obj_center_3d = vec @ T_mat
-                    jaka_obj_center_3d_list = jaka_obj_center_3d.tolist()
-                    courrent_pose = navigator.get_current_pose()
-                    # print("current_pose:", courrent_pose)
-                    X_OA = courrent_pose["x"]*1000
-                    Y_OA = courrent_pose["y"]*1000
-                    theta_OA = courrent_pose["theta"]
-                    X_AB , Y_AB,Z_AB = jaka_obj_center_3d.ravel()
-                    X_OB = X_OA + (X_AB * math.cos(theta_OA) - Y_AB * math.sin(theta_OA))
-                    Y_OB = Y_OA + (X_AB * math.sin(theta_OA) + Y_AB * math.cos(theta_OA))
-                    target_theta = theta_OA + tune_angle
-                    target_x = (X_OB - self.target_distance*1000 * math.cos(target_theta))/1000
-                    target_y = (Y_OB - self.target_distance*1000 * math.sin(target_theta))/1000
-                    log_info(f"🎯 计算底盘目标位置: ({target_x:.2f}, {target_y:.2f}), 目标朝向 θ={target_theta:.2f}rad")
-                    
-                    log_success(f"✓ 标注图片已推送到前端")
-                    log_info(f"🎯 目标物体 3D 中心点(jaka坐标): {jaka_obj_center_3d_list}")
-                    log_info(f"🎯 垂直目标需要转向 : {tune_angle*180/np.pi} 度")
-                    navigator.move_to_position(target_theta, target_x, target_y)
-                    return {"success": True, "result": result, "annotated_url": ""}
-                    # print(f"目标物体 3D 中心点: {jaka_obj_center_3d_list}")
-                except Exception as post_err:
-                    log_error(f"❌ 推送VLM结果至前端失败: {post_err}")
 
-                # log_info(f"🎯 控制底盘移动到目标")
-                # self.control_chassis_to_center(bbox, image_size,navigator)
-                # self.control_chassis_forward(forward_distance,navigator)
-                # log_success(f"✓ 底盘移动完成")
-                
-            else:
-                log_info(f"🔄 未找到目标，底盘转向继续探索")
-                self.control_turn_around(navigator)
+            last_action_feedback = current_feedback
 
-
-        log_error(f"❌ 达到最大探索次数，未完成任务")
+        log_error("❌ 达到最大探索次数，未完成任务")
         return {"success": False, "reason": "未能在限定步数内完成抓取任务"}

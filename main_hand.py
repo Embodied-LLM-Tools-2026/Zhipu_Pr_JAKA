@@ -167,7 +167,7 @@ class VoiceRobotController:
             gripper_controller=self.gripper,
             node=None  
         )
-        # self.taskprocessor = TaskProcessor()
+        self.taskprocessor = TaskProcessor(navigator=self.navigator)
         # 自我介绍关键词
         self.intro_keywords = Config.INTRO_KEYWORDS
 
@@ -966,8 +966,9 @@ class VoiceRobotController:
                 success = True
             else:
                 # 区分拿饮料和非拿饮料
+                obj_name = command_result.get("obj_name")
                 if action == "get_drink":
-                    obj_name = command_result.get("obj_name", "unknown")
+                    obj_name = obj_name or "unknown"
                     num = int(command_result.get("num", "0"))
                     log_info(f"🥤 拿饮料任务: {num}瓶 '{obj_name}'")
                     if obj_name not in Config.drink_list:
@@ -999,7 +1000,8 @@ class VoiceRobotController:
                     audio_file_path = self._play_cached_audio(
                         "好的", tts_ready_callback=tts_ready_callback
                     )
-                    self.taskprocessor.process_grasp_task(obj_name,self.navigator)
+                    if obj_name:
+                        self.taskprocessor.process_grasp_task(obj_name, self.navigator)
                     # print(f"模拟执行动作: {action}")
                     success = True
                 # 动作成功或失败后的处理
