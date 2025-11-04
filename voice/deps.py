@@ -117,7 +117,7 @@ class DependencyManager:
     def _check_robot(self):
         """检测机器人控制模块"""
         try:
-            from action_sequence.execute_action import init_robot, wave, bow, Nod, Shake_head
+            from Pr.action_sequence.old_file.execute_action import init_robot, wave, bow, Nod, Shake_head
             self.robot_available = True
             print("✅ 机器人控制模块可用")
         except ImportError:

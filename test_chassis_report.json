@@ -1,0 +1,23 @@
+{
+  "timestamp": "2025-10-23T14:29:53.269442",
+  "summary": {
+    "total_tests": 2,
+    "passed": 2,
+    "failed": 0,
+    "success_rate": 100.0
+  },
+  "results": [
+    {
+      "test_name": "stress_repeated_turns",
+      "success": true,
+      "details": "成功率: 100.0% (10/10), 最终位置: {'theta': 3.0236, 'x': -5.5035, 'y': -1.4679}",
+      "timestamp": "2025-10-23T14:29:36.191742"
+    },
+    {
+      "test_name": "stress_repeated_alignment",
+      "success": true,
+      "details": "成功率: 100.0% (5/5), 最终位置: {'theta': 3.0013, 'x': -5.4794, 'y': -1.4521}",
+      "timestamp": "2025-10-23T14:29:53.268988"
+    }
+  ]
+}

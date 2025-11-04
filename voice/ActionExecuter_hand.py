@@ -23,7 +23,7 @@ class ActionExecuter:
         if Config.ROBOT_AVAILABLE:
             # 初始化机械臂
             import xapi.api as x5
-            from action_sequence.execute_action import wave, bow, Nod, Shake_head, rotate_head_to_angle
+            from Pr.action_sequence.old_file.execute_action import wave, bow, Nod, Shake_head, rotate_head_to_angle
             self.handle_l = x5.connect(robot_ip_left)
             self.handle_r = x5.connect(robot_ip_right)
             self.add_data_1 = x5.MovPointAdd(vel=100, acc=100)
@@ -35,7 +35,7 @@ class ActionExecuter:
             # 初始化灵巧手
             from controller.hand_controller import InspireHandR
             import time
-            from action_sequence.PP_hand_new_shelf import (
+            from Pr.action_sequence.old_file.PP_hand_new_shelf import (
                 init_robot,
                 move_to_pick_height_pitch_angle,
                 move_to_shelf,
@@ -46,7 +46,7 @@ class ActionExecuter:
             )
             
             # 尝试导入所有可能的pick函数
-            import action_sequence.PP_hand_new_shelf as pp_hand_module
+            import Pr.action_sequence.old_file.PP_hand_new_shelf as pp_hand_module
             for layer in range(2, 6):  # layer_number: 2~5
                 for drink in range(1, 7):  # drink_id: 1~6
                     function_name = f"pick_{layer}_{drink}"

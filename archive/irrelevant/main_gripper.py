@@ -83,7 +83,7 @@ if not deps._get_check_result():
 else:
     from voice.TTS import TextToSpeechEngine
     from voice.ASR import SenseVoiceRecognizer
-    from voice.LLM import RobotCommandProcessor
+    from Pr.voice.VLM import RobotCommandProcessor
     from voice.PinyinMatcher import PinyinMatcher
     from voice.utils import SimplifiedVoiceRecorder, SimplifiedAudioPlayer
     from voice.ActionExecuter_gripper import ActionExecuter
@@ -585,7 +585,7 @@ class VoiceRobotController:
         if not self.recorder:
             # 文本输入模式
             if self.robot_state == "sleeping":
-                prompt = "请输入唤醒词（小拓同学）或输入'stats'查看计时统计: "
+                prompt = "请输入唤醒词（JAKA同学）或输入'stats'查看计时统计: "
             else:
                 prompt = "请输入动作指令或退下指令，或输入'stats'查看计时统计: "
             text = input(prompt).strip()
@@ -602,7 +602,7 @@ class VoiceRobotController:
             try:
                 if self.robot_state == "sleeping":
                     print("😴 机器人休眠中，请说唤醒词...")
-                    print("🎤 请说：小拓同学")
+                    print("🎤 请说：JAKA同学")
                 else:
                     print("👂 机器人等待指令中...")
                     print("🎤 请说动作指令：回到待机位置、上下摆动、左右摆动、摇头")
@@ -675,7 +675,7 @@ class VoiceRobotController:
             print("🎉 机器人被唤醒！")
             print("🤖 你好！我已准备好接受您的指令。")
 
-            self._play_and_execute_action("你好，我是小拓同学，很高兴见到你！", "greet")
+            self._play_and_execute_action("你好，我是JAKA同学，很高兴见到你！", "greet")
             
             # 切换到唤醒状态
             self.robot_state = "awake"
@@ -684,7 +684,7 @@ class VoiceRobotController:
             
             return True
         else:
-            print("😴 机器人还在休眠中，请说唤醒词：小拓同学")
+            print("😴 机器人还在休眠中，请说唤醒词：JAKA同学")
             return False
     
     # 同时播放音频和执行动作
@@ -822,7 +822,7 @@ class VoiceRobotController:
             print("🎵 开始异步TTS生成和播放（同时预热VAD）...")
             
         else:
-            print(f"小拓说：{description}")
+            print(f"JAKA说：{description}")
             print("🎵 开始异步TTS生成和播放（同时预热VAD）...")
             audio_file_path = self._play_cached_audio(description, tts_ready_callback=tts_ready_callback)
         
@@ -1117,7 +1117,7 @@ def main():
         # 启动说明
         print("\n📖 使用说明:")
         if controller.wake_matcher:
-            print("1. 机器人处于休眠状态，请先说唤醒词：'小拓同学'")
+            print("1. 机器人处于休眠状态，请先说唤醒词：'JAKA同学'")
             print("2. 唤醒后可以说动作指令或进行聊天")
             print("3. 说退下指令让机器人重新进入休眠：'退下'、'休息'等")
         else:

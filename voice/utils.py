@@ -169,7 +169,7 @@ class CrossPlatformAudioManager:
             # 优先选择 DJI 麦克风
             for idx, d in input_devices:
                 name = d['name'].lower()
-                print(f"🎤 检测设备: {d['name']}")
+                # print(f"🎤 检测设备: {d['name']}")
                 if 'dji' in name:
                     print(f"🎤 优先选择 DJI 麦克风: {d['name']} (设备 {idx})")
                     return idx

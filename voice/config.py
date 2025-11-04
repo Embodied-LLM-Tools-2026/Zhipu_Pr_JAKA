@@ -7,40 +7,48 @@ import warnings
 # 配置和常量管理
 # ================================
 
+
 class Config:
     """统一配置管理"""
-    
+
     # 环境变量配置
-    ZHIPUAI_API_KEY = os.getenv("ZHIPUAI_API_KEY")
     ZAI_API_KEY = os.getenv("ZAI_API_KEY")
-    
+    # VLM_NAME = "qwen3-vl-flash"
+    VLM_NAME = "qwen3-vl-plus"
     # 机器人默认配置
     ROBOT_IP_LEFT = "192.168.1.9"
     ROBOT_IP_RIGHT = "192.168.1.10"
-    
+
     # 音频配置
     AUDIO_SAMPLE_RATE = 16000
     AUDIO_CHANNELS = 1
     AUDIO_CHUNK_SIZE = 1024
 
     # 文本转语音配置
-    TTS_ENGINE = "edge_tts" # "kokoro" or "edge_tts"
-    
+    TTS_ENGINE = "edge_tts"  # "kokoro" or "edge_tts"
+
     # 缓存配置
     ENABLE_CACHE = True
     PRELOAD_COMMON_AUDIO = True
 
     # 唤醒词
-    WAKE_WORDS = ["小拓", "小兔"]
+    WAKE_WORDS = [ "节卡","家卡","加卡","加咖","佳卡","佳咖","嘉卡","嘉咖"]
 
     # 自我介绍关键词
     INTRO_KEYWORDS = [
-        "介绍一下你自己", "你是谁", "自我介绍", "介绍你自己", "你能做什么", "你的功能", "你的作用", "你是做什么的"
+        "介绍一下你自己",
+        "你是谁",
+        "自我介绍",
+        "介绍你自己",
+        "你能做什么",
+        "你的功能",
+        "你的作用",
+        "你是做什么的",
     ]
-    
+
     # 常用音频短语
     COMMON_PHRASES = [
-        "你好，我是小拓同学，很高兴见到你！",
+        "你好，我是家卡同学，很高兴见到你！",
         "好的，我去休息了。需要时请叫我！",
         "抱歉，我不理解这个指令，请重新说一遍",
         # 新增自我介绍
@@ -69,16 +77,15 @@ class Config:
         # 用户要多杯咖啡
         "抱歉，一次只能做一杯美式咖啡哦",
         # 用户要其它咖啡
-        "抱歉，只能做美式咖啡哦", 
+        "抱歉，只能做美式咖啡哦",
         # 用户要一杯美式咖啡
         "好的，我这就去为您做咖啡",
-        # 按下咖啡机按钮    
+        # 按下咖啡机按钮
         "咖啡正在制作中，请您稍等片刻",
         # 把咖啡放到传送带上后
         "请享用您的咖啡",
     ]
-    
-    
+
     # 动作映射
     ACTION_MAP = {
         "greet": "打招呼",
@@ -90,8 +97,7 @@ class Config:
     }
 
     # 饮料
-    # drink_list = ["可乐", "雪碧", "水", "奶茶", "美式咖啡", "其它咖啡"]
-    drink_list = ["可乐", "雪碧", "水", "奶茶"]
+    drink_list = ["可乐", "雪碧", "水", "奶茶", "冰红茶","绿茶","美式咖啡"]
     # drink_layer_mapping = {
     #     "水": [2,28,-4],
     #     "可乐": [3,0,100],
@@ -100,32 +106,36 @@ class Config:
     # }
 
     # 实机还是模拟
-    ROBOT_AVAILABLE = True #调试时要模拟执行动作就改为False
-    
+    ROBOT_AVAILABLE = True  # 调试时要模拟执行动作就改为False
+
     @classmethod
     def setup_environment(cls):
         """设置环境变量，抑制ALSA错误"""
-        if platform.system() == 'Linux':
+        if platform.system() == "Linux":
             env_vars = {
-                'ALSA_PCM_CARD': 'default',
-                'ALSA_PCM_DEVICE': '0',
-                'ALSA_CARD': '0',
-                'ALSA_LOG_LEVEL': '0',
-                'ALSA_SILENCE': '1',
-                'ALSA_PCM_PLUGINS': '',
-                'PULSE_LOG': '0'
+                "ALSA_PCM_CARD": "default",
+                "ALSA_PCM_DEVICE": "0",
+                "ALSA_CARD": "0",
+                "ALSA_LOG_LEVEL": "0",
+                "ALSA_SILENCE": "1",
+                "ALSA_PCM_PLUGINS": "",
+                "PULSE_LOG": "0",
             }
-            
+
             for key, value in env_vars.items():
                 os.environ[key] = value
-            
+
             # 抑制系统警告
             warnings.filterwarnings("ignore")
-            
+
             # 设置内核日志级别
             try:
-                subprocess.run(['sysctl', '-w', 'kernel.printk=1 1 1 1'], 
-                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
+                subprocess.run(
+                    ["sysctl", "-w", "kernel.printk=1 1 1 1"],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    check=False,
+                )
             except:
                 pass
         else:

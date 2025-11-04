@@ -87,7 +87,7 @@ class RobotCommandProcessor:
                 if result.get("intent") == "chat":
                     chat_prompt = f"""
                     用户说："{text}"
-                    你的名字叫小拓。请生成一个自然简洁的对话响应，不用特别简短但字数不要超过100字，你生成的回答会被TTS模型念出来，所以不要使用表情，也不要以"小拓同学说："这样的东西开头。回答不要以"好的"或"当然可以"这类语句开头。
+                    你的名字叫JAKA。请生成一个自然简洁的对话响应，不用特别简短但字数不要超过100字，你生成的回答会被TTS模型念出来，所以不要使用表情，也不要以"JAKA同学说："这样的东西开头。回答不要以"好的"或"当然可以"这类语句开头。
                     """
                     try:
                         chat_response = self.client.chat.completions.create(

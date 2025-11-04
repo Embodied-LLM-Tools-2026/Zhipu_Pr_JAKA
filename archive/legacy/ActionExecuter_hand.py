@@ -20,7 +20,7 @@ class ActionExecuter:
         if Config.ROBOT_AVAILABLE: 
             # 初始化机械臂
             import xapi.api as x5
-            from action_sequence.execute_action import wave, bow, Nod, Shake_head
+            from Pr.action_sequence.old_file.execute_action import wave, bow, Nod, Shake_head
             self.handle_l = x5.connect(robot_ip_left)
             self.handle_r = x5.connect(robot_ip_right)
             self.add_data_1 = x5.MovPointAdd(vel=100, acc=100)

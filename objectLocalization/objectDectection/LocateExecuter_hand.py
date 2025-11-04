@@ -34,7 +34,7 @@ class ActionExecuter:
             # 初始化灵巧手
             from controller.hand_controller import InspireHandR
             import time
-            from action_sequence.PP_hand_new_shelf import (
+            from Pr.action_sequence.old_file.PP_hand_new_shelf import (
                 init_robot,
                 move_to_pick_height_pitch_angle,
                 move_to_shelf,
