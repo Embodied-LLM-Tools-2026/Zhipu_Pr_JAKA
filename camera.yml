@@ -1,0 +1,26 @@
+width: 1280
+height: 720
+camera_width: 1280
+camera_height: 720
+rectified_width: 1280
+rectified_height: 800
+color_intrinsics:
+  fx: 609.9383544921875
+  fy: 609.4365844726562
+  cx: 633.9528198242188
+  cy: 351.6567687988281
+  model: null
+  coeffs: null
+depth_intrinsics:
+  fx: 614.6842041015625
+  fy: 614.6842041015625
+  cx: 636.2717895507812
+  cy: 400.9728088378906
+  model: null
+  coeffs: null
+extrinsic_color_to_depth: null
+timestamp_system_us: 1762261035261679
+depth_scale: null
+depth_min: null
+depth_max: null
+device: {}

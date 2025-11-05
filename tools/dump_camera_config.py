@@ -170,10 +170,10 @@ def dump_camera_config(output_path: Path, serial_filter: Optional[str]) -> Dict[
         if device is not None:
             device_info = device.get_device_info()
             payload["device"] = {
-                "name": device_info.name,
-                "serial_number": device_info.serial_number,
-                "firmware_version": device_info.firmware_version,
-                "hardware_version": device_info.hardware_version,
+                # "name": device_info.name,
+                # "serial_number": device_info.serial_number,
+                # "firmware_version": device_info.firmware_version,
+                # "hardware_version": device_info.hardware_version,
             }
 
         output_path.write_text(yaml.safe_dump(payload, sort_keys=False), encoding="utf-8")

@@ -162,11 +162,11 @@ class VoiceRobotController:
         except Exception:
             # 已经初始化或其它初始化错误由上层处理
             pass
-        self.task_executor = TaskExecutor(
-            navigator=self.navigator,
-            gripper_controller=self.gripper,
-            node=None  
-        )
+        # self.task_executor = TaskExecutor(
+        #     navigator=self.navigator,
+        #     gripper_controller=self.gripper,
+        #     node=None  
+        # )
         self.taskprocessor = TaskProcessor(navigator=self.navigator)
         # 自我介绍关键词
         self.intro_keywords = Config.INTRO_KEYWORDS
@@ -992,8 +992,8 @@ class VoiceRobotController:
                         #     f"模拟执行拿饮料动作 in _process_action_command: {num}瓶{obj_name}"
                         # )
                         log_success(f"✅ 饮料库存充足: '{obj_name}'，开始执行拿饮料任务")
-                        self.task_executor.execute_task(obj_name)
-                        # self.taskprocessor.process_grasp_task(obj_name,self.navigator)
+                        # self.task_executor.execute_task(obj_name)
+                        self.taskprocessor.process_grasp_task(obj_name,self.navigator)
                         success = True
                 else:
                     log_info(f"🎬 执行动作: {action}")

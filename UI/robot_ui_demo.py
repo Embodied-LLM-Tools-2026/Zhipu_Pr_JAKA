@@ -1,4 +1,4 @@
-import io, os, threading, time, base64, random, math
+import io, os, threading, time, base64, random, math,sys
 from pathlib import Path
 from typing import List, Tuple, Optional, Any, Dict, Callable
 
@@ -8,7 +8,8 @@ from fastapi import FastAPI, Response, Query
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
-
+# Ensure project root is on sys.path so imports like `from tools.xxx import ...` work
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from tools.zerograsp_wrapper import get_shared_zerograsp_runner
 
 # 尝试使用摄像头；若不可用则用占位图
@@ -834,8 +835,8 @@ class DepthBBoxPayload(BaseModel):
 CAMERAS = {
     "front": FRONT_CAMERA,
     # "front": FrameSource(cam_index=3, name="front", fallback_indexes=[]),
-    "left": FrameSource(cam_index=10, name="left", fallback_indexes=[]),
-    # "right": FrameSource(cam_index=6, name="right", fallback_indexes=[4, 5]),
+    # "left": FrameSource(cam_index=14, name="left", fallback_indexes=[]),
+    "right": FrameSource(cam_index=16, name="right", fallback_indexes=[4, 5]),
 }
 
 # ============ Telemetry / 状态（演示用随机/模拟）===========

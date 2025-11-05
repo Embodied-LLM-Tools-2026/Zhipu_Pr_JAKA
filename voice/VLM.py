@@ -1181,15 +1181,15 @@ class TaskProcessor:
                     "target": target_name,
                     "annotated_url": annotated_url,
                 }
-            context["frontend_payload"] = payload
-            frontend_result = self._push_detection_to_frontend(context)
-            if frontend_result:
-                context["frontend_response"] = frontend_result
-                response_data = frontend_result.get("data")
-                if isinstance(response_data, dict):
-                    context["zerograsp"] = response_data.get("zerograsp")
-                    if context["zerograsp"]:
-                        log_info("🖐️ 已获取ZeroGrasp抓取候选")
+                context["frontend_payload"] = payload
+                frontend_result = self._push_detection_to_frontend(context)
+                if frontend_result:
+                    context["frontend_response"] = frontend_result
+                    response_data = frontend_result.get("data")
+                    if isinstance(response_data, dict):
+                        context["zerograsp"] = response_data.get("zerograsp")
+                        if context["zerograsp"]:
+                            log_info("🖐️ 已获取ZeroGrasp抓取候选")
 
             actions_raw = result.get("actions") or []
             if not isinstance(actions_raw, list):
