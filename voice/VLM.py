@@ -319,6 +319,8 @@ class TaskProcessor:
             "move_target_to_center": self._action_move_target_to_center,
             "move_forward": self._action_move_forward,
             "finalize_target_pose": self._action_finalize_target_pose,
+            "refine_surface_alignment": self._action_refine_surface_alignment,
+            "approach_via_plane": self._action_approach_via_plane,
         }
 
     def register_action(self, name: str, handler: Callable[..., bool]) -> None:
@@ -514,11 +516,95 @@ class TaskProcessor:
                     }
                 log_info(f"🖐️ ZeroGrasp 输出: {summary}")
             result = {"payload": payload, "data": data}
+            surface_pts = data.get("surface_points")
+            if surface_pts:
+                log_info(f"🖼️ 前端平面点: {surface_pts}")
             log_success("✓ 标注结果已推送前端")
             return result
         except Exception as exc:
             log_error(f"❌ 推送VLM结果至前端失败: {exc}")
             return None
+
+    def _action_refine_surface_alignment(
+        self,
+        *,
+        context: Dict[str, Any],
+        navigator=None,
+        mask_bbox: Optional[List[int]] = None,
+    ) -> bool:
+        frontend_response = context.get("frontend_response")
+        if not frontend_response:
+            frontend_response = self._push_detection_to_frontend(context)
+            context["frontend_response"] = frontend_response
+        if not frontend_response:
+            return False
+        data = frontend_response.get("data", {})
+        zerograsp = data.get("zerograsp", {}) if isinstance(data, dict) else {}
+        surface = zerograsp.get("surface_region")
+        if isinstance(surface, list) and len(surface) == 4:
+            try:
+                surface = [int(float(v)) for v in surface]
+            except (TypeError, ValueError):
+                surface = None
+        if (not surface) and mask_bbox:
+            try:
+                surface = [int(float(v)) for v in mask_bbox]
+            except (TypeError, ValueError):
+                surface = None
+        surface_points = data.get("surface_points")
+        if isinstance(surface_points, list):
+            context["surface_points"] = surface_points
+        if surface:
+            context["surface_region"] = surface
+            log_info(f"🪑 更新背景平面区域: {surface}")
+        elif surface_points:
+            log_info(f"🪑 更新背景引导点: {surface_points}")
+        else:
+            log_warning("⚠️ refine_surface_alignment 缺少平面引导信息")
+            return False
+        return True
+
+    def _action_approach_via_plane(
+        self,
+        *,
+        context: Dict[str, Any],
+        navigator=None,
+        tolerance_deg: float = 8.0,
+    ) -> bool:
+        navigator = navigator or self.navigator
+        if navigator is None:
+            log_error("❌ approach_via_plane 失败: 无导航器")
+            return False
+        frontend_response = context.get("frontend_response")
+        if not frontend_response:
+            return False
+        data = frontend_response.get("data", {})
+        if not isinstance(data, dict):
+            return False
+        tune_angle = data.get("tune_angle")
+        edge_conf = data.get("edge_confidence", 0.0) or 0.0
+        if tune_angle is None:
+            log_warning("⚠️ 无法获取 tune_angle")
+            return False
+        angle_deg = math.degrees(float(tune_angle))
+        if abs(angle_deg) < tolerance_deg:
+            log_info(f"🪑 平面已对齐(误差 {angle_deg:.2f}°)，跳过调整")
+            return True
+        log_info(
+            f"🪑 依据平面角度调整底盘: angle={angle_deg:.2f}°, confidence={edge_conf:.2f}"
+        )
+        try:
+            pose = navigator.get_current_pose()
+            new_theta = pose["theta"] + float(tune_angle)
+            success = navigator.move_to_position(new_theta, pose["x"], pose["y"])
+            if success:
+                log_success("🪑 平面对齐完成")
+            else:
+                log_warning("⚠️ 平面对齐动作执行失败")
+            return success
+        except Exception as exc:
+            log_error(f"❌ 平面对齐异常: {exc}")
+            return False
 
     def capture_image(self, cam_name: str = "front") -> str:
         import requests
@@ -587,6 +673,8 @@ class TaskProcessor:
         max_iter: int,
         last_action_feedback: List[Dict[str, Any]],
         image_size: Tuple[int, int],
+        surface_region: Optional[List[int]] = None,
+        surface_points: Optional[List[List[int]]] = None,
     ) -> str:
         """构造探索阶段的VLM提示词。"""
         available_actions_lines = [
@@ -595,15 +683,19 @@ class TaskProcessor:
             "2. move_forward(distance): 底盘沿当前朝向前进(>0)或后退(<0)指定米数。",
             "3. move_target_to_center(tolerance_px): 将目标移至画面中心，tolerance默认50像素。",
             "4. finalize_target_pose(): 当目标已近在咫尺且抓取入口正面时调用，会触发深度定位。",
+            "5. refine_surface_alignment(mask_bbox): 当需要重新拟合背景平面时调用，可提供背景区域bbox。",
+            "6. approach_via_plane(tolerance_deg): 根据平面角度微调朝向，默认容差8°。",
         ]
         last_actions_str = json.dumps(last_action_feedback, ensure_ascii=False)
         prompt_parts = [
             f"你是一个服务机器人，任务是抓取“{target_name}”。当前处于探索阶段。",
             f"当前是第 {step} 步（最多 {max_iter} 步）。上一步动作反馈: {last_actions_str}",
             f"图片分辨率: {image_size[0]}x{image_size[1]}。",
+            f"当前背景平面参考区域: {surface_region}" if surface_region else "当前暂无背景平面参考区域。",
+            f"已知背景参考点: {surface_points}" if surface_points else "如需我定位背景平面，请提供一个或多个 surface_points。",
             "请分析图像目标情况并估计目标与机器人的距离range_estimate（米，允许近似）。",
-            f"当 range_estimate > {self.search_distance_threshold}m 或没有看到目标时，请优先通过旋转或小步前进来寻找目标。",
-            f"当 range_estimate <= {self.search_distance_threshold}m 且目标清晰居中时，可建议调用 finalize_target_pose。",
+            f"当 range_estimate > {self.search_distance_threshold}m 时，请优先调用 move_target_to_center 让目标居中，再通过 move_forward 小步靠近。",
+            f"当 range_estimate ≤ {self.search_distance_threshold}m 时，请专注于提供 surface_points / surface_roi 以便我精准拟合背景平面。",
             *available_actions_lines,
             "返回严格的JSON：",
             "{",
@@ -613,6 +705,8 @@ class TaskProcessor:
             '  "range_estimate": number,  // 估计距离（米），若无法估计给出-1',
             '  "confidence": number,      // 0-1',
             '  "analysis": "<简短中文分析>",',
+            '  "surface_roi": [x_min, y_min, x_max, y_max], // 可选，背景平面区域',
+            '  "surface_points": [[x, y], ...], // 可选，背景平面上的像素点',
             '  "actions": [',
             '    {"name": "<动作名>", "params": {...}, "reason": "<原因描述>"}',
             "  ]",
@@ -628,6 +722,8 @@ class TaskProcessor:
         max_iter: int,
         last_action_feedback: List[Dict[str, Any]],
         image_size: Tuple[int, int],
+        surface_region: Optional[List[int]] = None,
+        surface_points: Optional[List[List[int]]] = None,
     ) -> str:
         """构造靠近阶段的VLM提示词。"""
         available_actions_lines = [
@@ -635,15 +731,18 @@ class TaskProcessor:
             "1. move_target_to_center(tolerance_px): 将目标调整到画面中心，默认容差50像素。",
             "2. move_forward(distance): 如果仍需微小前进，可设置0.1-0.4米的小步。",
             "3. finalize_target_pose(): 当姿态合适时调用，触发精确定位并结束探索。",
+            "4. refine_surface_alignment(mask_bbox): 如果需要重新拟合目标背后的平面，可给出平面区域。",
+            "5. approach_via_plane(tolerance_deg): 根据平面角度精调朝向，默认容差8°。",
         ]
         last_actions_str = json.dumps(last_action_feedback, ensure_ascii=False)
         prompt_parts = [
             f"你是一个服务机器人，任务是抓取“{target_name}”。当前已接近目标，处于精对位阶段。",
             f"当前是第 {step} 步（最多 {max_iter} 步）。上一步动作反馈: {last_actions_str}",
             f"图片分辨率: {image_size[0]}x{image_size[1]}。",
+            f"当前背景平面参考区域: {surface_region}" if surface_region else "当前暂无背景平面参考区域。",
+            f"已知背景参考点: {surface_points}" if surface_points else "如需更精准平面拟合，请在 surface_points 字段提供一个或多个背景平面像素点（例如[[x1,y1]]）。",
             "请分析目标是否居中、距离是否适合抓取，并估计range_estimate（米）。",
-            "如果目标已经正面、居中且距离小于等于阈值，请优先建议 finalize_target_pose。",
-            "如需微调，可建议 move_target_to_center 或 move_forward 小步靠近。",
+            "此阶段请避免继续 move_target_to_center；可以结合 approach_via_plane / move_forward 等动作配合平面角度微调。",
             *available_actions_lines,
             "返回严格JSON：",
             "{",
@@ -653,11 +752,13 @@ class TaskProcessor:
             '  "range_estimate": number,',
             '  "confidence": number,',
             '  "analysis": "<简短中文分析>",',
+            '  "surface_roi": [x_min, y_min, x_max, y_max],',
+            '  "surface_points": [[x, y], ...],',
             '  "actions": [',
             '    {"name": "<动作名>", "params": {...}, "reason": "<原因描述>"}',
             "  ]",
             "}",
-            "动作最多两个，若判断可以抓取请确保第一个动作是 finalize_target_pose。",
+            "动作最多两个，请按执行顺序给出。",
         ]
         return "\n".join(prompt_parts)
 
@@ -931,19 +1032,41 @@ class TaskProcessor:
         idx = normalized.find("/static/")
         return normalized[idx:] if idx != -1 else normalized
 
-    def _save_annotated_image(self, image_path: str, boxes: List[List[int]]) -> Dict[str, str]:
-        """保存带框的标注图片到原图所在目录。"""
+    def _save_annotated_image(
+        self,
+        image_path: str,
+        boxes: List[List[int]],
+        surface_region: Optional[List[int]] = None,
+        surface_points: Optional[List[List[int]]] = None,
+    ) -> Dict[str, str]:
+        """保存带框的标注图片到原图所在目录，并可叠加平面提示。"""
         base_dir = os.path.dirname(image_path)
         with Image.open(image_path) as img:
             draw = ImageDraw.Draw(img)
             # boxes 中坐标已经是标准的 [x1, y1, x2, y2]（左上到右下），直接画即可
             for x1, y1, x2, y2 in boxes:
                 draw.rectangle([(x1, y1), (x2, y2)], outline="red", width=4)
+            if surface_region and len(surface_region) == 4:
+                sx1, sy1, sx2, sy2 = surface_region
+                draw.rectangle([(sx1, sy1), (sx2, sy2)], outline="green", width=3)
+            if surface_points:
+                for pt in surface_points:
+                    if not pt or len(pt) < 2:
+                        continue
+                    px, py = pt[:2]
+                    px = int(px)
+                    py = int(py)
+                    r = 6
+                    draw.ellipse(
+                        [(px - r, py - r), (px + r, py + r)],
+                        outline="blue",
+                        fill="blue",
+                    )
             ts = int(time.time() * 1000)
             annotated_name = f"annotated_{ts}.jpg"
             annotated_path = os.path.join(base_dir, annotated_name)
             img.save(annotated_path, format="JPEG", quality=90)
-        
+
         return {
             "path": annotated_path,
             "url": self._path_to_static_url(annotated_path),
@@ -959,6 +1082,8 @@ class TaskProcessor:
         phase = "search"  # search 或 approach
         forward_attempts = 0
         total_rotation_deg = 0.0
+        known_surface_region: Optional[List[int]] = None
+        known_surface_points: Optional[List[List[int]]] = None
 
         def compute_forward_step(range_estimate: Optional[float]) -> float:
             if range_estimate is None or range_estimate <= 0:
@@ -995,9 +1120,25 @@ class TaskProcessor:
                     return {"success": False, "reason": "读取图片失败"}
 
             prompt = (
-                self._build_search_prompt(target_name, step, max_iter, last_action_feedback, tuple(actual_size))
+                self._build_search_prompt(
+                    target_name,
+                    step,
+                    max_iter,
+                    last_action_feedback,
+                    tuple(actual_size),
+                    surface_region=known_surface_region,
+                    surface_points=known_surface_points,
+                )
                 if phase == "search"
-                else self._build_approach_prompt(target_name, step, max_iter, last_action_feedback, tuple(actual_size))
+                else self._build_approach_prompt(
+                    target_name,
+                    step,
+                    max_iter,
+                    last_action_feedback,
+                    tuple(actual_size),
+                    surface_region=known_surface_region,
+                    surface_points=known_surface_points,
+                )
             )
 
             log_info("🧠 VLM推理中...")
@@ -1055,23 +1196,44 @@ class TaskProcessor:
             found = bool(result.get("found", False))
             bbox = result.get("bbox", [])
             confidence = float(result.get("confidence", 0))
-            range_estimate_raw = result.get("range_estimate")
-            if range_estimate_raw in (None, "", "-1"):
+        range_estimate_raw = result.get("range_estimate")
+        if range_estimate_raw in (None, "", "-1"):
+            range_estimate = None
+        else:
+            try:
+                range_estimate = float(range_estimate_raw)
+                if range_estimate <= 0:
+                    range_estimate = None
+            except (TypeError, ValueError):
                 range_estimate = None
-            else:
-                try:
-                    range_estimate = float(range_estimate_raw)
-                    if range_estimate <= 0:
-                        range_estimate = None
-                except (TypeError, ValueError):
-                    range_estimate = None
-            if range_estimate is None:
-                try:
-                    fallback_distance = float(result.get("forward_distance", 0.0) or 0.0)
-                    if fallback_distance > 0:
-                        range_estimate = fallback_distance
-                except (TypeError, ValueError):
-                    range_estimate = None
+        if range_estimate is None:
+            try:
+                fallback_distance = float(result.get("forward_distance", 0.0) or 0.0)
+                if fallback_distance > 0:
+                    range_estimate = fallback_distance
+            except (TypeError, ValueError):
+                range_estimate = None
+
+        surface_roi_raw = result.get("surface_roi")
+        surface_region_processed: Optional[List[float]] = None
+        if isinstance(surface_roi_raw, list) and len(surface_roi_raw) == 4:
+            try:
+                surface_region_processed = [float(v) for v in surface_roi_raw]
+            except (TypeError, ValueError):
+                surface_region_processed = None
+
+        surface_points_raw = result.get("surface_points")
+        surface_points_processed: Optional[List[List[float]]] = None
+        if isinstance(surface_points_raw, list):
+            temp_points: List[List[float]] = []
+            for pt in surface_points_raw:
+                if isinstance(pt, (list, tuple)) and len(pt) >= 2:
+                    try:
+                        temp_points.append([float(pt[0]), float(pt[1])])
+                    except (TypeError, ValueError):
+                        continue
+            if temp_points:
+                surface_points_processed = temp_points
 
             image_size = actual_size
             result["image_size"] = image_size
@@ -1081,122 +1243,232 @@ class TaskProcessor:
             else:
                 log_warning("⚠️ 未检测到目标物品")
 
-            context: Dict[str, Any] = {
-                "step": step,
-                "phase": phase,
-                "target_name": target_name,
-                "image_path": image_path,
-                "processed_image_path": processed_image_path,
-                "original_size": original_size,
-                "image_size": image_size,
-                "vlm_result": result,
-                "bbox": bbox,
-                "last_actions": last_action_feedback,
-                "range_estimate": range_estimate,
-                "confidence": confidence,
-            }
+        context: Dict[str, Any] = {
+            "step": step,
+            "phase": phase,
+            "target_name": target_name,
+            "image_path": image_path,
+            "processed_image_path": processed_image_path,
+            "original_size": original_size,
+            "image_size": image_size,
+            "vlm_result": result,
+            "bbox": bbox,
+            "last_actions": last_action_feedback,
+            "range_estimate": range_estimate,
+            "confidence": confidence,
+            "surface_region": known_surface_region,
+            "surface_points": surface_points_processed,
+        }
 
-            def remap_bbox_to_original(
-                bbox_local: List[float],
-                processed_size: Tuple[int, int],
-                original_size_local: Tuple[int, int],
-            ) -> List[int]:
-                if not bbox_local or len(bbox_local) != 4:
-                    return []
+        def remap_bbox_to_original(
+            bbox_local: List[float],
+            processed_size: Tuple[int, int],
+            original_size_local: Tuple[int, int],
+        ) -> List[int]:
+            if not bbox_local or len(bbox_local) != 4:
+                return []
 
-                proc_w, proc_h = processed_size
-                orig_w, orig_h = original_size_local
+            proc_w, proc_h = processed_size
+            orig_w, orig_h = original_size_local
 
-                sx = orig_w / proc_w
-                sy = orig_h / proc_h
+            sx = orig_w / proc_w
+            sy = orig_h / proc_h
 
-                x_min, y_max, x_max, y_min = bbox_local
-                x_min *= sx
-                x_max *= sx
-                y_min *= sy
-                y_max *= sy
+            x_min, y_max, x_max, y_min = bbox_local
+            x_min *= sx
+            x_max *= sx
+            y_min *= sy
+            y_max *= sy
 
-                top = y_max
-                bottom = y_min
+            top = y_max
+            bottom = y_min
 
-                return [int(x_min), int(top), int(x_max), int(bottom)]
+            return [int(x_min), int(top), int(x_max), int(bottom)]
 
-            def convert_bbox(box_local, size_local):
-                if not box_local or len(box_local) != 4:
-                    return None
-                w, h = size_local
-                x_min, y_max, x_max, y_min = box_local
-                x_min = max(0, min(w, x_min))
-                x_max = max(0, min(w, x_max))
-                y1 = max(0, min(h, y_max))
-                y2 = max(0, min(h, y_min))
-                return [int(x_min), int(y1), int(x_max), int(y2)]
+        def remap_roi_to_original(
+            roi_local: List[float],
+            processed_size: Tuple[int, int],
+            original_size_local: Tuple[int, int],
+        ) -> Optional[List[int]]:
+            if not roi_local or len(roi_local) != 4:
+                return None
+            proc_w, proc_h = processed_size
+            orig_w, orig_h = original_size_local
+            if proc_w == 0 or proc_h == 0:
+                return None
+            sx = orig_w / proc_w
+            sy = orig_h / proc_h
+            x_min, y_min, x_max, y_max = roi_local
+            x_min *= sx
+            x_max *= sx
+            y_min *= sy
+            y_max *= sy
+            x_min = max(0, min(orig_w, x_min))
+            x_max = max(0, min(orig_w, x_max))
+            y_min = max(0, min(orig_h, y_min))
+            y_max = max(0, min(orig_h, y_max))
+            if x_min >= x_max or y_min >= y_max:
+                return None
+            return [int(x_min), int(y_min), int(x_max), int(y_max)]
 
-            boxes_for_ui: List[List[int]] = []
-            mapped_bbox: List[int] = []
-            annotated_url = self._path_to_static_url(image_path)
+        def convert_bbox(box_local, size_local):
+            if not box_local or len(box_local) != 4:
+                return None
+            w, h = size_local
+            x_min, y_max, x_max, y_min = box_local
+            x_min = max(0, min(w, x_min))
+            x_max = max(0, min(w, x_max))
+            y1 = max(0, min(h, y_max))
+            y2 = max(0, min(h, y_min))
+            return [int(x_min), int(y1), int(x_max), int(y2)]
 
-            if isinstance(bbox, list) and found:
-                if bbox and isinstance(bbox[0], (int, float)):
-                    mapped_bbox = remap_bbox_to_original(bbox, actual_size, original_size)
-                    converted = convert_bbox(mapped_bbox, original_size)
+        boxes_for_ui: List[List[int]] = []
+        mapped_bbox: List[int] = []
+        annotated_url = self._path_to_static_url(image_path)
+        mapped_surface_region: Optional[List[int]] = None
+
+        if isinstance(bbox, list) and found:
+            if bbox and isinstance(bbox[0], (int, float)):
+                mapped_bbox = remap_bbox_to_original(bbox, actual_size, original_size)
+                converted = convert_bbox(mapped_bbox, original_size)
+                if converted:
+                    boxes_for_ui.append(converted)
+            else:
+                for candidate in bbox:
+                    converted = convert_bbox(candidate, image_size)
                     if converted:
                         boxes_for_ui.append(converted)
-                else:
-                    for candidate in bbox:
-                        converted = convert_bbox(candidate, image_size)
-                        if converted:
-                            boxes_for_ui.append(converted)
 
-                if boxes_for_ui:
-                    log_info("🎨 生成标注图片...")
-                    try:
-                        annotated_info = self._save_annotated_image(image_path, boxes_for_ui)
-                        annotated_url = annotated_info["url"]
-                        log_success("✓ 标注图片已生成")
-                    except Exception as annotate_err:
-                        log_warning(f"⚠️ 生成标注图片失败: {annotate_err}")
-                        annotated_url = self._path_to_static_url(image_path)
+        if boxes_for_ui:
+            log_info("🎨 生成标注图片...")
+            try:
+                annotated_info = self._save_annotated_image(
+                    image_path,
+                    boxes_for_ui,
+                    surface_region=mapped_surface_region,
+                    surface_points=mapped_surface_points,
+                )
+                annotated_url = annotated_info["url"]
+                log_success("✓ 标注图片已生成")
+            except Exception as annotate_err:
+                log_warning(f"⚠️ 生成标注图片失败: {annotate_err}")
+                annotated_url = self._path_to_static_url(image_path)
 
-            context.update(
-                {
-                    "boxes_for_ui": boxes_for_ui,
-                    "mapped_bbox": mapped_bbox,
-                    "annotated_url": annotated_url,
-                    "prepared_for_grasp": result.get("prepared_for_grasp", False),
-                }
+        if surface_region_processed:
+            mapped_surface_region = remap_roi_to_original(
+                surface_region_processed, actual_size, original_size
+            )
+            if mapped_surface_region is None:
+                surface_region_processed = None
+            else:
+                log_info(f"🖼️ VLM 建议的背景平面区域: {mapped_surface_region}")
+
+        def remap_points_to_original(
+            points: List[List[float]],
+            processed_size: Tuple[int, int],
+            original_size: Tuple[int, int],
+        ) -> Optional[List[List[int]]]:
+            if not points:
+                return None
+            proc_w, proc_h = processed_size
+            orig_w, orig_h = original_size
+            if proc_w == 0 or proc_h == 0:
+                return None
+            sx = orig_w / proc_w
+            sy = orig_h / proc_h
+            mapped: List[List[int]] = []
+            for pt in points:
+                if len(pt) < 2:
+                    continue
+                x = int(max(0, min(orig_w - 1, pt[0] * sx)))
+                y = int(max(0, min(orig_h - 1, pt[1] * sy)))
+                mapped.append([x, y])
+            return mapped or None
+
+        mapped_surface_points = None
+        if surface_points_processed:
+            mapped_surface_points = remap_points_to_original(
+                surface_points_processed, actual_size, original_size
             )
 
-            if found:
-                payload = {
-                    "found": found,
-                    "boxes": boxes_for_ui,
-                    "original_bbox": bbox,
-                    "mapped_bbox": mapped_bbox,
-                    "image_size": image_size,
-                    "original_size": original_size,
-                    "prepared_for_grasp": result.get("prepared_for_grasp", False),
-                    "range_estimate": range_estimate,
-                    "step": step,
-                    "target": target_name,
-                    "annotated_url": annotated_url,
-                }
-                context["frontend_payload"] = payload
-                frontend_result = self._push_detection_to_frontend(context)
-                if frontend_result:
-                    context["frontend_response"] = frontend_result
-                    response_data = frontend_result.get("data")
-                    if isinstance(response_data, dict):
-                        context["zerograsp"] = response_data.get("zerograsp")
-                        if context["zerograsp"]:
-                            log_info("🖐️ 已获取ZeroGrasp抓取候选")
+        context.update(
+            {
+                "boxes_for_ui": boxes_for_ui,
+                "mapped_bbox": mapped_bbox,
+                "annotated_url": annotated_url,
+                "surface_region": mapped_surface_region
+                or context.get("surface_region")
+                or None,
+                "surface_points": mapped_surface_points
+                or context.get("surface_points"),
+            }
+        )
+
+        if context.get("surface_region"):
+            known_surface_region = context["surface_region"]
+        if context.get("surface_points"):
+            known_surface_points = context["surface_points"]
+            log_info(f"🖼️ 背景引导点: {context['surface_points']}")
+
+        payload = {
+            "found": found,
+            "boxes": boxes_for_ui,
+            "original_bbox": bbox,
+            "mapped_bbox": mapped_bbox,
+            "image_size": image_size,
+            "original_size": original_size,
+            "range_estimate": range_estimate,
+            "step": step,
+            "target": target_name,
+            "annotated_url": annotated_url,
+            "surface_region": context.get("surface_region"),
+            "surface_points": context.get("surface_points"),
+        }
+
+        context["frontend_payload"] = payload
+        frontend_result = self._push_detection_to_frontend(context)
+        if frontend_result:
+            context["frontend_response"] = frontend_result
+            response_data = frontend_result.get("data")
+            if isinstance(response_data, dict):
+                context["zerograsp"] = response_data.get("zerograsp")
+                if context["zerograsp"]:
+                    log_info("🖐️ 已获取ZeroGrasp抓取候选")
 
             actions_raw = result.get("actions") or []
             if not isinstance(actions_raw, list):
                 actions_raw = []
             actions: List[Dict[str, Any]] = [action for action in actions_raw if isinstance(action, dict)]
 
+        if (
+            phase == "approach"
+            and surface_points_processed
+            and not any(a.get("name") == "refine_surface_alignment" for a in actions)
+        ):
+            actions.insert(
+                0,
+                {
+                    "name": "refine_surface_alignment",
+                    "params": {},
+                    "reason": "根据新背景点拟合平面",
+                },
+            )
+        elif (
+            phase == "approach"
+            and mapped_surface_region
+            and not any(a.get("name") == "refine_surface_alignment" for a in actions)
+        ):
+            actions.insert(
+                0,
+                {
+                    "name": "refine_surface_alignment",
+                    "params": {"mask_bbox": mapped_surface_region},
+                        "reason": "根据背景区域拟合平面",
+                    },
+                )
+
             if not found:
+                phase = "search"
                 actions = [{"name": "rotate_chassis", "params": {"angle_deg": 30}, "reason": "未找到目标，继续扫描"}]
             else:
                 if range_estimate is not None and range_estimate <= self.search_distance_threshold:
@@ -1209,15 +1481,44 @@ class TaskProcessor:
                         step_distance = compute_forward_step(range_estimate)
                         actions.insert(0, {"name": "move_forward", "params": {"distance": step_distance}, "reason": "继续靠近目标"})
 
-                if not any(a.get("name") == "move_target_to_center" for a in actions) and mapped_bbox:
-                    img_w, img_h = image_size
-                    bbox_center_x = (mapped_bbox[0] + mapped_bbox[2]) / 2
-                    offset_px = abs(bbox_center_x - img_w / 2)
-                    if offset_px > 80:
-                        actions.insert(0, {"name": "move_target_to_center", "params": {"tolerance_px": 40}, "reason": "目标偏离中心"})
+                if phase == "search":
+                    if not any(a.get("name") == "move_target_to_center" for a in actions) and mapped_bbox:
+                        img_w, img_h = image_size
+                        bbox_center_x = (mapped_bbox[0] + mapped_bbox[2]) / 2
+                        offset_px = abs(bbox_center_x - img_w / 2)
+                        if offset_px > 80:
+                            actions.insert(
+                                0,
+                                {
+                                    "name": "move_target_to_center",
+                                    "params": {"tolerance_px": 40},
+                                    "reason": "目标偏离中心",
+                                },
+                            )
+                else:
+                    actions = [
+                        act
+                        for act in actions
+                        if act.get("name") != "move_target_to_center"
+                    ]
 
             if not actions:
-                actions = [{"name": "rotate_chassis", "params": {"angle_deg": 25}, "reason": "兜底搜索"}]
+                if phase == "approach":
+                    actions = [
+                        {
+                            "name": "approach_via_plane",
+                            "params": {},
+                            "reason": "默认根据平面角度精调",
+                        }
+                    ]
+                else:
+                    actions = [
+                        {
+                            "name": "rotate_chassis",
+                            "params": {"angle_deg": 25},
+                            "reason": "兜底搜索",
+                        }
+                    ]
 
             current_feedback: List[Dict[str, Any]] = []
             for action in actions[:2]:

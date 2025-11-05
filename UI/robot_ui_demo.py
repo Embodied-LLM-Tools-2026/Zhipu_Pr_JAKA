@@ -11,6 +11,7 @@ from pydantic import BaseModel
 # Ensure project root is on sys.path so imports like `from tools.xxx import ...` work
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from tools.zerograsp_wrapper import get_shared_zerograsp_runner
+from tools.sam_client import generate_mask
 
 # 尝试使用摄像头；若不可用则用占位图
 try:
@@ -279,6 +280,7 @@ class OrbbecStreamBase:
         self.obj_range_stride = 2
         self.obj_pixel_center  = Tuple[int, int]
         self.obj_depth_threshold = 500  # meters
+        self.surface_points_hint: Optional[List[List[float]]] = None
     def _build_stream(self) -> Tuple[Any, Any]:
         raise NotImplementedError
 
@@ -354,6 +356,18 @@ class OrbbecStreamBase:
         if isinstance(value, (list, tuple)):
             return [OrbbecStreamBase._to_serializable(v) for v in value]
         return value
+
+    def set_surface_points_hint(self, points: Optional[List[List[float]]]) -> None:
+        if points and isinstance(points, list):
+            try:
+                self.surface_points_hint = [
+                    [float(p[0]), float(p[1])] for p in points if isinstance(p, (list, tuple)) and len(p) >= 2
+                ]
+                if self.surface_points_hint:
+                    return
+            except (TypeError, ValueError):
+                pass
+        self.surface_points_hint = None
 
     def get_jpeg_bytes(self, w: Optional[int] = None, h: Optional[int] = None) -> bytes:
         width = w or FRONT_WIDTH
@@ -443,6 +457,26 @@ class OrbbecStreamBase:
         coordinate_3d_array = np.mean(object_points_np, axis=0)
         obj_center_depth = float(coordinate_3d_array[2])
 
+        surface_points = self.surface_points_hint
+        surface_mask = None
+        if surface_points:
+            rgb_frame = None
+            with self.lock:
+                if isinstance(self.frame, np.ndarray):
+                    rgb_frame = self.frame.copy()
+            if rgb_frame is not None:
+                try:
+                    mask = generate_mask(rgb_frame, surface_points)
+                    if mask is not None:
+                        if mask.shape[0] != depth_height or mask.shape[1] != depth_width:
+                            if cv2 is not None:
+                                mask = cv2.resize(mask, (depth_width, depth_height), interpolation=cv2.INTER_NEAREST)
+                            else:
+                                mask = np.array(Image.fromarray(mask).resize((depth_width, depth_height)))
+                        surface_mask = mask
+                except Exception as exc:
+                    print(f"[SAM] 生成mask失败: {exc}")
+
         support_points = self._collect_support_points(
             depth_data=depth_data,
             depth_intrinsics=depth_intrinsics,
@@ -453,6 +487,7 @@ class OrbbecStreamBase:
             center_px=(cx, cy),
             center_depth=obj_center_depth,
             project_pixels=project_pixels,
+            surface_mask=surface_mask,
         )
 
         return {
@@ -463,6 +498,7 @@ class OrbbecStreamBase:
             "depth_width": depth_width,
             "depth_height": depth_height,
             "depth_data": depth_data.copy(),
+            "surface_points": surface_points,
         }
 
     def _collect_support_points(
@@ -477,6 +513,7 @@ class OrbbecStreamBase:
         center_px: Tuple[int, int],
         center_depth: float,
         project_pixels: Callable[[List[Tuple[int, int]]], List[List[float]]],
+        surface_mask: Optional[np.ndarray] = None,
     ) -> np.ndarray:
         """采样目标周围的点云用于估计桌面/柜面边缘方向。"""
         x_min, x_max, y_min, y_max = bbox
@@ -486,20 +523,31 @@ class OrbbecStreamBase:
         depth_threshold = max(80.0, abs(center_depth) * 0.15)
 
         sampled_pixels: List[Tuple[int, int]] = []
-        for scale in (1.0, 1.5, 2.0, 2.5):
-            half_w = int(base_w * scale)
-            half_h = int(base_h * scale)
-            stride = max(1, int(self.obj_range_stride * scale))
-            for ix in range(cx - half_w, cx + half_w + 1, stride):
-                for iy in range(cy - half_h, cy + half_h + 1, stride):
-                    if x_min <= ix < x_max and y_min <= iy < y_max:
-                        continue  # 跳过目标内部像素
-                    if 0 <= ix < depth_width and 0 <= iy < depth_height:
-                        depth_val = float(depth_data[iy, ix])
-                        if depth_val <= 0:
-                            continue
-                        if abs(depth_val - center_depth) <= depth_threshold:
-                            sampled_pixels.append((ix, iy))
+        if surface_mask is not None:
+            indices = np.argwhere(surface_mask > 0)
+            if indices.size:
+                max_samples = 2000
+                step = max(1, len(indices) // max_samples)
+                for iy, ix in indices[::step]:
+                    depth_val = float(depth_data[iy, ix])
+                    if depth_val <= 0:
+                        continue
+                    sampled_pixels.append((ix, iy))
+        if not sampled_pixels:
+            for scale in (1.0, 1.5, 2.0, 2.5):
+                half_w = int(base_w * scale)
+                half_h = int(base_h * scale)
+                stride = max(1, int(self.obj_range_stride * scale))
+                for ix in range(cx - half_w, cx + half_w + 1, stride):
+                    for iy in range(cy - half_h, cy + half_h + 1, stride):
+                        if x_min <= ix < x_max and y_min <= iy < y_max:
+                            continue  # 跳过目标内部像素
+                        if 0 <= ix < depth_width and 0 <= iy < depth_height:
+                            depth_val = float(depth_data[iy, ix])
+                            if depth_val <= 0:
+                                continue
+                            if abs(depth_val - center_depth) <= depth_threshold:
+                                sampled_pixels.append((ix, iy))
 
         # 限制采样数量，避免后续拟合过慢
         max_samples = 1200
@@ -662,7 +710,7 @@ class OrbbecStreamBase:
         return {"raw": OrbbecStreamBase._to_serializable(result)}
 
 
-    def coordinate_in_depth_frame(self,bbox : List[int]):
+    def coordinate_in_depth_frame(self,bbox : List[int], range_estimate: Optional[float] = None):
         if len(bbox) != 4:
             return None
         print(f"Calculating 3D coordinates for bbox: {bbox}")
@@ -685,6 +733,7 @@ class OrbbecStreamBase:
 
         obj_center_3d = transform_result["center"]
         support_points = transform_result["support_points"]
+        surface_points = transform_result.get("surface_points")
 
         edge_info = self._fit_edge_orientation(support_points)
         tune_angle = edge_info.get("angle")
@@ -693,10 +742,14 @@ class OrbbecStreamBase:
         else:
             tune_angle_value = float(tune_angle)
 
-        zerograsp_result = self._run_zero_grasp_inference(
-            transform_result=transform_result,
-            bbox=transform_result["bbox"],
-        )
+        zerograsp_result = None
+        if range_estimate is not None and range_estimate <= 0.5:
+            zerograsp_result = self._run_zero_grasp_inference(
+                transform_result=transform_result,
+                bbox=transform_result["bbox"],
+            )
+
+        self.surface_points_hint = None
 
         result_payload = {
             "obj_center_3d": obj_center_3d.tolist(),
@@ -706,6 +759,7 @@ class OrbbecStreamBase:
             "edge_inliers": edge_info.get("inlier_count"),
             "edge_total_points": edge_info.get("total_points"),
             "edge_residual": edge_info.get("residual"),
+            "surface_points": surface_points,
         }
         if zerograsp_result is not None:
             result_payload["zerograsp"] = zerograsp_result
@@ -1634,7 +1688,14 @@ async def api_vlm_result(request: Request):
       src = CAMERAS.get("front")
       if src:
           stream = src.streams.get("color")
-          pose_info = stream.coordinate_in_depth_frame(bbox) if stream else None
+          if stream and hasattr(stream, "set_surface_points_hint"):
+              stream.set_surface_points_hint(data.get("surface_points"))
+          pose_info = stream.coordinate_in_depth_frame(
+              bbox,
+              range_estimate=data.get("range_estimate"),
+          ) if stream else None
+          if stream and hasattr(stream, "set_surface_points_hint"):
+              stream.set_surface_points_hint(None)
           if pose_info:
               response_payload = {"ok": True}
               response_payload.update(pose_info)
