@@ -1,6 +1,6 @@
-import io, os, threading, time, base64, random, math,sys
+import io, os, threading, time, base64, random, sys
 from pathlib import Path
-from typing import List, Tuple, Optional, Any, Dict, Callable
+from typing import List, Tuple, Optional, Any, Dict
 
 import numpy as np
 from PIL import Image, ImageDraw
@@ -10,9 +10,6 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 # Ensure project root is on sys.path so imports like `from tools.xxx import ...` work
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-from tools.zerograsp_wrapper import get_shared_zerograsp_runner
-from tools.sam_client import generate_mask
-
 # 尝试使用摄像头；若不可用则用占位图
 try:
   import cv2
@@ -275,11 +272,6 @@ class OrbbecStreamBase:
         self.available = HAS_ORBBEC
         self.color_frame: Any = None
         self.depth_frame: Any = None
-        self.obj_range_width = 100
-        self.obj_range_height = 25
-        self.obj_range_stride = 2
-        self.obj_pixel_center  = Tuple[int, int]
-        self.obj_depth_threshold = 500  # meters
         self.surface_points_hint: Optional[List[List[float]]] = None
     def _build_stream(self) -> Tuple[Any, Any]:
         raise NotImplementedError
@@ -390,391 +382,6 @@ class OrbbecStreamBase:
         with open(out_path, "wb") as f:
             f.write(jpeg)
         return f"/static/captures/{out_path.name}"
-    def get_frame_data(self,color_frame, depth_frame):
-        print("Getting frame data...")
-        color_frame = color_frame.as_video_frame()
-        depth_frame = depth_frame.as_video_frame()
-
-        depth_width = depth_frame.get_width()
-        depth_height = depth_frame.get_height()
-
-        color_profile = color_frame.get_stream_profile()
-        depth_profile = depth_frame.get_stream_profile()
-        print("video profile:", color_profile.as_video_stream_profile())
-        color_intrinsics = color_profile.as_video_stream_profile().get_intrinsic()
-        color_distortion = color_profile.as_video_stream_profile().get_distortion()
-        depth_intrinsics = depth_profile.as_video_stream_profile().get_intrinsic()
-        depth_distortion = depth_profile.as_video_stream_profile().get_distortion()
-
-        extrinsic = depth_profile.get_extrinsic_to(color_profile)
-
-        depth_data = np.frombuffer(depth_frame.get_data(), dtype=np.uint16).reshape(depth_height, depth_width)
-
-        return (color_intrinsics, color_distortion, depth_intrinsics, depth_distortion,
-                extrinsic, depth_data, depth_width, depth_height)
-
-
-    # ...existing code...
-    def transform_points(self, color_frame, depth_frame, bbox: List[int]):
-        (
-            _color_intrinsics,
-            _color_distortion,
-            depth_intrinsics,
-            _depth_distortion,
-            extrinsic,
-            depth_data,
-            depth_width,
-            depth_height,
-        ) = self.get_frame_data(color_frame, depth_frame)
-
-        x1, y1, x2, y2 = map(int, bbox)
-        x_min, x_max = sorted((max(0, x1), min(depth_width, x2)))
-        y_min, y_max = sorted((max(0, y1), min(depth_height, y2)))
-        if x_min >= x_max or y_min >= y_max:
-            return None
-
-        self.obj_pixel_center = [(x_min + x_max) // 2, (y_min + y_max) // 2]
-
-        def project_pixels(pixels: List[Tuple[int, int]]) -> List[List[float]]:
-            out: List[List[float]] = []
-            for ix, iy in pixels:
-                if 0 <= ix < depth_width and 0 <= iy < depth_height:
-                    depth = float(depth_data[iy, ix])
-                    if depth > 0:
-                        res = transformation2dto3d(
-                            OBPoint2f(float(ix), float(iy)), depth, depth_intrinsics, extrinsic
-                        )
-                        out.append([res.x, res.y, res.z])
-            return out
-
-        bbox_pixels = [(ix, iy) for ix in range(x_min, x_max) for iy in range(y_min, y_max)]
-        object_points = project_pixels(bbox_pixels)
-        if not object_points:
-            return None
-        cx = (x_min + x_max) // 2
-        cy = (y_min + y_max) // 2
-        object_points_np = np.asarray(object_points)
-        coordinate_3d_array = np.mean(object_points_np, axis=0)
-        obj_center_depth = float(coordinate_3d_array[2])
-
-        surface_points = self.surface_points_hint
-        surface_mask = None
-        if surface_points:
-            rgb_frame = None
-            with self.lock:
-                if isinstance(self.frame, np.ndarray):
-                    rgb_frame = self.frame.copy()
-            if rgb_frame is not None:
-                try:
-                    mask = generate_mask(rgb_frame, surface_points)
-                    if mask is not None:
-                        if mask.shape[0] != depth_height or mask.shape[1] != depth_width:
-                            if cv2 is not None:
-                                mask = cv2.resize(mask, (depth_width, depth_height), interpolation=cv2.INTER_NEAREST)
-                            else:
-                                mask = np.array(Image.fromarray(mask).resize((depth_width, depth_height)))
-                        surface_mask = mask
-                except Exception as exc:
-                    print(f"[SAM] 生成mask失败: {exc}")
-
-        support_points = self._collect_support_points(
-            depth_data=depth_data,
-            depth_intrinsics=depth_intrinsics,
-            extrinsic=extrinsic,
-            depth_width=depth_width,
-            depth_height=depth_height,
-            bbox=(x_min, x_max, y_min, y_max),
-            center_px=(cx, cy),
-            center_depth=obj_center_depth,
-            project_pixels=project_pixels,
-            surface_mask=surface_mask,
-        )
-
-        return {
-            "center": coordinate_3d_array,
-            "object_points": object_points_np,
-            "support_points": support_points,
-            "bbox": (x_min, x_max, y_min, y_max),
-            "depth_width": depth_width,
-            "depth_height": depth_height,
-            "depth_data": depth_data.copy(),
-            "surface_points": surface_points,
-        }
-
-    def _collect_support_points(
-        self,
-        *,
-        depth_data: np.ndarray,
-        depth_intrinsics,
-        extrinsic,
-        depth_width: int,
-        depth_height: int,
-        bbox: Tuple[int, int, int, int],
-        center_px: Tuple[int, int],
-        center_depth: float,
-        project_pixels: Callable[[List[Tuple[int, int]]], List[List[float]]],
-        surface_mask: Optional[np.ndarray] = None,
-    ) -> np.ndarray:
-        """采样目标周围的点云用于估计桌面/柜面边缘方向。"""
-        x_min, x_max, y_min, y_max = bbox
-        cx, cy = center_px
-        base_w = max(8, self.obj_range_width // 2)
-        base_h = max(6, self.obj_range_height // 2)
-        depth_threshold = max(80.0, abs(center_depth) * 0.15)
-
-        sampled_pixels: List[Tuple[int, int]] = []
-        if surface_mask is not None:
-            indices = np.argwhere(surface_mask > 0)
-            if indices.size:
-                max_samples = 2000
-                step = max(1, len(indices) // max_samples)
-                for iy, ix in indices[::step]:
-                    depth_val = float(depth_data[iy, ix])
-                    if depth_val <= 0:
-                        continue
-                    sampled_pixels.append((ix, iy))
-        if not sampled_pixels:
-            for scale in (1.0, 1.5, 2.0, 2.5):
-                half_w = int(base_w * scale)
-                half_h = int(base_h * scale)
-                stride = max(1, int(self.obj_range_stride * scale))
-                for ix in range(cx - half_w, cx + half_w + 1, stride):
-                    for iy in range(cy - half_h, cy + half_h + 1, stride):
-                        if x_min <= ix < x_max and y_min <= iy < y_max:
-                            continue  # 跳过目标内部像素
-                        if 0 <= ix < depth_width and 0 <= iy < depth_height:
-                            depth_val = float(depth_data[iy, ix])
-                            if depth_val <= 0:
-                                continue
-                            if abs(depth_val - center_depth) <= depth_threshold:
-                                sampled_pixels.append((ix, iy))
-
-        # 限制采样数量，避免后续拟合过慢
-        max_samples = 1200
-        if len(sampled_pixels) > max_samples:
-            sampled_pixels = random.sample(sampled_pixels, max_samples)
-
-        support_points = project_pixels(sampled_pixels)
-        if not support_points:
-            return np.empty((0, 3))
-        return np.asarray(support_points)
-
-    def _fit_edge_orientation(self, points: np.ndarray) -> Dict[str, Any]:
-        """基于采样点估计桌/柜边缘方向，返回斜率及置信度。"""
-        result: Dict[str, Any] = {
-            "slope": None,
-            "angle": None,
-            "confidence": 0.0,
-            "method": None,
-            "inlier_count": 0,
-            "total_points": int(points.shape[0]) if points is not None else 0,
-            "residual": None,
-        }
-        if points is None or len(points) < 8:
-            return result
-
-        x = points[:, 0]
-        z = points[:, 2]
-        pts = np.column_stack([x, z])
-        total = len(pts)
-
-        best_inliers = 0
-        best_model = None
-        rng = random.Random(42)
-        residual_threshold = 0.02  # 2cm 容差
-        max_trials = 120
-        min_inliers = max(10, total // 6)
-
-        for _ in range(max_trials):
-            if total < 2:
-                break
-            i1, i2 = rng.sample(range(total), 2)
-            (x1, z1), (x2, z2) = pts[i1], pts[i2]
-            denom = (x2 - x1)
-            if abs(denom) < 1e-6:
-                slope = np.sign(z2 - z1) * 1e6  # 接近竖直
-                intercept = z1 - slope * x1
-            else:
-                slope = (z2 - z1) / denom
-                intercept = z1 - slope * x1
-
-            residuals = np.abs(z - (slope * x + intercept))
-            inlier_mask = residuals < residual_threshold
-            inlier_count = int(inlier_mask.sum())
-            if inlier_count > best_inliers:
-                best_inliers = inlier_count
-                best_model = (slope, intercept, inlier_mask)
-                if best_inliers > total * 0.85:
-                    break
-
-        if best_model and best_inliers >= min_inliers:
-            slope_init, _, inlier_mask = best_model
-            inlier_pts = pts[inlier_mask]
-            slope, intercept = np.polyfit(inlier_pts[:, 0], inlier_pts[:, 1], 1)
-            residuals = np.abs(inlier_pts[:, 1] - (slope * inlier_pts[:, 0] + intercept))
-            rms = float(np.sqrt(np.mean(residuals**2))) if len(residuals) else None
-            angle = math.atan(slope)
-            result.update(
-                {
-                    "slope": float(slope),
-                    "angle": float(angle),
-                    "confidence": best_inliers / total,
-                    "method": "ransac",
-                    "inlier_count": best_inliers,
-                    "residual": rms,
-                }
-            )
-            return result
-
-        # RANSAC失败时，退化为PCA主方向
-        centered = pts - pts.mean(axis=0, keepdims=True)
-        cov = centered.T @ centered / max(total - 1, 1)
-        eig_vals, eig_vecs = np.linalg.eigh(cov)
-        principal = eig_vecs[:, np.argmax(eig_vals)]
-        dx, dz = principal
-        if abs(dx) < 1e-6:
-            slope = np.sign(dz) * 1e6
-        else:
-            slope = dz / dx
-        angle = math.atan(slope)
-        result.update(
-            {
-                "slope": float(slope),
-                "angle": float(angle),
-                "confidence": 0.2,
-                "method": "pca",
-                "inlier_count": total,
-            }
-        )
-        return result
-
-    def _run_zero_grasp_inference(
-        self,
-        *,
-        transform_result: Dict[str, Any],
-        bbox: Tuple[int, int, int, int],
-    ) -> Optional[Dict[str, Any]]:
-        ws_url = os.getenv("ZEROGRASP_WS_URL")
-        if not ws_url:
-            return None
-        runner = get_shared_zerograsp_runner(
-            ws_url=ws_url,
-            camera_cfg_path=os.getenv("ZEROGRASP_CAMERA_CFG"),
-        )
-        if runner is None:
-            return None
-
-        depth_data = transform_result.get("depth_data")
-        if depth_data is None or depth_data.size == 0:
-            return None
-
-        rgb_frame = None
-        with self.lock:
-            if isinstance(self.frame, np.ndarray):
-                rgb_frame = self.frame.copy()
-        if rgb_frame is None:
-            return None
-
-        depth_height, depth_width = depth_data.shape
-        if rgb_frame.shape[0] != depth_height or rgb_frame.shape[1] != depth_width:
-            if cv2 is None:
-                return None
-            rgb_frame = cv2.resize(
-                rgb_frame, (depth_width, depth_height), interpolation=cv2.INTER_AREA
-            )
-
-        mask = np.zeros((depth_height, depth_width), dtype=np.uint8)
-        x_min, x_max, y_min, y_max = bbox
-        x_min = max(0, int(x_min))
-        x_max = min(depth_width, int(x_max))
-        y_min = max(0, int(y_min))
-        y_max = min(depth_height, int(y_max))
-        if x_min >= x_max or y_min >= y_max:
-            return None
-        mask[y_min:y_max, x_min:x_max] = 255
-
-        try:
-            result = runner.infer(
-                rgb_image=rgb_frame.astype(np.uint8, copy=False),
-                depth_image=depth_data.astype(np.uint16, copy=False),
-                mask_image=mask,
-            )
-        except Exception as exc:  # noqa: B902
-            print(f"[ZeroGrasp] Runtime error: {exc}")
-            return None
-
-        if result is None:
-            return None
-        if isinstance(result, dict):
-            return OrbbecStreamBase._to_serializable(result)
-        return {"raw": OrbbecStreamBase._to_serializable(result)}
-
-
-    def coordinate_in_depth_frame(self,bbox : List[int], range_estimate: Optional[float] = None):
-        if len(bbox) != 4:
-            return None
-        print(f"Calculating 3D coordinates for bbox: {bbox}")
-        color_frame = self.color_frame
-        depth_frame = self.depth_frame
-
-        if depth_frame is None:
-            print("Error: No depth frame available")
-        if color_frame is None:
-            print("Error: No color frame available")
-        width = depth_frame.get_width()
-        height = depth_frame.get_height()
-        depth_data_size = depth_frame.get_data_size()
-        if depth_data_size != width * height * 2:
-            print("Error: depth frame data size does not match")
-            return None
-        transform_result = self.transform_points(color_frame, depth_frame, bbox)
-        if transform_result is None:
-            return None
-
-        obj_center_3d = transform_result["center"]
-        support_points = transform_result["support_points"]
-        surface_points = transform_result.get("surface_points")
-
-        edge_info = self._fit_edge_orientation(support_points)
-        tune_angle = edge_info.get("angle")
-        if tune_angle is None:
-            tune_angle_value = 0.0
-        else:
-            tune_angle_value = float(tune_angle)
-
-        zerograsp_result = None
-        if range_estimate is not None and range_estimate <= 0.5:
-            zerograsp_result = self._run_zero_grasp_inference(
-                transform_result=transform_result,
-                bbox=transform_result["bbox"],
-            )
-
-        self.surface_points_hint = None
-
-        result_payload = {
-            "obj_center_3d": obj_center_3d.tolist(),
-            "tune_angle": tune_angle_value,
-            "edge_confidence": edge_info.get("confidence"),
-            "edge_method": edge_info.get("method"),
-            "edge_inliers": edge_info.get("inlier_count"),
-            "edge_total_points": edge_info.get("total_points"),
-            "edge_residual": edge_info.get("residual"),
-            "surface_points": surface_points,
-        }
-        if zerograsp_result is not None:
-            result_payload["zerograsp"] = zerograsp_result
-        return result_payload
-
-def fit_line_ols(xy: np.ndarray):
-    """xy: (N,3) -> return dict: {'type':'slope','k':k,'b':b} or {'type':'vertical','x0':x0}"""
-    x = xy[:, 0]; z = xy[:, 2]
-    x_mean, z_mean = x.mean(), z.mean()
-    Sxx = np.sum((x - x_mean)**2)
-    Sxz = np.sum((x - x_mean)*(z - z_mean))
-    k = Sxz / Sxx
-    b = z_mean - k * x_mean
-    return k
-
 class OrbbecColorStream(OrbbecStreamBase):
     def _build_stream(self) -> Tuple[Any, Any]:
         if not HAS_ORBBEC:
@@ -1690,17 +1297,14 @@ async def api_vlm_result(request: Request):
           stream = src.streams.get("color")
           if stream and hasattr(stream, "set_surface_points_hint"):
               stream.set_surface_points_hint(data.get("surface_points"))
-          pose_info = stream.coordinate_in_depth_frame(
-              bbox,
-              range_estimate=data.get("range_estimate"),
-          ) if stream else None
-          if stream and hasattr(stream, "set_surface_points_hint"):
-              stream.set_surface_points_hint(None)
-          if pose_info:
-              response_payload = {"ok": True}
-              response_payload.update(pose_info)
-              return response_payload
-  return {"ok": True, "obj_center_3d": None, "tune_angle": None}
+              # 确保只临时显示
+              threading.Timer(1.0, lambda: stream.set_surface_points_hint(None)).start()
+          # 后端负责后续深度计算
+  return {
+      "ok": True,
+      "surface_points": data.get("surface_points"),
+      "range_estimate": data.get("range_estimate"),
+  }
 
 # VLM结果获取接口（UI端轮询）
 @APP.get("/api/vlm/latest")
@@ -1737,6 +1341,65 @@ def api_telemetry():
 @APP.get("/api/status")
 def api_status():
     return mock_status()
+
+
+@APP.get("/api/depth/frame")
+def api_depth_frame():
+  """Return latest depth frame bundle for backend processing."""
+  front_cam = CAMERAS.get("front")
+  if front_cam is None:
+    return JSONResponse({"error": "front camera unavailable"}, status_code=503)
+  stream = front_cam.streams.get("color")
+  if stream is None:
+    return JSONResponse({"error": "color stream unavailable"}, status_code=503)
+  color_frame = getattr(stream, "color_frame", None)
+  depth_frame = getattr(stream, "depth_frame", None)
+  if depth_frame is None or color_frame is None:
+    return JSONResponse({"error": "depth frame unavailable"}, status_code=503)
+
+  try:
+    color_vf = color_frame.as_video_frame()
+    depth_vf = depth_frame.as_video_frame()
+    depth_width = depth_vf.get_width()
+    depth_height = depth_vf.get_height()
+    depth_profile = depth_vf.get_stream_profile().as_video_stream_profile()
+    color_profile = color_vf.get_stream_profile().as_video_stream_profile()
+    depth_intr = depth_profile.get_intrinsic()
+    color_intr = color_profile.get_intrinsic()
+    depth_data = np.frombuffer(depth_vf.get_data(), dtype=np.uint16).reshape(depth_height, depth_width)
+    try:
+      scale = float(depth_vf.get_value_scale())  # type: ignore[attr-defined]
+    except Exception:
+      scale = 1.0
+  except Exception as exc:
+    return JSONResponse({"error": f"prepare depth bundle failed: {exc}"}, status_code=500)
+
+  def _intr_to_dict(intr, fallback_w, fallback_h):
+    return {
+        "fx": float(getattr(intr, "fx", 0.0)),
+        "fy": float(getattr(intr, "fy", 0.0)),
+        "cx": float(getattr(intr, "cx", fallback_w / 2)),
+        "cy": float(getattr(intr, "cy", fallback_h / 2)),
+        "width": int(getattr(intr, "width", fallback_w)),
+        "height": int(getattr(intr, "height", fallback_h)),
+    }
+
+  depth_intrinsics = _intr_to_dict(depth_intr, depth_width, depth_height)
+  color_intrinsics = _intr_to_dict(color_intr, color_vf.get_width(), color_vf.get_height())
+
+  depth_bytes = depth_data.astype(np.uint16, copy=False).tobytes()
+  depth_b64 = base64.b64encode(depth_bytes).decode("ascii")
+
+  return {
+      "width": depth_width,
+      "height": depth_height,
+      "timestamp": int(time.time() * 1000),
+      "depth_intrinsics": depth_intrinsics,
+      "color_intrinsics": color_intrinsics,
+      "depth_b64": depth_b64,
+      "dtype": str(depth_data.dtype),
+      "scale": scale,
+  }
 
 
 @APP.post("/api/depth/bbox_center")

@@ -10,6 +10,7 @@ import numpy as np
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'tools')))
 
 from config import Config
+from localize_target import TargetLocalizer
 from upload_image import upload_file_and_get_url  # type: ignore
 from task_logger import log_info, log_success, log_warning, log_error  # type: ignore
 from openai import OpenAI
@@ -298,6 +299,7 @@ class TaskProcessor:
         self.default_forward_step = 0.4       # 默认前进步长（米）
         self.max_forward_attempts = 8         # 最大前进次数，防止撞击
         self.max_total_rotation_deg = 720.0   # 最大搜索旋转角度
+        self.depth_localizer = TargetLocalizer()
         # ========================================
         # 摄像头标定参数（2K 80° 摄像头）
         # ========================================
@@ -433,22 +435,24 @@ class TaskProcessor:
             log_error("❌ finalize_target_pose 动作失败：缺少导航控制器")
             return False
 
-        frontend_response = context.get("frontend_response")
-        if frontend_response is None:
-            log_warning("⚠️ finalize_target_pose 缺少三维识别结果，尝试重新推送检测信息")
+        if context.get("frontend_payload") and not context.get("frontend_response"):
             frontend_response = self._push_detection_to_frontend(context)
-            if frontend_response is None:
-                return False
-            context["frontend_response"] = frontend_response
+            if frontend_response:
+                context["frontend_response"] = frontend_response
 
-        response_data = frontend_response.get("data") if isinstance(frontend_response, dict) else {}
-        if not response_data:
-            log_error("❌ 前端返回数据为空，无法完成最终对位")
+        depth_info = self._ensure_depth_localization(context)
+        if not depth_info:
+            log_error("❌ 深度定位失败，无法完成最终对位")
+            return False
+
+        obj_center_3d = depth_info.get("obj_center_3d")
+        if not obj_center_3d:
+            log_error("❌ 深度定位结果缺少 obj_center_3d")
             return False
 
         try:
-            cam_obj_center_3d = response_data.get("obj_center_3d", [0.0, 0.0, 0.0])
-            tune_angle = response_data.get("tune_angle", 0.0)
+            cam_obj_center_3d = obj_center_3d
+            tune_angle = depth_info.get("tune_angle", 0.0)
             vec = np.array([cam_obj_center_3d.copy() + [1.0]])
             T_mat = np.array(
                 [
@@ -502,28 +506,66 @@ class TaskProcessor:
                 json=payload,
                 timeout=3,
             )
-            data = response.json()
-            edge_conf = data.get("edge_confidence")
-            if edge_conf is not None:
-                log_info(f"🧭 桌面/柜面夹角置信度: {edge_conf:.2f}")
-            zerograsp_info = data.get("zerograsp")
-            if zerograsp_info:
-                summary = zerograsp_info
-                if isinstance(zerograsp_info, dict):
-                    summary = {
-                        key: zerograsp_info[key]
-                        for key in list(zerograsp_info.keys())[:5]
-                    }
-                log_info(f"🖐️ ZeroGrasp 输出: {summary}")
-            result = {"payload": payload, "data": data}
-            surface_pts = data.get("surface_points")
-            if surface_pts:
-                log_info(f"🖼️ 前端平面点: {surface_pts}")
+            data = {}
+            try:
+                data = response.json()
+            except ValueError:
+                data = {}
+            if isinstance(data, dict):
+                edge_conf = data.get("edge_confidence")
+                if edge_conf is not None:
+                    log_info(f"🧭 前端反馈的夹角置信度: {edge_conf}")
+                surface_pts = data.get("surface_points")
+                if surface_pts:
+                    log_info(f"🖼️ 前端平面点: {surface_pts}")
             log_success("✓ 标注结果已推送前端")
-            return result
+            return {"payload": payload, "data": data}
         except Exception as exc:
             log_error(f"❌ 推送VLM结果至前端失败: {exc}")
             return None
+
+    def _ensure_depth_localization(self, context: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """Ensure depth localization result exists in context by querying depth service if needed."""
+        depth_info = context.get("depth_localization")
+        if depth_info:
+            return depth_info
+
+        bbox = context.get("mapped_bbox") or context.get("bbox")
+        if not bbox or len(bbox) != 4:
+            log_warning("⚠️ 深度定位缺少 bbox")
+            return None
+
+        surface_points = context.get("surface_points")
+        range_estimate = context.get("range_estimate")
+        rgb_frame = None
+        img_path = context.get("processed_image_path")
+        if img_path and os.path.isfile(img_path):
+            try:
+                with Image.open(img_path) as img:
+                    rgb_frame = np.array(img.convert("RGB"))
+            except Exception:
+                rgb_frame = None
+
+        try:
+            depth_info = self.depth_localizer.localize_from_service(
+                bbox=bbox,
+                surface_points_hint=surface_points,
+                range_estimate=range_estimate,
+                rgb_frame=rgb_frame,
+            )
+        except Exception as exc:
+            log_error(f"❌ 调用深度定位服务失败: {exc}")
+            return None
+
+        if depth_info:
+            context["depth_localization"] = depth_info
+            if depth_info.get("surface_points"):
+                context["surface_points"] = depth_info["surface_points"]
+            if depth_info.get("zerograsp"):
+                context["zerograsp"] = depth_info["zerograsp"]
+        else:
+            log_warning("⚠️ 深度定位服务返回空结果")
+        return depth_info
 
     def _action_refine_surface_alignment(
         self,
@@ -532,37 +574,31 @@ class TaskProcessor:
         navigator=None,
         mask_bbox: Optional[List[int]] = None,
     ) -> bool:
-        frontend_response = context.get("frontend_response")
-        if not frontend_response:
-            frontend_response = self._push_detection_to_frontend(context)
-            context["frontend_response"] = frontend_response
-        if not frontend_response:
-            return False
-        data = frontend_response.get("data", {})
-        zerograsp = data.get("zerograsp", {}) if isinstance(data, dict) else {}
-        surface = zerograsp.get("surface_region")
-        if isinstance(surface, list) and len(surface) == 4:
-            try:
-                surface = [int(float(v)) for v in surface]
-            except (TypeError, ValueError):
-                surface = None
-        if (not surface) and mask_bbox:
-            try:
-                surface = [int(float(v)) for v in mask_bbox]
-            except (TypeError, ValueError):
-                surface = None
-        surface_points = data.get("surface_points")
-        if isinstance(surface_points, list):
+        if context.get("frontend_payload") and not context.get("frontend_response"):
+            context["frontend_response"] = self._push_detection_to_frontend(context)
+
+        depth_info = self._ensure_depth_localization(context)
+        surface_points = None
+        if depth_info:
+            surface_points = depth_info.get("surface_points")
+        if isinstance(surface_points, list) and surface_points:
             context["surface_points"] = surface_points
-        if surface:
-            context["surface_region"] = surface
-            log_info(f"🪑 更新背景平面区域: {surface}")
-        elif surface_points:
             log_info(f"🪑 更新背景引导点: {surface_points}")
-        else:
-            log_warning("⚠️ refine_surface_alignment 缺少平面引导信息")
-            return False
-        return True
+            return True
+
+        surface_region = context.get("surface_region")
+        if not surface_region and mask_bbox:
+            try:
+                surface_region = [int(float(v)) for v in mask_bbox]
+            except (TypeError, ValueError):
+                surface_region = None
+        if surface_region:
+            context["surface_region"] = surface_region
+            log_info(f"🪑 更新背景平面区域: {surface_region}")
+            return True
+
+        log_warning("⚠️ refine_surface_alignment 未获取到有效的平面引导信息")
+        return False
 
     def _action_approach_via_plane(
         self,
@@ -575,14 +611,11 @@ class TaskProcessor:
         if navigator is None:
             log_error("❌ approach_via_plane 失败: 无导航器")
             return False
-        frontend_response = context.get("frontend_response")
-        if not frontend_response:
+        depth_info = self._ensure_depth_localization(context)
+        if not depth_info:
             return False
-        data = frontend_response.get("data", {})
-        if not isinstance(data, dict):
-            return False
-        tune_angle = data.get("tune_angle")
-        edge_conf = data.get("edge_confidence", 0.0) or 0.0
+        tune_angle = depth_info.get("tune_angle")
+        edge_conf = depth_info.get("edge_confidence", 0.0) or 0.0
         if tune_angle is None:
             log_warning("⚠️ 无法获取 tune_angle")
             return False
