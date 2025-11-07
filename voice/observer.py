@@ -188,21 +188,6 @@ class VLMObserver:
             "}",
             "禁止返回其他键。确保JSON合法。",
         ]
-        if phase == ObservationPhase.SEARCH:
-            base.insert(
-                1,
-                "当前处于探索阶段，请关注目标是否存在、是否需要继续搜索、推荐的背景平面区域。",
-            )
-        else:
-            base.insert(
-                1,
-                "当前处于精对位阶段，请关注目标与相机的相对距离、姿态以及抓取/放置所需的平面信息。",
-            )
-        if context.surface_region:
-            base.append(f"已知背景平面区域: {context.surface_region}")
-        if context.surface_points:
-            base.append(f"已知背景平面点: {context.surface_points}")
-        base.append(f"图像分辨率: {image_size}")
         return "\n".join(base)
 
     def _call_vlm(self, image_url: str, prompt: str) -> Dict[str, Any]:

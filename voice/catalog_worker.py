@@ -22,6 +22,7 @@ import numpy as np
 
 from .config import Config
 from .executor import SkillExecutor
+from .localize_target import TargetLocalizer, DepthSnapshot, CameraIntrinsics
 from .task_logger import log_error, log_warning  # type: ignore
 from .upload_image import upload_file_and_get_url  # type: ignore
 
@@ -34,7 +35,7 @@ class SceneCatalogWorker:
         world_model,
         vlm_api_key: Optional[str] = None,
         vlm_model: Optional[str] = None,
-        queue_size: int = 8,
+        queue_size: int = 20,
     ) -> None:
         self.world = world_model
         self.vlm_api_key = (
@@ -45,6 +46,7 @@ class SceneCatalogWorker:
         if not self.vlm_api_key:
             raise ValueError("SceneCatalogWorker 需要提供 VLM API Key")
         self.vlm_model = vlm_model or Config.VLM_NAME
+        self.localizer = TargetLocalizer()
         self.queue: "queue.Queue[Dict[str, Any]]" = queue.Queue(maxsize=queue_size)
         self._thread = threading.Thread(target=self._worker_loop, daemon=True)
         self._thread.start()
@@ -70,12 +72,10 @@ class SceneCatalogWorker:
 
     def _process_job(self, job: Dict[str, Any]) -> None:
         image_path = job.get("image_path")
-        depth_map = job.get("depth_map")
-        depth_intr = job.get("depth_intrinsics") or {}
-        scale = float(job.get("scale") or 1.0)
+        snapshot = self._build_snapshot(job)
         image_size = job.get("image_size") or [1, 1]
         robot_pose = job.get("robot_pose")
-        if image_path is None or depth_map is None or robot_pose is None:
+        if image_path is None or snapshot is None or robot_pose is None:
             log_warning("⚠️ 场景建模任务缺少必要字段")
             return
 
@@ -89,14 +89,7 @@ class SceneCatalogWorker:
             bbox = det.get("bbox")
             if not bbox or confidence < 0.6:
                 continue
-            pose = self._estimate_world_position(
-                bbox=bbox,
-                image_size=image_size,
-                depth_map=depth_map,
-                depth_intr=depth_intr,
-                scale=scale,
-                robot_pose=robot_pose,
-            )
+            pose = self._localize_detection(bbox, snapshot, robot_pose)
             if pose is None:
                 continue
             camera_center, robot_center, world_center = pose
@@ -192,59 +185,60 @@ class SceneCatalogWorker:
         return cleaned
 
     # ------------------------------------------------------------------
-    def _estimate_world_position(
+    def _localize_detection(
         self,
-        *,
         bbox: List[float],
-        image_size: List[int],
-        depth_map: np.ndarray,
-        depth_intr: Dict[str, Any],
-        scale: float,
+        snapshot: DepthSnapshot,
         robot_pose: Dict[str, float],
     ) -> Optional[tuple[np.ndarray, np.ndarray, np.ndarray]]:
-        if depth_map.size == 0:
+        bbox_xyxy: List[int] = []
+        try:
+            bbox_xyxy = [int(float(v)) for v in bbox]
+        except (TypeError, ValueError):
             return None
-        depth_h, depth_w = depth_map.shape
-        img_w = float(image_size[0])
-        img_h = float(image_size[1])
-        cx_px = (bbox[0] + bbox[2]) / 2.0
-        cy_px = (bbox[1] + bbox[3]) / 2.0
-        u_depth = np.clip(cx_px / img_w * depth_w, 0, depth_w - 1)
-        v_depth = np.clip(cy_px / img_h * depth_h, 0, depth_h - 1)
-        u_idx = int(round(u_depth))
-        v_idx = int(round(v_depth))
-        depth_value = self._sample_depth(depth_map, u_idx, v_idx)
-        if depth_value is None:
+        try:
+            localization = self.localizer.localize_object(
+                bbox=bbox_xyxy,
+                snapshot=snapshot,
+                surface_points_hint=None,
+                range_estimate=None,
+                rgb_frame=None,
+            )
+        except Exception as exc:
+            log_warning(f"⚠️ 场景对象定位失败: {exc}")
             return None
-        depth_m = depth_value * scale
-        if depth_m <= 0:
+        if not localization:
             return None
-        fx = float(depth_intr.get("fx", 0.0) or 0.0)
-        fy = float(depth_intr.get("fy", 0.0) or 0.0)
-        cx_intr = float(depth_intr.get("cx", depth_w / 2))
-        cy_intr = float(depth_intr.get("cy", depth_h / 2))
-        if fx == 0.0 or fy == 0.0:
+        cam_center = localization.get("obj_center_3d")
+        if cam_center is None:
             return None
-        x_cam = (u_depth - cx_intr) * depth_m / fx
-        y_cam = (v_depth - cy_intr) * depth_m / fy
-        z_cam = depth_m
-        cam_point_mm = np.array([x_cam, y_cam, z_cam], dtype=float) * 1000.0
+        cam_point_mm = np.array(cam_center, dtype=float)
         robot_point_mm = SkillExecutor.transform_camera_to_robot(cam_point_mm)
         world_point_m = SkillExecutor.transform_robot_to_world(robot_point_mm, robot_pose)
         return cam_point_mm, robot_point_mm, world_point_m
 
-    @staticmethod
-    def _sample_depth(depth_map: np.ndarray, u: int, v: int, window: int = 5) -> Optional[float]:
-        h, w = depth_map.shape
-        half = window // 2
-        u_min = max(0, u - half)
-        u_max = min(w, u + half + 1)
-        v_min = max(0, v - half)
-        v_max = min(h, v + half + 1)
-        roi = depth_map[v_min:v_max, u_min:u_max]
-        if roi.size == 0:
+    def _build_snapshot(self, job: Dict[str, Any]) -> Optional[DepthSnapshot]:
+        depth_map = job.get("depth_map")
+        intr = job.get("depth_intrinsics") or {}
+        if depth_map is None:
             return None
-        valid = roi[roi > 0]
-        if valid.size == 0:
+        intrinsics = CameraIntrinsics(
+            fx=float(intr.get("fx", 0.0)),
+            fy=float(intr.get("fy", 0.0)),
+            cx=float(intr.get("cx", 0.0)),
+            cy=float(intr.get("cy", 0.0)),
+            width=int(intr.get("width", depth_map.shape[1] if hasattr(depth_map, "shape") else 0)),
+            height=int(intr.get("height", depth_map.shape[0] if hasattr(depth_map, "shape") else 0)),
+        )
+        if intrinsics.width == 0 or intrinsics.height == 0:
             return None
-        return float(np.median(valid))
+        timestamp = int(job.get("timestamp", time.time()))
+        dtype = str(depth_map.dtype) if hasattr(depth_map, "dtype") else "uint16"
+        return DepthSnapshot(
+            depth=np.array(depth_map, copy=True),
+            scale=float(job.get("scale", 1.0) or 1.0),
+            intrinsics=intrinsics,
+            timestamp=timestamp,
+            color_intrinsics=None,
+            dtype=dtype,
+        )

@@ -425,7 +425,7 @@ class TaskProcessor:
                     "depth_intrinsics": depth_bundle["depth_intrinsics"],
                     "scale": depth_bundle["scale"],
                     "robot_pose": self.navigator.get_current_pose(),
-                    "timestamp": time.time(),
+                    "timestamp": depth_bundle.get("timestamp", time.time()),
                 }
                 self.catalog_worker.submit(job)
             except Exception as exc:
@@ -447,6 +447,8 @@ class TaskProcessor:
                 "depth_map": depth_map,
                 "depth_intrinsics": data.get("depth_intrinsics", {}),
                 "scale": float(data.get("scale", 1.0) or 1.0),
+                "timestamp": data.get("timestamp"),
+                "dtype": data.get("dtype", "uint16"),
             }
         except Exception as exc:
             log_warning(f"⚠️ 获取深度帧失败: {exc}")

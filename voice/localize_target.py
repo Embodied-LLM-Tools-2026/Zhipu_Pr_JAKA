@@ -9,7 +9,18 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple
 import numpy as np
 import requests
 from PIL import Image
-
+from pyorbbecsdk import (
+    Config,
+    Pipeline,
+    OBSensorType,
+    OBFormat,
+    OBError,
+    FormatConvertFilter,
+    VideoFrame,
+    OBConvertFormat,
+    transformation2dto3d,
+    OBPoint2f,
+)
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "tools")))
 
 try:
@@ -22,37 +33,13 @@ from tools.zerograsp_wrapper import get_shared_zerograsp_runner
 
 DEFAULT_DEPTH_API = os.getenv("DEPTH_FRAME_API", "http://127.0.0.1:8000/api/depth/frame")
 
-
-@dataclass
-class CameraIntrinsics:
-    fx: float
-    fy: float
-    cx: float
-    cy: float
-    width: int
-    height: int
-
-
 @dataclass
 class DepthSnapshot:
     depth: np.ndarray
-    scale: float
-    intrinsics: CameraIntrinsics
+    intrinsics: Any
     timestamp: int
-    color_intrinsics: Optional[CameraIntrinsics] = None
+    extrinsic: Any
     dtype: str = "uint16"
-
-
-def _intr_from_dict(data: Dict[str, Any]) -> CameraIntrinsics:
-    return CameraIntrinsics(
-        fx=float(data.get("fx", 0.0)),
-        fy=float(data.get("fy", 0.0)),
-        cx=float(data.get("cx", 0.0)),
-        cy=float(data.get("cy", 0.0)),
-        width=int(data.get("width", 0)),
-        height=int(data.get("height", 0)),
-    )
-
 
 def decode_snapshot(payload: Dict[str, Any]) -> DepthSnapshot:
     depth_b64 = payload.get("depth_b64")
@@ -65,20 +52,13 @@ def decode_snapshot(payload: Dict[str, Any]) -> DepthSnapshot:
     if width <= 0 or height <= 0:
         raise ValueError("invalid depth dimensions")
     depth = np.frombuffer(depth_bytes, dtype=np.dtype(dtype)).reshape(height, width)
-    scale = float(payload.get("scale", 1.0) or 1.0)
-    intrinsics = _intr_from_dict(payload.get("depth_intrinsics", {}))
-    if intrinsics.width == 0:
-        intrinsics.width = width
-    if intrinsics.height == 0:
-        intrinsics.height = height
-    color_intr = payload.get("color_intrinsics")
-    color_intrinsics = _intr_from_dict(color_intr) if isinstance(color_intr, dict) else None
+    intrinsics = payload.get("depth_intrinsics", {})
+    extrinsic = payload.get("extrinsic", {})
     return DepthSnapshot(
         depth=depth,
-        scale=scale,
         intrinsics=intrinsics,
         timestamp=int(payload.get("timestamp", 0)),
-        color_intrinsics=color_intrinsics,
+        extrinsic=extrinsic,
         dtype=dtype,
     )
 
@@ -165,14 +145,15 @@ class TargetLocalizer:
             "bbox": transform["bbox"],
         }
 
-        if range_estimate is not None and range_estimate <= 0.5:
-            zg = self._run_zero_grasp_inference(
-                transform_result=transform,
-                bbox=transform["bbox"],
-                rgb_frame=rgb_frame,
-            )
-            if zg is not None:
-                payload["zerograsp"] = zg
+        # using absolute threshold for close-range objects
+        # if range_estimate is not None and range_estimate <= 0.5:
+        #     zg = self._run_zero_grasp_inference(
+        #         transform_result=transform,
+        #         bbox=transform["bbox"],
+        #         rgb_frame=rgb_frame,
+        #     )
+        #     if zg is not None:
+        #         payload["zerograsp"] = zg
 
         return payload
 
@@ -190,32 +171,23 @@ class TargetLocalizer:
         intr = snapshot.intrinsics
         depth = snapshot.depth
         height, width = depth.shape
+        extrinsic = snapshot.extrinsic
         x1, y1, x2, y2 = bbox
         x_min, x_max = sorted((max(0, x1), min(width, x2)))
         y_min, y_max = sorted((max(0, y1), min(height, y2)))
         if x_min >= x_max or y_min >= y_max:
             return None
 
-        scale = snapshot.scale or 1.0
-
-        def project_pixel(ix: int, iy: int, depth_val: float) -> Optional[List[float]]:
-            if depth_val <= 0:
-                return None
-            z = depth_val * scale
-            if intr.fx == 0 or intr.fy == 0:
-                return None
-            x = (ix - intr.cx) * z / intr.fx
-            y = (iy - intr.cy) * z / intr.fy
-            return [x, y, z]
-
         def project_pixels(pixels: Iterable[Tuple[int, int]]) -> List[List[float]]:
             out: List[List[float]] = []
             for ix, iy in pixels:
                 if 0 <= ix < width and 0 <= iy < height:
                     depth_val = float(depth[iy, ix])
-                    point = project_pixel(ix, iy, depth_val)
+                    point = transformation2dto3d(
+                            OBPoint2f(float(ix), float(iy)), depth_val, intr, extrinsic
+                        )
                     if point is not None:
-                        out.append(point)
+                        out.append([float(point.x), float(point.y), float(point.z)])
             return out
 
         bbox_pixels = [
@@ -258,7 +230,6 @@ class TargetLocalizer:
             "depth_data": depth,
             "depth_width": width,
             "depth_height": height,
-            "scale": scale,
         }
 
     def _build_surface_mask(
@@ -297,13 +268,6 @@ class TargetLocalizer:
         project_pixels: Any,
         surface_mask: Optional[np.ndarray],
     ) -> np.ndarray:
-        x_min, x_max, y_min, y_max = bbox
-        cx, cy = center_px
-
-        base_w = max(8, self.obj_range_width // 2)
-        base_h = max(6, self.obj_range_height // 2)
-        depth_threshold = max(80.0, abs(center_depth) * 0.15)
-
         sampled_pixels: List[Tuple[int, int]] = []
         if surface_mask is not None:
             indices = np.argwhere(surface_mask > 0)
@@ -315,21 +279,21 @@ class TargetLocalizer:
                     if depth_val > 0:
                         sampled_pixels.append((ix, iy))
 
-        if not sampled_pixels:
-            for scale in (1.0, 1.5, 2.0, 2.5):
-                half_w = int(base_w * scale)
-                half_h = int(base_h * scale)
-                stride = max(1, int(self.obj_range_stride * scale))
-                for ix in range(cx - half_w, cx + half_w + 1, stride):
-                    for iy in range(cy - half_h, cy + half_h + 1, stride):
-                        if x_min <= ix < x_max and y_min <= iy < y_max:
-                            continue
-                        if 0 <= ix < depth_width and 0 <= iy < depth_height:
-                            depth_val = float(depth_data[iy, ix])
-                            if depth_val <= 0:
-                                continue
-                            if abs(depth_val - center_depth) <= depth_threshold:
-                                sampled_pixels.append((ix, iy))
+        # if not sampled_pixels:
+        #     for scale in (1.0, 1.5, 2.0, 2.5):
+        #         half_w = int(base_w * scale)
+        #         half_h = int(base_h * scale)
+        #         stride = max(1, int(self.obj_range_stride * scale))
+        #         for ix in range(cx - half_w, cx + half_w + 1, stride):
+        #             for iy in range(cy - half_h, cy + half_h + 1, stride):
+        #                 if x_min <= ix < x_max and y_min <= iy < y_max:
+        #                     continue
+        #                 if 0 <= ix < depth_width and 0 <= iy < depth_height:
+        #                     depth_val = float(depth_data[iy, ix])
+        #                     if depth_val <= 0:
+        #                         continue
+        #                     if abs(depth_val - center_depth) <= depth_threshold:
+        #                         sampled_pixels.append((ix, iy))
 
         max_samples = 1200
         if len(sampled_pixels) > max_samples:
@@ -496,7 +460,7 @@ class TargetLocalizer:
 
 
 __all__ = [
-    "CameraIntrinsics",
+    "Any",
     "DepthSnapshot",
     "decode_snapshot",
     "fetch_snapshot",

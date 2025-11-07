@@ -78,7 +78,7 @@ class BehaviorPlanner:
             "allowed_actions": [
                 "observe_scene",
                 "rotate_scan",
-                "search_area",
+                # "search_area",
                 "approach_far",
                 "approach_bbox",
                 "localize",
@@ -87,12 +87,24 @@ class BehaviorPlanner:
                 "place",
                 "recover",
             ],
+            "action_docs": {
+                "observe_scene": "触发 RGBD/VLM 观测，刷新世界模型",
+                "rotate_scan": "原地旋转或摆头扫描寻找目标",
+                # "search_area": "按照区域顺序移动/旋转以搜索目标",
+                "approach_far": "当距离大于5米时沿机器人与目标连线迈大步靠近",
+                "approach_bbox": "近距离时依据像素框对齐并小步推进",
+                "localize": "调用视觉/传感器进行局部定位或平面估计",
+                "finalize_target_pose": "基于精定位调整底盘姿态至抓取位",
+                "pick": "驱动机械臂/夹爪完成抓取",
+                "place": "移动至放置区域并释放物体",
+                "recover": "执行回退/重置动作以从失败状态恢复",
+            },
             "rules": [
                 "仅输出合法JSON，禁止多余解释",
                 "check节点的参数必须是cond字段",
                 "action节点的name必须来自词表",
-                f"当 objects.{goal}.attrs.range_estimate 大于 5 时，必须先调用 approach_far 再进行后续操作",
-                "在执行任何移动（approach_far、approach_bbox、search_area、finalize_target_pose）之前或之后，应插入 observe_scene 以刷新观测",
+                f"当 objects.{goal}.attrs.range_estimate 大于 5 时，请先调用 approach_far 再观察是否jin ru进行后续操作",
+                "在执行任何移动（approach_far、approach_bbox、rotate_scan、finalize_target_pose）之前或之后，应插入 observe_scene 以刷新观测",
             ],
         }
 

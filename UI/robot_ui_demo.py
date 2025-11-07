@@ -1358,34 +1358,23 @@ def api_depth_frame():
     return JSONResponse({"error": "depth frame unavailable"}, status_code=503)
 
   try:
-    color_vf = color_frame.as_video_frame()
-    depth_vf = depth_frame.as_video_frame()
-    depth_width = depth_vf.get_width()
-    depth_height = depth_vf.get_height()
-    depth_profile = depth_vf.get_stream_profile().as_video_stream_profile()
-    color_profile = color_vf.get_stream_profile().as_video_stream_profile()
-    depth_intr = depth_profile.get_intrinsic()
-    color_intr = color_profile.get_intrinsic()
-    depth_data = np.frombuffer(depth_vf.get_data(), dtype=np.uint16).reshape(depth_height, depth_width)
-    try:
-      scale = float(depth_vf.get_value_scale())  # type: ignore[attr-defined]
-    except Exception:
-      scale = 1.0
+    color_frame = color_frame.as_video_frame()
+    depth_frame = depth_frame.as_video_frame()
+
+    depth_width = depth_frame.get_width()
+    depth_height = depth_frame.get_height()
+
+    color_profile = color_frame.get_stream_profile()
+    depth_profile = depth_frame.get_stream_profile()
+    print("video profile:", color_profile.as_video_stream_profile())
+    color_intrinsics = color_profile.as_video_stream_profile().get_intrinsic()
+    color_distortion = color_profile.as_video_stream_profile().get_distortion()
+    depth_intrinsics = depth_profile.as_video_stream_profile().get_intrinsic()
+    depth_distortion = depth_profile.as_video_stream_profile().get_distortion()
+    extrinsic = depth_profile.get_extrinsic_to(color_profile)
+    depth_data = np.frombuffer(depth_frame.get_data(), dtype=np.uint16).reshape(depth_height, depth_width)
   except Exception as exc:
     return JSONResponse({"error": f"prepare depth bundle failed: {exc}"}, status_code=500)
-
-  def _intr_to_dict(intr, fallback_w, fallback_h):
-    return {
-        "fx": float(getattr(intr, "fx", 0.0)),
-        "fy": float(getattr(intr, "fy", 0.0)),
-        "cx": float(getattr(intr, "cx", fallback_w / 2)),
-        "cy": float(getattr(intr, "cy", fallback_h / 2)),
-        "width": int(getattr(intr, "width", fallback_w)),
-        "height": int(getattr(intr, "height", fallback_h)),
-    }
-
-  depth_intrinsics = _intr_to_dict(depth_intr, depth_width, depth_height)
-  color_intrinsics = _intr_to_dict(color_intr, color_vf.get_width(), color_vf.get_height())
 
   depth_bytes = depth_data.astype(np.uint16, copy=False).tobytes()
   depth_b64 = base64.b64encode(depth_bytes).decode("ascii")
@@ -1395,10 +1384,9 @@ def api_depth_frame():
       "height": depth_height,
       "timestamp": int(time.time() * 1000),
       "depth_intrinsics": depth_intrinsics,
-      "color_intrinsics": color_intrinsics,
+      "extrinsic": extrinsic,
       "depth_b64": depth_b64,
       "dtype": str(depth_data.dtype),
-      "scale": scale,
   }
 
 

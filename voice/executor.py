@@ -479,7 +479,6 @@ class SkillExecutor:
             navigator=self.navigator,
             observation=observation,
             surface_points=observation.surface_points,
-            surface_region=observation.surface_roi,
         )
         return self._ensure_depth_localization(runtime)
 
