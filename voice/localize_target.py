@@ -37,7 +37,6 @@ DEFAULT_DEPTH_API = os.getenv("DEPTH_FRAME_API", "http://127.0.0.1:8000/api/dept
 class DepthSnapshot:
     depth: np.ndarray
     intrinsics: Any
-    timestamp: int
     extrinsic: Any
     dtype: str = "uint16"
 
@@ -57,7 +56,6 @@ def decode_snapshot(payload: Dict[str, Any]) -> DepthSnapshot:
     return DepthSnapshot(
         depth=depth,
         intrinsics=intrinsics,
-        timestamp=int(payload.get("timestamp", 0)),
         extrinsic=extrinsic,
         dtype=dtype,
     )
@@ -77,18 +75,12 @@ class TargetLocalizer:
         self,
         *,
         depth_api: str = DEFAULT_DEPTH_API,
-        obj_range_width: int = 100,
-        obj_range_height: int = 25,
-        obj_range_stride: int = 2,
     ) -> None:
         self.depth_api = depth_api
-        self.obj_range_width = obj_range_width
-        self.obj_range_height = obj_range_height
-        self.obj_range_stride = obj_range_stride
 
     # ------------------------------------------------------------------
     # Public entry points
-    # ------------------------------------------------------------------
+    # ---------------------------------------------------------------
     def localize_from_service(
         self,
         bbox: Iterable[float],
@@ -278,22 +270,6 @@ class TargetLocalizer:
                     depth_val = float(depth_data[iy, ix])
                     if depth_val > 0:
                         sampled_pixels.append((ix, iy))
-
-        # if not sampled_pixels:
-        #     for scale in (1.0, 1.5, 2.0, 2.5):
-        #         half_w = int(base_w * scale)
-        #         half_h = int(base_h * scale)
-        #         stride = max(1, int(self.obj_range_stride * scale))
-        #         for ix in range(cx - half_w, cx + half_w + 1, stride):
-        #             for iy in range(cy - half_h, cy + half_h + 1, stride):
-        #                 if x_min <= ix < x_max and y_min <= iy < y_max:
-        #                     continue
-        #                 if 0 <= ix < depth_width and 0 <= iy < depth_height:
-        #                     depth_val = float(depth_data[iy, ix])
-        #                     if depth_val <= 0:
-        #                         continue
-        #                     if abs(depth_val - center_depth) <= depth_threshold:
-        #                         sampled_pixels.append((ix, iy))
 
         max_samples = 1200
         if len(sampled_pixels) > max_samples:

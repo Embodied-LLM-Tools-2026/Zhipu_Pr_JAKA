@@ -75,6 +75,7 @@ class SkillExecutor:
         theta = pose["theta"]
         x_oa = pose["x"] * 1000.0
         y_oa = pose["y"] * 1000.0
+        # todo 
         x_ob = x_oa + (x_ab * math.cos(theta) - y_ab * math.sin(theta))
         y_ob = y_oa + (x_ab * math.sin(theta) + y_ab * math.cos(theta))
         return np.array([x_ob / 1000.0, y_ob / 1000.0, z_ab / 1000.0], dtype=float)
@@ -112,13 +113,13 @@ class SkillExecutor:
         status = "success" if success else "failure"
         return ExecutionResult(status=status, node="rotate_scan")
 
-    def _skill_search_area(self, args: Dict[str, Any], runtime: SkillRuntime) -> ExecutionResult:
-        order = args.get("area_order", [])
-        log_info(f"🔍 搜索区域: {order}")
-        # MVP: simple rotate scan
-        result = self._skill_rotate_scan({"angle_deg": 45.0}, runtime)
-        metadata = {"area_order": order, "found": bool(runtime.observation and runtime.observation.found)}
-        return ExecutionResult(status=result.status, node="search_area", reason=result.reason, evidence=metadata)
+    # def _skill_search_area(self, args: Dict[str, Any], runtime: SkillRuntime) -> ExecutionResult:
+    #     order = args.get("area_order", [])
+    #     log_info(f"🔍 搜索区域: {order}")
+    #     # MVP: simple rotate scan
+    #     result = self._skill_rotate_scan({"angle_deg": 45.0}, runtime)
+    #     metadata = {"area_order": order, "found": bool(runtime.observation and runtime.observation.found)}
+    #     return ExecutionResult(status=result.status, node="search_area", reason=result.reason, evidence=metadata)
 
     def _skill_approach_far(self, args: Dict[str, Any], runtime: SkillRuntime) -> ExecutionResult:
         navigator = runtime.navigator
@@ -137,17 +138,17 @@ class SkillExecutor:
         if dist_m is None and observation and observation.world_center:
             wc = np.array(observation.world_center, dtype=float)
             dist_m = float(np.linalg.norm(wc[:2]))
-        if dist_m is None and runtime.world_model and target:
-            obj = runtime.world_model.objects.get(target)
-            if obj:
-                dist_m = obj.attrs.get("range_estimate")
+        # if dist_m is None and runtime.world_model and target:
+        #     obj = runtime.world_model.objects.get(target)
+        #     if obj:
+        #         dist_m = obj.attrs.get("range_estimate")
         if dist_m is not None and dist_m <= 5.0:
             return ExecutionResult(status="success", node="approach_far", reason="distance_within_threshold")
 
         if observation is None or not observation.found:
             return ExecutionResult(status="failure", node="approach_far", reason="no_observation")
 
-        pose = navigator.get_current_pose()
+        pose = observation.robot_pose or navigator.get_current_pose()
         current_position = np.array([pose["x"], pose["y"]], dtype=float)
 
         direction_vector: Optional[np.ndarray] = None
@@ -155,12 +156,12 @@ class SkillExecutor:
             wc = np.array(observation.world_center, dtype=float)
             target_position = wc[:2]
             direction_vector = target_position - current_position
-        elif observation.robot_center:
-            rc = np.array(observation.robot_center, dtype=float) / 1000.0
-            direction_vector = rc[:2]
-        elif observation.range_estimate:
-            theta = pose["theta"]
-            direction_vector = np.array([math.cos(theta), math.sin(theta)], dtype=float) * observation.range_estimate
+        # elif observation.robot_center:
+        #     rc = np.array(observation.robot_center, dtype=float) / 1000.0
+        #     direction_vector = rc[:2]
+        # elif observation.range_estimate:
+        #     theta = pose["theta"]
+        #     direction_vector = np.array([math.cos(theta), math.sin(theta)], dtype=float) * observation.range_estimate
 
         if direction_vector is None or np.linalg.norm(direction_vector) < 1e-3:
             return ExecutionResult(status="failure", node="approach_far", reason="no_direction_vector")
@@ -190,45 +191,45 @@ class SkillExecutor:
             evidence={"distance": step_distance, "target_theta": new_theta},
         )
 
-    def _skill_approach_bbox(self, args: Dict[str, Any], runtime: SkillRuntime) -> ExecutionResult:
-        observation = runtime.observation
-        if observation is None or not observation.found or not observation.bbox:
-            return ExecutionResult(
-                status="failure",
-                node="approach_bbox",
-                reason="target_not_visible",
-            )
-        navigator = runtime.navigator
-        bbox = observation.bbox
-        image_size = observation.image_size
-        centered = self.control_chassis_to_center(
-            bbox,
-            image_size,
-            navigator=navigator,
-            tolerance_px=args.get("tolerance_px"),
-        )
-        if not centered:
-            return ExecutionResult(
-                status="failure",
-                node="approach_bbox",
-                reason="center_alignment_failed",
-                evidence={"bbox": bbox},
-            )
-        range_estimate = observation.range_estimate
-        distance = float(args.get("distance") or 0.0)
-        if distance == 0.0 and range_estimate:
-            step = max(0.2, min(0.6, range_estimate - self.search_distance_threshold))
-            distance = step if step > 0 else 0.3
-        if distance:
-            moved = self.control_chassis_forward(distance, navigator=navigator)
-            status = "success" if moved else "failure"
-            return ExecutionResult(
-                status=status,
-                node="approach_bbox",
-                reason=None if moved else "move_forward_failed",
-                evidence={"distance": distance},
-            )
-        return ExecutionResult(status="success", node="approach_bbox")
+    # def _skill_approach_bbox(self, args: Dict[str, Any], runtime: SkillRuntime) -> ExecutionResult:
+    #     observation = runtime.observation
+    #     if observation is None or not observation.found or not observation.bbox:
+    #         return ExecutionResult(
+    #             status="failure",
+    #             node="approach_bbox",
+    #             reason="target_not_visible",
+    #         )
+    #     navigator = runtime.navigator
+    #     bbox = observation.bbox
+    #     image_size = observation.image_size
+    #     centered = self.control_chassis_to_center(
+    #         bbox,
+    #         image_size,
+    #         navigator=navigator,
+    #         tolerance_px=args.get("tolerance_px"),
+    #     )
+    #     if not centered:
+    #         return ExecutionResult(
+    #             status="failure",
+    #             node="approach_bbox",
+    #             reason="center_alignment_failed",
+    #             evidence={"bbox": bbox},
+    #         )
+    #     range_estimate = observation.range_estimate
+    #     distance = float(args.get("distance") or 0.0)
+    #     if distance == 0.0 and range_estimate:
+    #         step = max(0.2, min(0.6, range_estimate - self.search_distance_threshold))
+    #         distance = step if step > 0 else 0.3
+    #     if distance:
+    #         moved = self.control_chassis_forward(distance, navigator=navigator)
+    #         status = "success" if moved else "failure"
+    #         return ExecutionResult(
+    #             status=status,
+    #             node="approach_bbox",
+    #             reason=None if moved else "move_forward_failed",
+    #             evidence={"distance": distance},
+    #         )
+    #     return ExecutionResult(status="success", node="approach_bbox")
 
     def _skill_finalize_target_pose(self, args: Dict[str, Any], runtime: SkillRuntime) -> ExecutionResult:
         navigator = runtime.navigator
@@ -320,102 +321,116 @@ class SkillExecutor:
             reason=None if success else "recover_failed",
         )
 
+    def _skill_predict_grasp_point(self, args: Dict[str, Any], runtime: SkillRuntime) -> ExecutionResult:
+        """
+        Placeholder for ZeroGrasp/抓取点预测接口。
+        """
+        log_info("🤖 predict_grasp_point: 预留ZeroGrasp接口（当前返回成功）")
+        return ExecutionResult(status="success", node="predict_grasp_point")
+
+    def _skill_execute_grasp(self, args: Dict[str, Any], runtime: SkillRuntime) -> ExecutionResult:
+        """
+        Placeholder for真实抓取策略接口。
+        """
+        log_info("🤖 execute_grasp: 预留抓取执行接口（当前返回成功）")
+        return ExecutionResult(status="success", node="execute_grasp")
+
     # ------------------------------------------------------------------
     # Helpers adapted from legacy TaskProcessor
     # ------------------------------------------------------------------
-    def control_chassis_to_center(
-        self,
-        bbox,
-        image_size,
-        navigator=None,
-        tolerance_px: Optional[float] = None,
-    ):
-        navigator = navigator or self.navigator
-        if navigator is None:
-            log_error("❌ 底盘中心对齐失败：缺少导航控制器")
-            return False
-        try:
-            if not bbox or len(bbox) < 4:
-                log_warning("⚠️ 底盘中心对齐: 边界框无效")
-                return False
-            if not image_size or len(image_size) < 2:
-                log_warning("⚠️ 底盘中心对齐: 图像尺寸无效")
-                return False
+    # def control_chassis_to_center(
+    #     self,
+    #     bbox,
+    #     image_size,
+    #     navigator=None,
+    #     tolerance_px: Optional[float] = None,
+    # ):
+    #     navigator = navigator or self.navigator
+    #     if navigator is None:
+    #         log_error("❌ 底盘中心对齐失败：缺少导航控制器")
+    #         return False
+    #     try:
+    #         if not bbox or len(bbox) < 4:
+    #             log_warning("⚠️ 底盘中心对齐: 边界框无效")
+    #             return False
+    #         if not image_size or len(image_size) < 2:
+    #             log_warning("⚠️ 底盘中心对齐: 图像尺寸无效")
+    #             return False
 
-            img_center_x = image_size[0] / 2.0
-            img_center_y = image_size[1] / 2.0
+    #         img_center_x = image_size[0] / 2.0
+    #         img_center_y = image_size[1] / 2.0
 
-            x1, y1, x2, y2 = bbox
-            bbox_center_x = (x1 + x2) / 2.0
-            bbox_center_y = (y1 + y2) / 2.0
+    #         x1, y1, x2, y2 = bbox
+    #         bbox_center_x = (x1 + x2) / 2.0
+    #         bbox_center_y = (y1 + y2) / 2.0
 
-            dx_pixels = img_center_x - bbox_center_x
-            dy_pixels = img_center_y - bbox_center_y
+    #         dx_pixels = img_center_x - bbox_center_x
+    #         dy_pixels = img_center_y - bbox_center_y
 
-            log_info(f"🎯 底盘中心对齐: 像素偏差({dx_pixels:.1f}, {dy_pixels:.1f})")
+    #         log_info(f"🎯 底盘中心对齐: 像素偏差({dx_pixels:.1f}, {dy_pixels:.1f})")
 
-            tolerance = tolerance_px if tolerance_px is not None else 50.0
-            if abs(dx_pixels) < tolerance and abs(dy_pixels) < tolerance:
-                log_success("✅ 目标已在视野中心")
-                self.moved_to_center = False
-                return True
+    #         tolerance = tolerance_px if tolerance_px is not None else 50.0
+    #         if abs(dx_pixels) < tolerance and abs(dy_pixels) < tolerance:
+    #             log_success("✅ 目标已在视野中心")
+    #             self.moved_to_center = False
+    #             return True
 
-            turn_angle_rad = math.atan(dx_pixels / self.camera_fx) * 0.7
-            turn_angle_deg = -math.degrees(turn_angle_rad)
-            log_info(f"💡 像素转角度: {dx_pixels:.1f}px → {turn_angle_deg:.2f}°")
+    #         turn_angle_rad = math.atan(dx_pixels / self.camera_fx) * 0.7
+    #         turn_angle_deg = -math.degrees(turn_angle_rad)
+    #         log_info(f"💡 像素转角度: {dx_pixels:.1f}px → {turn_angle_deg:.2f}°")
 
-            min_turn_angle_deg = 0.5
-            if abs(turn_angle_deg) < min_turn_angle_deg:
-                log_success("✅ 转向角度不足，无需调整")
-                self.moved_to_center = False
-                return True
+    #         min_turn_angle_deg = 0.5
+    #         if abs(turn_angle_deg) < min_turn_angle_deg:
+    #             log_success("✅ 转向角度不足，无需调整")
+    #             self.moved_to_center = False
+    #             return True
 
-            current_pose = navigator.get_current_pose()
-            current_x = current_pose["x"]
-            current_y = current_pose["y"]
-            current_theta = current_pose["theta"]
-            new_theta = current_theta + turn_angle_rad
-            success = navigator.move_to_position(new_theta, current_x, current_y)
-            if success:
-                log_success("✅ 底盘转向成功")
-                self.moved_to_center = True
-            else:
-                log_error("❌ 底盘转向失败")
-                self.moved_to_center = False
-            return success
-        except Exception as exc:
-            log_error(f"❌ 中心对齐异常: {exc}")
-            self.moved_to_center = False
-            return False
+    #         current_pose = navigator.get_current_pose()
+    #         current_x = current_pose["x"]
+    #         current_y = current_pose["y"]
+    #         current_theta = current_pose["theta"]
+    #         new_theta = current_theta + turn_angle_rad
+    #         success = navigator.move_to_position(new_theta, current_x, current_y)
+    #         if success:
+    #             log_success("✅ 底盘转向成功")
+    #             self.moved_to_center = True
+    #         else:
+    #             log_error("❌ 底盘转向失败")
+    #             self.moved_to_center = False
+    #         return success
+    #     except Exception as exc:
+    #         log_error(f"❌ 中心对齐异常: {exc}")
+    #         self.moved_to_center = False
+    #         return False
 
-    def control_chassis_forward(self, distance: float = 1.0, navigator=None):
-        navigator = navigator or self.navigator
-        if navigator is None:
-            log_error("❌ 底盘前进失败: Navigator 实例不可用")
-            return False
-        try:
-            current_pose = navigator.get_current_pose()
-            x0 = current_pose["x"]
-            y0 = current_pose["y"]
-            theta = current_pose["theta"]
-        except Exception as exc:
-            log_error(f"❌ 获取当前位置失败: {exc}")
-            return False
-        x_new = x0 + distance * math.cos(theta)
-        y_new = y0 + distance * math.sin(theta)
-        log_info(
-            f"🤖 底盘前进: 当前({x0:.2f}, {y0:.2f}) → 目标({x_new:.2f}, {y_new:.2f}), 距离={distance:.2f}m"
-        )
-        try:
-            success = navigator.move_to_position(theta, x_new, y_new)
-            if success:
-                log_success("✅ 底盘前进成功")
-            else:
-                log_error("❌ 底盘前进失败")
-            return success
-        except Exception as exc:
-            log_error(f"❌ 底盘前进异常: {exc}")
-            return False
+    # # def control_chassis_forward(self, distance: float = 1.0, navigator=None):
+    #     navigator = navigator or self.navigator
+    #     if navigator is None:
+    #         log_error("❌ 底盘前进失败: Navigator 实例不可用")
+    #         return False
+    #     try:
+    #         current_pose = navigator.get_current_pose()
+    #         x0 = current_pose["x"]
+    #         y0 = current_pose["y"]
+    #         theta = current_pose["theta"]
+    #     except Exception as exc:
+    #         log_error(f"❌ 获取当前位置失败: {exc}")
+    #         return False
+    #     x_new = x0 + distance * math.cos(theta)
+    #     y_new = y0 + distance * math.sin(theta)
+    #     log_info(
+    #         f"🤖 底盘前进: 当前({x0:.2f}, {y0:.2f}) → 目标({x_new:.2f}, {y_new:.2f}), 距离={distance:.2f}m"
+    #     )
+    #     try:
+    #         success = navigator.move_to_position(theta, x_new, y_new)
+    #         if success:
+    #             log_success("✅ 底盘前进成功")
+    #         else:
+    #             log_error("❌ 底盘前进失败")
+    #         return success
+    #     except Exception as exc:
+    #         log_error(f"❌ 底盘前进异常: {exc}")
+    #         return False
 
     def control_turn_around(self, navigator, turn_angle: float = 0.785):
         try:
@@ -494,7 +509,8 @@ class SkillExecutor:
             return None
         cam_point_mm = np.array(cam_center, dtype=float)
         robot_point_mm = self.transform_camera_to_robot(cam_point_mm)
-        world_point_m = self.transform_robot_to_world(robot_point_mm, nav.get_current_pose())
+        # todo ： when get current_pose？
+        world_point_m = self.transform_robot_to_world(robot_point_mm, observation.robot_pose or nav.get_current_pose())
         return {
             "camera_center": cam_point_mm.tolist(),
             "robot_center": robot_point_mm.tolist(),

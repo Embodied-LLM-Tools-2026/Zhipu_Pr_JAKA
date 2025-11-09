@@ -69,10 +69,21 @@ class SceneCatalogWorker:
                 log_error(f"❌ 场景建模任务失败: {exc}")
             finally:
                 self.queue.task_done()
-
+# job = {
+#     "image_path": observation.original_image_path,
+#     "image_size": observation.image_size,
+#     "depth_map": depth_bundle.depth,
+#     "depth_intrinsics": depth_bundle.intrinsics,
+#     "extrinsics": depth_bundle.extrinsics,
+#     "robot_pose": observation.robot_pose,
+# }
     def _process_job(self, job: Dict[str, Any]) -> None:
         image_path = job.get("image_path")
-        snapshot = self._build_snapshot(job)
+        snapshot = DepthSnapshot(
+            depth=job.get("depth_map"),
+            intrinsics=job.get("depth_intrinsics"),
+            extrinsics=job.get("extrinsics"),
+        )
         image_size = job.get("image_size") or [1, 1]
         robot_pose = job.get("robot_pose")
         if image_path is None or snapshot is None or robot_pose is None:
@@ -217,28 +228,3 @@ class SceneCatalogWorker:
         world_point_m = SkillExecutor.transform_robot_to_world(robot_point_mm, robot_pose)
         return cam_point_mm, robot_point_mm, world_point_m
 
-    def _build_snapshot(self, job: Dict[str, Any]) -> Optional[DepthSnapshot]:
-        depth_map = job.get("depth_map")
-        intr = job.get("depth_intrinsics") or {}
-        if depth_map is None:
-            return None
-        intrinsics = CameraIntrinsics(
-            fx=float(intr.get("fx", 0.0)),
-            fy=float(intr.get("fy", 0.0)),
-            cx=float(intr.get("cx", 0.0)),
-            cy=float(intr.get("cy", 0.0)),
-            width=int(intr.get("width", depth_map.shape[1] if hasattr(depth_map, "shape") else 0)),
-            height=int(intr.get("height", depth_map.shape[0] if hasattr(depth_map, "shape") else 0)),
-        )
-        if intrinsics.width == 0 or intrinsics.height == 0:
-            return None
-        timestamp = int(job.get("timestamp", time.time()))
-        dtype = str(depth_map.dtype) if hasattr(depth_map, "dtype") else "uint16"
-        return DepthSnapshot(
-            depth=np.array(depth_map, copy=True),
-            scale=float(job.get("scale", 1.0) or 1.0),
-            intrinsics=intrinsics,
-            timestamp=timestamp,
-            color_intrinsics=None,
-            dtype=dtype,
-        )

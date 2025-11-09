@@ -26,8 +26,8 @@ from upload_image import upload_file_and_get_url  # type: ignore
 
 from .config import Config
 from .task_structures import ObservationPhase, ObservationResult
-
-
+from .localize_target import fetch_snapshot
+from ..action_sequence.navigate import Navigate
 @dataclass
 class ObservationContext:
     step: int
@@ -54,12 +54,15 @@ class VLMObserver:
         target_name: str,
         phase: ObservationPhase,
         context: ObservationContext,
+        navigator: Navigate,
     ) -> Tuple[ObservationResult, Dict[str, Any]]:
         """Capture, query VLM and return structured observation."""
         image_capture = self._capture_image(self.cam_name)
         if not image_capture.path:
             raise RuntimeError("采集图片失败")
-
+        depth_snapshot = fetch_snapshot()
+        if not depth_snapshot:
+            raise RuntimeError("采集深度快照失败")
         prep_info = self._prepare_image_for_vlm(image_capture.path)
         processed_path = prep_info["path"]
         original_size = prep_info["original_size"]
@@ -86,7 +89,8 @@ class VLMObserver:
 
         if payload:
             self._push_detection_to_frontend(payload)
-
+        observation.depth_snapshot = depth_snapshot
+        observation.robot_pose = navigator.get_current_pose()
         return observation, payload
 
     # ------------------------------------------------------------------
@@ -184,7 +188,7 @@ class VLMObserver:
             '  "range_estimate": number // 估计距离（米），无法估计用 -1,',
             '  "analysis": "<简短中文说明>",',
             '  "surface_roi": [x_min, y_min, x_max, y_max], // 可选',
-            '  "surface_points": [[x, y], ...] // 可选，背景平面点',
+            '  "surface_points": [[x, y], ...] // 可选，背景平面点，一般是指承载目标物体的平面',
             "}",
             "禁止返回其他键。确保JSON合法。",
         ]

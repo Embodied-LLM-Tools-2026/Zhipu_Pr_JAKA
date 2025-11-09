@@ -387,7 +387,8 @@ class TaskProcessor:
             surface_region=surface_region,
             surface_points=surface_points,
         )
-        observation, frontend_payload = self.observer.observe(target_name, phase, context)
+        observation, frontend_payload = self.observer.observe(target_name, phase, context, self.navigator)
+
         self.world.update_from_observation(target_name, observation)
 
         pose_info = self.executor.estimate_observation_pose(observation, self.navigator)
@@ -406,6 +407,7 @@ class TaskProcessor:
             if distance_m is not None:
                 observation.range_estimate = distance_m
                 distance_attr["range_estimate"] = distance_m
+            # todo : no need to store every center,only world center is ok
             self.world.update_pose_estimate(
                 target_name,
                 camera_center=pose_info.get("camera_center"),
@@ -414,45 +416,23 @@ class TaskProcessor:
                 confidence=pose_info.get("confidence"),
                 attrs=distance_attr or None,
             )
-
-        depth_bundle = self._fetch_depth_bundle()
-        if depth_bundle and observation.original_image_path and self.navigator is not None:
-            try:
-                job = {
-                    "image_path": observation.original_image_path,
-                    "image_size": observation.image_size,
-                    "depth_map": depth_bundle["depth_map"].copy(),
-                    "depth_intrinsics": depth_bundle["depth_intrinsics"],
-                    "scale": depth_bundle["scale"],
-                    "robot_pose": self.navigator.get_current_pose(),
-                    "timestamp": depth_bundle.get("timestamp", time.time()),
-                }
-                self.catalog_worker.submit(job)
-            except Exception as exc:
-                log_warning(f"⚠️ 提交场景建模任务失败: {exc}")
+            # todo : merge depth get from frontend
+            depth_bundle = observation.depth_snapshot
+            if depth_bundle and observation.original_image_path and self.navigator is not None:
+                try:
+                    job = {
+                        "image_path": observation.original_image_path,
+                        "image_size": observation.image_size,
+                        "depth_map": depth_bundle.depth,
+                        "depth_intrinsics": depth_bundle.intrinsics,
+                        "extrinsics": depth_bundle.extrinsics,
+                        "robot_pose": observation.robot_pose,
+                    }
+                    self.catalog_worker.submit(job)
+                except Exception as exc:
+                    log_warning(f"⚠️ 提交场景建模任务失败: {exc}")
 
         return observation, frontend_payload
-
-    def _fetch_depth_bundle(self) -> Optional[Dict[str, Any]]:
-        try:
-            resp = requests.get("http://127.0.0.1:8000/api/depth/frame", timeout=3)
-            data = resp.json()
-            depth_bytes = base64.b64decode(data.get("depth_b64", ""))
-            width = int(data.get("width", 0))
-            height = int(data.get("height", 0))
-            if width <= 0 or height <= 0 or len(depth_bytes) == 0:
-                return None
-            depth_map = np.frombuffer(depth_bytes, dtype=np.uint16).reshape(height, width)
-            return {
-                "depth_map": depth_map,
-                "depth_intrinsics": data.get("depth_intrinsics", {}),
-                "scale": float(data.get("scale", 1.0) or 1.0),
-                "timestamp": data.get("timestamp"),
-                "dtype": data.get("dtype", "uint16"),
-            }
-        except Exception as exc:
-            log_warning(f"⚠️ 获取深度帧失败: {exc}")
-            return None
 
     # ------------------------------------------------------------------
     def process_grasp_task(self, target_name: str, navigator, cam_name: str = "front") -> Dict[str, Any]:
@@ -518,7 +498,7 @@ class TaskProcessor:
                 "evidence": result.evidence,
             }
             self.world.record_execution_result(exec_record)
-
+            # todo : 实现每次移动前先观察是通过清空current_observation吗？这是兜底方案？
             if result.success:
                 self.plan_step_index += 1
                 movement_nodes = {"approach_far", "approach_bbox", "search_area", "rotate_scan", "finalize_target_pose"}

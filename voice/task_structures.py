@@ -11,7 +11,7 @@ from __future__ import annotations
 import enum
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
-
+from .localize_target import DepthSnapshot
 
 class ObservationPhase(enum.Enum):
     """High-level observation stage for prompt selection."""
@@ -23,7 +23,7 @@ class ObservationPhase(enum.Enum):
 @dataclass
 class ObservationResult:
     """Structured output returned by the VLM observer."""
-
+    # todo : add depth info in ObservationResult
     found: bool
     bbox: List[float]
     image_size: List[int]
@@ -39,6 +39,8 @@ class ObservationResult:
     camera_center: Optional[List[float]] = None
     robot_center: Optional[List[float]] = None
     world_center: Optional[List[float]] = None
+    depth_snapshot: Optional[DepthSnapshot] = None
+    robot_pose: Optional[Dict[str, float]] = None
 
     def as_dict(self) -> Dict[str, Any]:
         return {

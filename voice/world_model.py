@@ -61,7 +61,7 @@ class WorldModel:
         self._last_execution: Optional[Dict[str, Any]] = None
         self._lock = threading.RLock()
         self._id_counters: Dict[str, int] = {}
-        self.catalog_merge_threshold = 0.35  # metres
+        self.catalog_merge_threshold = 0.2  # metres
 
     # ------------------------------------------------------------------
     # Goal & snapshot helpers
@@ -69,7 +69,7 @@ class WorldModel:
     def set_goal(self, goal: str) -> None:
         with self._lock:
             self.goal = goal
-
+    # todo : how to make a info-enough snapshot for LLM planner?
     def snapshot(self) -> Dict[str, Any]:
         """Return a serialisable summary for planner consumption."""
         with self._lock:
@@ -110,7 +110,7 @@ class WorldModel:
             if vantage:
                 state.vantage_points = vantage
             self.areas[name] = state
-
+    # todo : remove some info , something needed in ObservationResult but not in world model
     def update_from_observation(
         self, target_id: str, observation: ObservationResult, current_area: Optional[str] = None
     ) -> None:
@@ -249,7 +249,7 @@ class WorldModel:
                 best_id = obj_id
                 best_distance = dist
         return best_id
-
+    # todo : what is this
     def evaluate_condition(self, expression: str) -> bool:
         """
         Evaluate a limited condition language used by planner check nodes.
