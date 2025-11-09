@@ -40,6 +40,82 @@ class DepthSnapshot:
     extrinsic: Any
     dtype: str = "uint16"
 
+
+def _is_sdk_intrinsics(value: Any) -> bool:
+    try:
+        cls = value.__class__
+    except AttributeError:
+        return False
+    module = getattr(cls, "__module__", "") or ""
+    name = getattr(cls, "__name__", "") or ""
+    return module.startswith("pyorbbecsdk") and "Intrinsic" in name
+
+
+def _is_sdk_extrinsic(value: Any) -> bool:
+    try:
+        cls = value.__class__
+    except AttributeError:
+        return False
+    module = getattr(cls, "__module__", "") or ""
+    name = getattr(cls, "__name__", "") or ""
+    return module.startswith("pyorbbecsdk") and "Extrinsic" in name
+
+
+def _normalize_intrinsics(value: Any, width: int, height: int) -> Dict[str, float]:
+    result: Dict[str, float] = {}
+    keys = ("fx", "fy", "cx", "cy", "width", "height")
+    if isinstance(value, dict):
+        for key in keys:
+            if key in value and value[key] is not None:
+                try:
+                    result[key] = float(value[key])
+                except (TypeError, ValueError):
+                    pass
+    else:
+        for key in keys:
+            if hasattr(value, key):
+                try:
+                    result[key] = float(getattr(value, key))
+                except (TypeError, ValueError):
+                    pass
+    result.setdefault("width", float(width))
+    result.setdefault("height", float(height))
+    return result
+
+
+def _compose_extrinsic(rotation: Any, translation: Any) -> Optional[np.ndarray]:
+    if rotation is None or translation is None:
+        return None
+    try:
+        rot = np.asarray(rotation, dtype=float).reshape(3, 3)
+        trans = np.asarray(translation, dtype=float).reshape(3)
+    except Exception:
+        return None
+    matrix = np.eye(4, dtype=float)
+    matrix[:3, :3] = rot
+    matrix[:3, 3] = trans
+    return matrix
+
+
+def _extract_extrinsic_matrix(extrinsic: Any) -> Optional[np.ndarray]:
+    if extrinsic is None:
+        return None
+    if isinstance(extrinsic, dict):
+        matrix = extrinsic.get("matrix")
+        if matrix is not None:
+            try:
+                arr = np.asarray(matrix, dtype=float)
+                if arr.shape == (4, 4):
+                    return arr
+            except Exception:
+                pass
+        rotation = extrinsic.get("rotation")
+        translation = extrinsic.get("translation")
+        return _compose_extrinsic(rotation, translation)
+    rotation = getattr(extrinsic, "rotation", None)
+    translation = getattr(extrinsic, "translation", None)
+    return _compose_extrinsic(rotation, translation)
+
 def decode_snapshot(payload: Dict[str, Any]) -> DepthSnapshot:
     depth_b64 = payload.get("depth_b64")
     if not depth_b64:
@@ -160,10 +236,11 @@ class TargetLocalizer:
         rgb_frame: Optional[np.ndarray],
         surface_points_hint: Optional[List[List[float]]],
     ) -> Optional[Dict[str, Any]]:
-        intr = snapshot.intrinsics
         depth = snapshot.depth
         height, width = depth.shape
-        extrinsic = snapshot.extrinsic
+        projector = self._build_projector(snapshot, (height, width))
+        if projector is None:
+            return None
         x1, y1, x2, y2 = bbox
         x_min, x_max = sorted((max(0, x1), min(width, x2)))
         y_min, y_max = sorted((max(0, y1), min(height, y2)))
@@ -175,11 +252,11 @@ class TargetLocalizer:
             for ix, iy in pixels:
                 if 0 <= ix < width and 0 <= iy < height:
                     depth_val = float(depth[iy, ix])
-                    point = transformation2dto3d(
-                            OBPoint2f(float(ix), float(iy)), depth_val, intr, extrinsic
-                        )
+                    if depth_val <= 0:
+                        continue
+                    point = projector(ix, iy, depth_val)
                     if point is not None:
-                        out.append([float(point.x), float(point.y), float(point.z)])
+                        out.append(point)
             return out
 
         bbox_pixels = [
@@ -223,6 +300,96 @@ class TargetLocalizer:
             "depth_width": width,
             "depth_height": height,
         }
+
+    def _build_projector(
+        self,
+        snapshot: DepthSnapshot,
+        frame_shape: Tuple[int, int],
+    ):
+        intr = snapshot.intrinsics
+        extrinsic = snapshot.extrinsic
+        sdk_projector = None
+        if (
+            transformation2dto3d is not None
+            and OBPoint2f is not None
+            and _is_sdk_intrinsics(intr)
+            and (extrinsic is None or _is_sdk_extrinsic(extrinsic))
+        ):
+            sdk_projector = self._sdk_projector(intr, extrinsic)
+        numeric_projector = self._make_numeric_projector(intr, extrinsic, frame_shape)
+        if sdk_projector is None and numeric_projector is None:
+            return None
+        if sdk_projector is None:
+            return numeric_projector
+        if numeric_projector is None:
+            return sdk_projector
+
+        def projector(ix: int, iy: int, depth_value: float):
+            point = sdk_projector(ix, iy, depth_value)
+            if point is None:
+                point = numeric_projector(ix, iy, depth_value)
+            return point
+
+        return projector
+
+    def _sdk_projector(self, intr, extr):
+        def projector(ix: int, iy: int, depth_value: float):
+            if depth_value <= 0:
+                return None
+            try:
+                point = transformation2dto3d(
+                    OBPoint2f(float(ix), float(iy)),
+                    float(depth_value),
+                    intr,
+                    extr,
+                )
+            except Exception:
+                return None
+            if point is None:
+                return None
+            return [float(point.x), float(point.y), float(point.z)]
+
+        return projector
+
+    def _make_numeric_projector(
+        self,
+        intrinsics: Any,
+        extrinsic: Any,
+        frame_shape: Tuple[int, int],
+    ):
+        height, width = frame_shape
+        params = _normalize_intrinsics(intrinsics, width, height)
+        fx = float(params.get("fx") or 0.0)
+        fy = float(params.get("fy") or 0.0)
+        if fx == 0.0 or fy == 0.0:
+            return None
+        cx = float(params.get("cx", params.get("width", width) / 2.0))
+        cy = float(params.get("cy", params.get("height", height) / 2.0))
+        extr_matrix = _extract_extrinsic_matrix(extrinsic)
+        rot = None
+        trans = None
+        if extr_matrix is not None:
+            try:
+                mat = np.asarray(extr_matrix, dtype=float)
+                if mat.shape == (4, 4):
+                    rot = mat[:3, :3]
+                    trans = mat[:3, 3]
+            except Exception:
+                rot = None
+                trans = None
+
+        def projector(ix: int, iy: int, depth_value: float):
+            if depth_value <= 0:
+                return None
+            z = float(depth_value)
+            x = (float(ix) - cx) * z / fx
+            y = (float(iy) - cy) * z / fy
+            if rot is not None and trans is not None:
+                vec = rot @ np.array([x, y, z], dtype=float) + trans
+                x, y, z = vec.tolist()
+            return [float(x), float(y), float(z)]
+
+        return projector
 
     def _build_surface_mask(
         self,

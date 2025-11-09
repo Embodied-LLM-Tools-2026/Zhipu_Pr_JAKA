@@ -59,6 +59,71 @@ def _create_placeholder_image(name: str, width: int, height: int) -> np.ndarray:
   return np.array(img, dtype=np.uint8)
 
 
+def _serialize_intrinsics(video_profile) -> Dict[str, Any]:
+  """Convert Orbbec video/intrinsic profile into a JSON-friendly dict."""
+  if video_profile is None:
+    return {}
+  data: Dict[str, Any] = {}
+  for getter_name, key in (("get_width", "width"), ("get_height", "height"), ("get_fps", "fps")):
+    getter = getattr(video_profile, getter_name, None)
+    if callable(getter):
+      try:
+        data[key] = int(getter())
+      except Exception:
+        pass
+  try:
+    intr = video_profile.get_intrinsic()
+  except Exception:
+    intr = None
+  if intr is not None:
+    for attr in ("fx", "fy", "cx", "cy"):
+      if hasattr(intr, attr):
+        try:
+          data[attr] = float(getattr(intr, attr))
+        except Exception:
+          pass
+    model = getattr(intr, "distortion_model", None)
+    if model is not None:
+      data["distortion_model"] = model
+    coeffs = getattr(intr, "distortion_coeffs", None)
+    if coeffs is not None:
+      try:
+        data["distortion_coeffs"] = [float(c) for c in coeffs]
+      except Exception:
+        pass
+  return data
+
+
+def _serialize_extrinsic(extrinsic) -> Optional[Dict[str, Any]]:
+  """Convert Orbbec extrinsic data to dict and homogeneous matrix."""
+  if extrinsic is None:
+    return None
+  result: Dict[str, Any] = {}
+  rotation = getattr(extrinsic, "rotation", None)
+  translation = getattr(extrinsic, "translation", None)
+  if rotation is not None:
+    try:
+      rot = np.asarray(rotation, dtype=float).reshape(3, 3)
+      result["rotation"] = rot.tolist()
+    except Exception:
+      pass
+  if translation is not None:
+    try:
+      trans = np.asarray(translation, dtype=float).reshape(3)
+      result["translation"] = trans.tolist()
+    except Exception:
+      pass
+  if "rotation" in result and "translation" in result:
+    try:
+      mat = np.eye(4, dtype=float)
+      mat[:3, :3] = np.asarray(result["rotation"], dtype=float)
+      mat[:3, 3] = np.asarray(result["translation"], dtype=float)
+      result["matrix"] = mat.tolist()
+    except Exception:
+      pass
+  return result or None
+
+
 def _yuyv_to_bgr(frame: np.ndarray, width: int, height: int) -> np.ndarray:
   yuyv = frame.reshape((height, width, 2))
   return cv2.cvtColor(yuyv, cv2.COLOR_YUV2BGR_YUY2)
@@ -1633,12 +1698,11 @@ def api_depth_frame():
 
     color_profile = color_frame.get_stream_profile()
     depth_profile = depth_frame.get_stream_profile()
-    print("video profile:", color_profile.as_video_stream_profile())
-    color_intrinsics = color_profile.as_video_stream_profile().get_intrinsic()
-    color_distortion = color_profile.as_video_stream_profile().get_distortion()
-    depth_intrinsics = depth_profile.as_video_stream_profile().get_intrinsic()
-    depth_distortion = depth_profile.as_video_stream_profile().get_distortion()
-    extrinsic = depth_profile.get_extrinsic_to(color_profile)
+    color_video_profile = color_profile.as_video_stream_profile()
+    depth_video_profile = depth_profile.as_video_stream_profile()
+    color_intrinsics = _serialize_intrinsics(color_video_profile)
+    depth_intrinsics = _serialize_intrinsics(depth_video_profile)
+    extrinsic = _serialize_extrinsic(depth_profile.get_extrinsic_to(color_profile))
     depth_data = np.frombuffer(depth_frame.get_data(), dtype=np.uint16).reshape(depth_height, depth_width)
   except Exception as exc:
     return JSONResponse({"error": f"prepare depth bundle failed: {exc}"}, status_code=500)
@@ -1651,6 +1715,7 @@ def api_depth_frame():
       "height": depth_height,
       "timestamp": int(time.time() * 1000),
       "depth_intrinsics": depth_intrinsics,
+      "color_intrinsics": color_intrinsics,
       "extrinsic": extrinsic,
       "depth_b64": depth_b64,
       "dtype": str(depth_data.dtype),
