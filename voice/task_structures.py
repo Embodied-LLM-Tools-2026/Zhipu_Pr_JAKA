@@ -96,6 +96,15 @@ class PlanNode:
             children=children,
         )
 
+    def to_dict(self) -> Dict[str, Any]:
+        """Serialise the node (and its children) back to a JSON-friendly dict."""
+        return {
+            "type": self.type,
+            "name": self.name,
+            "args": self.args or {},
+            "children": [child.to_dict() for child in self.children] if self.children else [],
+        }
+
 
 @dataclass
 class CompiledPlan:

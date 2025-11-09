@@ -13,6 +13,7 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "t
 
 from config import Config
 from upload_image import upload_file_and_get_url  # type: ignore
+from ui_state_bridge import UIStateBridge  # type: ignore
 from task_logger import log_info, log_success, log_warning, log_error  # type: ignore
 
 from .observer import VLMObserver, ObservationContext
@@ -329,6 +330,8 @@ class TaskProcessor:
         self.catalog_worker = SceneCatalogWorker(
             self.world, vlm_api_key=self.observer.vlm_api_key, vlm_model=self.observer.vlm_model
         )
+        disable_bridge = os.getenv("DISABLE_ROBOT_UI_BRIDGE", "").lower() in {"1", "true", "yes"}
+        self.ui_bridge = None if disable_bridge else UIStateBridge(os.getenv("ROBOT_UI_URL"))
         self.current_plan = None
         self.plan_step_index = 0
         self.max_iter = 20
@@ -339,11 +342,54 @@ class TaskProcessor:
         self.navigator = navigator
         self.executor.set_navigator(navigator)
 
+    def _publish_world_snapshot(self) -> None:
+        if not self.ui_bridge:
+            return
+        try:
+            snapshot = self.world.snapshot()
+        except Exception:
+            return
+        self.ui_bridge.post_world_model(snapshot)
+
+    def _publish_plan_state(self) -> None:
+        if not self.ui_bridge:
+            return
+        if not self.current_plan:
+            self.ui_bridge.post_plan_state(root=None, steps=[], metadata={}, current_index=-1, current_node=None)
+            return
+        steps_payload = [
+            {
+                "type": node.type,
+                "name": node.name,
+                "args": node.args or {},
+            }
+            for node in self.current_plan.steps
+        ]
+        current_index = self.plan_step_index if steps_payload else -1
+        current_node = None
+        if 0 <= current_index < len(steps_payload):
+            node = self.current_plan.steps[current_index]
+            current_node = node.name or node.type
+        else:
+            current_index = -1
+        try:
+            root_dict = self.current_plan.root.to_dict()
+        except Exception:
+            root_dict = None
+        self.ui_bridge.post_plan_state(
+            root=root_dict,
+            steps=steps_payload,
+            metadata=self.current_plan.metadata,
+            current_index=current_index,
+            current_node=current_node,
+        )
+
     def _ensure_plan(self, target_name: str) -> None:
         self.current_plan = self.planner.make_plan(target_name, self.world)
         self.plan_step_index = 0
         step_names = [node.name or node.type for node in self.current_plan.steps]
         log_info(f"🧠 当前计划: {step_names}")
+        self._publish_plan_state()
 
     def _estimate_distance_from_state(self, obj_state: Optional[Any]) -> Optional[float]:
         if obj_state is None:
@@ -432,6 +478,7 @@ class TaskProcessor:
                 except Exception as exc:
                     log_warning(f"⚠️ 提交场景建模任务失败: {exc}")
 
+        self._publish_world_snapshot()
         return observation, frontend_payload
 
     # ------------------------------------------------------------------
@@ -447,6 +494,8 @@ class TaskProcessor:
         self.current_plan = None
         self.plan_step_index = 0
         self._observation_counter = 0
+        self._publish_world_snapshot()
+        self._publish_plan_state()
 
         try:
             current_observation, current_frontend_payload = self._perform_observation(target_name)
@@ -471,7 +520,9 @@ class TaskProcessor:
                     log_error(f"❌ 观测失败: {exc}")
                     return {"success": False, "reason": f"observe_failed: {exc}"}
                 self.world.record_execution_result({"node": "observe_scene", "status": "success"})
+                self._publish_world_snapshot()
                 self.plan_step_index += 1
+                self._publish_plan_state()
                 continue
 
             if current_observation is None:
@@ -498,15 +549,18 @@ class TaskProcessor:
                 "evidence": result.evidence,
             }
             self.world.record_execution_result(exec_record)
+            self._publish_world_snapshot()
             # todo : 实现每次移动前先观察是通过清空current_observation吗？这是兜底方案？
             if result.success:
                 self.plan_step_index += 1
+                self._publish_plan_state()
                 movement_nodes = {"approach_far", "approach_bbox", "search_area", "rotate_scan", "finalize_target_pose"}
                 plan_completed = self.current_plan and self.plan_step_index >= len(self.current_plan.steps)
                 if node_name in movement_nodes:
                     current_observation = None
                     current_frontend_payload = None
                     self.current_plan = None
+                    self._publish_plan_state()
                 if plan_completed:
                     log_success("🎯 行为树计划执行完成")
                     return {
@@ -521,6 +575,7 @@ class TaskProcessor:
                 self.current_plan = None
                 current_observation = None
                 current_frontend_payload = None
+                self._publish_plan_state()
                 continue
 
             return {

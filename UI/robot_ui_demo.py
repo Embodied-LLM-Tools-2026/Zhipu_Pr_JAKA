@@ -4,7 +4,7 @@ from typing import List, Tuple, Optional, Any, Dict
 
 import numpy as np
 from PIL import Image, ImageDraw
-from fastapi import FastAPI, Response, Query
+from fastapi import FastAPI, Response, Query, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -768,6 +768,109 @@ INDEX_HTML = """
       color: #d0d0d0;
       word-break: break-word;
     }
+    
+    .wm-list {
+      margin-top: 8px;
+      max-height: 260px;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .wm-list::-webkit-scrollbar { width: 4px; }
+    .wm-item {
+      border: 1px solid rgba(100,200,255,0.2);
+      border-radius: 8px;
+      padding: 8px 10px;
+      background: rgba(7,15,35,0.6);
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      transition: all 0.2s ease;
+    }
+    .wm-item.visible {
+      border-color: rgba(0,210,120,0.6);
+      box-shadow: 0 0 16px rgba(0,210,120,0.3);
+    }
+    .wm-id {
+      font-size: 13px;
+      font-weight: 600;
+      color: #64c8ff;
+    }
+    .wm-meta {
+      font-size: 11px;
+      color: #9bd;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+    }
+    .wm-empty {
+      font-size: 12px;
+      color: #888;
+      padding: 12px;
+      text-align: center;
+      border: 1px dashed rgba(100,200,255,0.3);
+      border-radius: 8px;
+    }
+    
+    .plan-steps {
+      margin-top: 10px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      max-height: 220px;
+      overflow-y: auto;
+    }
+    .plan-steps::-webkit-scrollbar { width: 4px; }
+    .plan-node {
+      border: 1px solid rgba(100,200,255,0.2);
+      border-radius: 8px;
+      padding: 8px 10px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      background: rgba(7,15,35,0.6);
+      transition: all 0.2s ease;
+    }
+    .plan-node.active {
+      border-color: rgba(255,200,0,0.8);
+      box-shadow: 0 0 20px rgba(255,200,0,0.4);
+      background: rgba(255,200,0,0.15);
+    }
+    .plan-node .plan-label {
+      font-size: 13px;
+      color: #e0e0e0;
+      font-weight: 600;
+    }
+    .plan-node .plan-type {
+      font-size: 11px;
+      color: #9bd;
+      text-transform: uppercase;
+    }
+    .plan-placeholder {
+      padding: 12px;
+      font-size: 12px;
+      color: #888;
+      border: 1px dashed rgba(100,200,255,0.3);
+      border-radius: 8px;
+      text-align: center;
+    }
+    .plan-json {
+      margin-top: 10px;
+      max-height: 160px;
+      overflow-y: auto;
+      border: 1px solid rgba(100,200,255,0.2);
+      border-radius: 8px;
+      padding: 8px;
+      background: rgba(0,0,0,0.4);
+      font-size: 11px;
+      color: #9bd;
+    }
+    .small-label {
+      font-size: 11px;
+      color: #9bd;
+      margin-top: 4px;
+    }
   </style>
 </head>
 <body>
@@ -850,11 +953,30 @@ INDEX_HTML = """
         <h3>Control Signals (example)</h3>
         <div class="mono" id="signals">cmd_vel: {linear: 0.0, angular: 0.0}</div>
       </div>
+
+      <div class="card">
+        <h3>World Model State</h3>
+        <div class="small-label" id="world-model-updated">等待数据...</div>
+        <div id="world-model-entries" class="wm-list">
+          <div class="wm-empty">尚未收到世界模型快照</div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h3>Behavior Tree Monitor</h3>
+        <div class="small-label" id="plan-updated">等待计划...</div>
+        <div id="plan-steps" class="plan-steps">
+          <div class="plan-placeholder">当前没有激活的行为树</div>
+        </div>
+        <pre id="plan-tree-json" class="plan-json mono"></pre>
+      </div>
     </div>
   </div>
 
 <script>
   let lastVlmTs = 0;
+  let lastWorldTs = -1;
+  let lastPlanTs = -1;
   // 简单轮询刷新三个相机图像
   setInterval(() => {
     ['front','left','right'].forEach(id => {
@@ -1087,6 +1209,139 @@ INDEX_HTML = """
   }
   setInterval(pollVlmLatest, 500);
   pollVlmLatest();
+
+  async function pollWorldModel() {
+    try {
+      const resp = await fetch('/api/world_model');
+      if (!resp.ok) {
+        return;
+      }
+      const data = await resp.json();
+      if (!data) {
+        return;
+      }
+      if (typeof data.ts === 'number' && data.ts === lastWorldTs) {
+        return;
+      }
+      lastWorldTs = typeof data.ts === 'number' ? data.ts : Date.now();
+      renderWorldModel(data);
+    } catch (e) {
+      console.error('[WorldModel] 获取失败:', e);
+    }
+  }
+
+  function renderWorldModel(state) {
+    const statusEl = document.getElementById('world-model-updated');
+    const listEl = document.getElementById('world-model-entries');
+    if (!statusEl || !listEl) {
+      return;
+    }
+    const snapshot = state.snapshot || {};
+    const tsLabel = typeof state.ts === 'number' ? new Date(state.ts).toLocaleTimeString() : '--';
+    const goal = snapshot.goal || '无';
+    statusEl.textContent = `goal: ${goal} • updated ${tsLabel}`;
+    const objects = snapshot.objects || {};
+    const entries = Object.entries(objects);
+    if (!entries.length) {
+      listEl.innerHTML = '<div class="wm-empty">暂无对象记录</div>';
+      return;
+    }
+    const sorted = entries
+      .map(([id, obj]) => ({ id, obj }))
+      .sort((a, b) => {
+        const da = (a.obj.attrs && typeof a.obj.attrs.range_estimate === 'number') ? a.obj.attrs.range_estimate : 999;
+        const db = (b.obj.attrs && typeof b.obj.attrs.range_estimate === 'number') ? b.obj.attrs.range_estimate : 999;
+        return da - db;
+      });
+    listEl.innerHTML = sorted.slice(0, 10).map(({ id, obj }) => {
+      const attrs = obj.attrs || {};
+      const dist = typeof attrs.range_estimate === 'number'
+        ? attrs.range_estimate.toFixed(2) + ' m'
+        : (attrs.range_estimate || '未知');
+      const worldCenter = Array.isArray(obj.world_center)
+        ? obj.world_center.slice(0, 2).map(v => (typeof v === 'number' ? v.toFixed(2) : v)).join(', ')
+        : '-';
+      const confidence = typeof obj.confidence === 'number'
+        ? obj.confidence.toFixed(2)
+        : (obj.confidence ?? '-');
+      const seenIn = obj.seen_in || '-';
+      return `
+        <div class="wm-item ${obj.visible ? 'visible' : ''}">
+          <div class="wm-id">${id}</div>
+          <div class="wm-meta">
+            <span>dist: ${dist}</span>
+            <span>visible: ${obj.visible ? 'true' : 'false'}</span>
+            <span>conf: ${confidence}</span>
+          </div>
+          <div class="wm-meta">
+            <span>world: ${worldCenter}</span>
+            <span>seen_in: ${seenIn}</span>
+          </div>
+        </div>
+      `;
+    }).join('');
+  }
+
+  async function pollPlanState() {
+    try {
+      const resp = await fetch('/api/plan');
+      if (!resp.ok) {
+        return;
+      }
+      const data = await resp.json();
+      if (!data) {
+        return;
+      }
+      if (typeof data.ts === 'number' && data.ts === lastPlanTs) {
+        return;
+      }
+      lastPlanTs = typeof data.ts === 'number' ? data.ts : Date.now();
+      renderPlanState(data);
+    } catch (e) {
+      console.error('[Plan] 获取失败:', e);
+    }
+  }
+
+  function renderPlanState(state) {
+    const statusEl = document.getElementById('plan-updated');
+    const stepsEl = document.getElementById('plan-steps');
+    const jsonEl = document.getElementById('plan-tree-json');
+    if (!statusEl || !stepsEl || !jsonEl) {
+      return;
+    }
+    const tsLabel = typeof state.ts === 'number' ? new Date(state.ts).toLocaleTimeString() : '--';
+    const metadata = state.metadata || {};
+    const source = metadata.source || 'unknown';
+    const pointer = state.current_node ? ` • current: ${state.current_node}` : '';
+    statusEl.textContent = `source: ${source}${pointer} • ${tsLabel}`;
+    const steps = state.steps || [];
+    if (!steps.length) {
+      stepsEl.innerHTML = '<div class="plan-placeholder">暂无行为树</div>';
+      jsonEl.textContent = '// waiting for plan';
+      return;
+    }
+    const currentIndex = typeof state.current_index === 'number' ? state.current_index : -1;
+    stepsEl.innerHTML = steps.map((step, idx) => {
+      const label = step.name || step.type || `node-${idx}`;
+      const nodeType = step.type || (step.children ? 'sequence' : 'action');
+      return `
+        <div class="plan-node ${idx === currentIndex ? 'active' : ''}">
+          <div class="plan-label">${idx + 1}. ${label}</div>
+          <div class="plan-type">${nodeType}</div>
+        </div>
+      `;
+    }).join('');
+    try {
+      jsonEl.textContent = JSON.stringify(state.root || {}, null, 2);
+    } catch (err) {
+      jsonEl.textContent = '// 无法解析行为树';
+    }
+  }
+
+  setInterval(pollWorldModel, 700);
+  pollWorldModel();
+  setInterval(pollPlanState, 700);
+  pollPlanState();
 </script>
 </body>
 </html>
@@ -1246,6 +1501,20 @@ LATEST_VLM_RESULT = {"boxes": [], "image_size": [FRONT_WIDTH, FRONT_HEIGHT], "ts
 TASK_LOGS = []
 MAX_LOGS = 10000
 
+# ============ 世界模型 & 行为树状态 ============
+WORLD_MODEL_STATE = {
+  "snapshot": None,
+  "ts": 0,
+}
+PLAN_STATE = {
+  "root": None,
+  "steps": [],
+  "metadata": {},
+  "current_index": -1,
+  "current_node": None,
+  "ts": 0,
+}
+
 def add_task_log(message: str, level: str = "info"):
   """添加任务日志"""
   global TASK_LOGS
@@ -1268,8 +1537,6 @@ def api_capture_latest():
   return LATEST_CAPTURED_IMG
 
 # VLM结果提交接口（主控流程调用）
-from fastapi import Request
-
 @APP.post("/api/front_cam/change")
 async def api_front_cam_change(request: Request, cam_type: str):
     data = await request.json()
@@ -1554,6 +1821,41 @@ def api_clear_logs():
   global TASK_LOGS
   TASK_LOGS = []
   return {"ok": True}
+
+@APP.post("/api/world_model/update")
+async def api_world_model_update(request: Request):
+  """外部推送世界模型快照"""
+  data = await request.json()
+  WORLD_MODEL_STATE["snapshot"] = data
+  WORLD_MODEL_STATE["ts"] = int(time.time() * 1000)
+  return {"ok": True, "ts": WORLD_MODEL_STATE["ts"]}
+
+@APP.get("/api/world_model")
+def api_world_model_get():
+  """获取最近一次世界模型快照"""
+  return WORLD_MODEL_STATE
+
+@APP.post("/api/plan/update")
+async def api_plan_update(request: Request):
+  """外部推送行为树/执行步骤"""
+  data = await request.json()
+  if "root" in data:
+    PLAN_STATE["root"] = data["root"]
+  if "steps" in data:
+    PLAN_STATE["steps"] = data.get("steps") or []
+  if "metadata" in data:
+    PLAN_STATE["metadata"] = data.get("metadata") or {}
+  if "current_index" in data:
+    PLAN_STATE["current_index"] = int(data.get("current_index", -1))
+  if "current_node" in data:
+    PLAN_STATE["current_node"] = data.get("current_node")
+  PLAN_STATE["ts"] = int(time.time() * 1000)
+  return {"ok": True, "ts": PLAN_STATE["ts"]}
+
+@APP.get("/api/plan")
+def api_plan_get():
+  """获取最近的行为树/执行步骤"""
+  return PLAN_STATE
 
 # ============ 启动 ============
 def _cleanup():
