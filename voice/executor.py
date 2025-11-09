@@ -20,8 +20,8 @@ import numpy as np
 from PIL import Image
 from task_logger import log_error, log_info, log_success, log_warning  # type: ignore
 
-from .localize_target import TargetLocalizer
-from .task_structures import ExecutionResult, PlanNode
+from localize_target import TargetLocalizer
+from task_structures import ExecutionResult, PlanNode
 
 
 @dataclass

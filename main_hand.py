@@ -85,7 +85,6 @@ from voice.ASR import SenseVoiceRecognizer
 from voice.VLM import RobotCommandProcessor,TaskProcessor
 from voice.PinyinMatcher import PinyinMatcher
 from voice.utils import SimplifiedVoiceRecorder, SimplifiedAudioPlayer
-from voice.ActionExecuter_hand import ActionExecuter
 from action_sequence.navigate import Navigate
 from action_sequence.gripper_controller import GripperController
 from action_sequence.taskexecutor import TaskExecutor
@@ -96,7 +95,7 @@ Config.setup_environment()
 deps = DependencyManager()
 if not deps._get_check_result():
     print("⚠️ 依赖检测失败，请检查依赖项")
-from objectLocalization.objLocalization import ObjectLocalization
+
 
 
 # ================================

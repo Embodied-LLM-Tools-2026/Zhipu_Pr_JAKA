@@ -24,10 +24,10 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "t
 from task_logger import log_error, log_info, log_success, log_warning  # type: ignore
 from upload_image import upload_file_and_get_url  # type: ignore
 
-from .config import Config
-from .task_structures import ObservationPhase, ObservationResult
-from .localize_target import fetch_snapshot
-from ..action_sequence.navigate import Navigate
+from config import Config
+from task_structures import ObservationPhase, ObservationResult
+from localize_target import fetch_snapshot
+from action_sequence.navigate import Navigate
 @dataclass
 class ObservationContext:
     step: int

@@ -11,7 +11,7 @@ from __future__ import annotations
 import enum
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
-from .localize_target import DepthSnapshot
+from localize_target import DepthSnapshot
 
 class ObservationPhase(enum.Enum):
     """High-level observation stage for prompt selection."""

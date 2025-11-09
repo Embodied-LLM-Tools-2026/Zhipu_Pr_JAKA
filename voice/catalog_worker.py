@@ -20,11 +20,11 @@ from typing import Any, Dict, List, Optional
 import dashscope  # type: ignore
 import numpy as np
 
-from .config import Config
-from .executor import SkillExecutor
-from .localize_target import TargetLocalizer, DepthSnapshot, CameraIntrinsics
-from .task_logger import log_error, log_warning  # type: ignore
-from .upload_image import upload_file_and_get_url  # type: ignore
+from config import Config
+from executor import SkillExecutor
+from localize_target import TargetLocalizer, DepthSnapshot
+from task_logger import log_error, log_warning  # type: ignore
+from tools.upload_image import upload_file_and_get_url  # type: ignore
 
 
 class SceneCatalogWorker:

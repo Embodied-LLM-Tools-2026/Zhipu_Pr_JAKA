@@ -497,7 +497,7 @@ CAMERAS = {
     "front": FRONT_CAMERA,
     # "front": FrameSource(cam_index=3, name="front", fallback_indexes=[]),
     # "left": FrameSource(cam_index=14, name="left", fallback_indexes=[]),
-    "right": FrameSource(cam_index=16, name="right", fallback_indexes=[4, 5]),
+    "right": FrameSource(cam_index=4, name="right", fallback_indexes=[4, 5]),
 }
 
 # ============ Telemetry / 状态（演示用随机/模拟）===========
