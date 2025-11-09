@@ -52,13 +52,142 @@ def _serialize_intrinsics(intrinsic) -> dict:
     }
 
 
-def _serialize_extrinsic(extrinsic) -> dict:
-    rotation = np.asarray(getattr(extrinsic, "rotation", []), dtype=float).reshape(3, 3)
-    translation = np.asarray(getattr(extrinsic, "translation", []), dtype=float).reshape(3)
+def _serialize_extrinsic(extrinsic, *, debug: bool = False) -> dict:
+    if extrinsic is None:
+        if debug:
+            print("[compare_projectors] extrinsic object is None")
+        return {}
+
+    if debug:
+        public_attrs = [attr for attr in dir(extrinsic) if not attr.startswith("_")]
+        print("[compare_projectors] extrinsic public attrs:", public_attrs)
+
+    def _value(attr_name: str):
+        attr = getattr(extrinsic, attr_name, None)
+        if debug:
+            print(f"[compare_projectors] extrinsic.{attr_name} -> {type(attr)}")
+        if attr is None:
+            return None
+        return attr() if callable(attr) else attr
+
+    rotation_candidates = (
+        "rotation",
+        "get_rotation",
+        "rot",
+        "get_rot",
+        "rotation_matrix",
+        "get_rotation_matrix",
+    )
+    translation_candidates = (
+        "translation",
+        "get_translation",
+        "trans",
+        "get_trans",
+        "t",
+    )
+    transform_candidates = (
+        "transform",
+        "get_transform",
+        "matrix",
+        "get_matrix",
+    )
+
+    rotation = None
+    for name in rotation_candidates:
+        rotation = _value(name)
+        if rotation is not None:
+            if debug:
+                print(f"[compare_projectors] rotation source: {name}")
+            break
+    translation = None
+    for name in translation_candidates:
+        translation = _value(name)
+        if translation is not None:
+            if debug:
+                print(f"[compare_projectors] translation source: {name}")
+            break
+    transform = None
+    if rotation is None or translation is None:
+        for name in transform_candidates:
+            transform = _value(name)
+            if transform is not None:
+                if debug:
+                    print(f"[compare_projectors] transform source: {name}")
+                break
+
+    rot_arr = None
+    trans_arr = None
+    if rotation is not None:
+        try:
+            rot_arr = np.asarray(rotation, dtype=float)
+            if debug:
+                print(f"[compare_projectors] rotation raw shape {rot_arr.shape}")
+            if rot_arr.size == 9:
+                rot_arr = rot_arr.reshape(3, 3)
+            else:
+                rot_arr = None
+        except Exception as exc:
+            if debug:
+                print(f"[compare_projectors] rotation reshape failed: {exc}")
+            rot_arr = None
+    if translation is not None:
+        try:
+            trans_arr = np.asarray(translation, dtype=float)
+            if debug:
+                print(f"[compare_projectors] translation raw shape {trans_arr.shape}")
+            if trans_arr.size == 3:
+                trans_arr = trans_arr.reshape(3)
+            else:
+                trans_arr = None
+        except Exception as exc:
+            if debug:
+                print(f"[compare_projectors] translation reshape failed: {exc}")
+            trans_arr = None
+
+    if rot_arr is None or trans_arr is None:
+        if transform is not None:
+            try:
+                tf_arr = np.asarray(transform, dtype=float)
+                if debug:
+                    print(f"[compare_projectors] transform raw shape {tf_arr.shape}")
+                flat = tf_arr.ravel()
+                size = flat.size
+                if size == 3:
+                    if trans_arr is None:
+                        trans_arr = flat.reshape(3)
+                elif size == 9:
+                    mat3 = flat.reshape(3, 3)
+                    if rot_arr is None:
+                        rot_arr = mat3
+                elif size == 12:
+                    mat34 = flat.reshape(3, 4)
+                    if rot_arr is None:
+                        rot_arr = mat34[:, :3]
+                    if trans_arr is None:
+                        trans_arr = mat34[:, 3]
+                elif size == 16:
+                    mat4 = flat.reshape(4, 4)
+                    if rot_arr is None:
+                        rot_arr = mat4[:3, :3]
+                    if trans_arr is None:
+                        trans_arr = mat4[:3, 3]
+            except Exception as exc:
+                if debug:
+                    print(f"[compare_projectors] transform reshape failed: {exc}")
+
+    if rot_arr is None or trans_arr is None:
+        if debug:
+            print("[compare_projectors] missing rotation/translation, returning empty extrinsic dict")
+        return {}
+
     matrix = np.eye(4, dtype=float)
-    matrix[:3, :3] = rotation
-    matrix[:3, 3] = translation
-    return {"rotation": rotation.tolist(), "translation": translation.tolist(), "matrix": matrix.tolist()}
+    matrix[:3, :3] = rot_arr
+    matrix[:3, 3] = trans_arr
+    return {
+        "rotation": rot_arr.tolist(),
+        "translation": trans_arr.tolist(),
+        "matrix": matrix.tolist(),
+    }
 
 
 def _collect_random_pixels(depth: np.ndarray, sample_count: int) -> List[Tuple[int, int]]:
@@ -71,7 +200,7 @@ def _collect_random_pixels(depth: np.ndarray, sample_count: int) -> List[Tuple[i
     return [(int(coords[i][1]), int(coords[i][0])) for i in picks]
 
 
-def compare_projectors(sample_count: int) -> None:
+def compare_projectors(sample_count: int, debug_extr: bool) -> None:
     pipeline = Pipeline()
     config = Config()
     _enable_default_streams(pipeline, config)
@@ -102,7 +231,9 @@ def compare_projectors(sample_count: int) -> None:
         sdk_intrinsics = depth_video.get_intrinsic()
         sdk_extrinsic = depth_profile.get_extrinsic_to(color_profile)
         intr_dict = _serialize_intrinsics(sdk_intrinsics)
-        extr_dict = _serialize_extrinsic(sdk_extrinsic)
+        extr_dict = _serialize_extrinsic(sdk_extrinsic, debug=debug_extr)
+        if not extr_dict and debug_extr:
+            print("[compare_projectors] extrinsic dict empty; numeric projector will stay in depth frame")
 
         localizer = TargetLocalizer()
         sdk_projector = localizer._sdk_projector(sdk_intrinsics, sdk_extrinsic)
@@ -149,8 +280,13 @@ def main() -> None:
         default=200,
         help="Number of valid depth pixels to compare.",
     )
+    parser.add_argument(
+        "--debug-extr",
+        action="store_true",
+        help="Print diagnostic information about the extrinsic struct.",
+    )
     args = parser.parse_args()
-    compare_projectors(args.samples)
+    compare_projectors(args.samples, args.debug_extr)
 
 
 if __name__ == "__main__":

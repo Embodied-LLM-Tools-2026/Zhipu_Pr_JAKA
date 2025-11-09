@@ -98,30 +98,83 @@ def _serialize_extrinsic(extrinsic) -> Optional[Dict[str, Any]]:
   """Convert Orbbec extrinsic data to dict and homogeneous matrix."""
   if extrinsic is None:
     return None
-  result: Dict[str, Any] = {}
-  rotation = getattr(extrinsic, "rotation", None)
-  translation = getattr(extrinsic, "translation", None)
+
+  def _value(name: str):
+    attr = getattr(extrinsic, name, None)
+    if attr is None:
+      return None
+    return attr() if callable(attr) else attr
+
+  rotation = None
+  for candidate in ("rotation", "get_rotation", "rot", "get_rot", "rotation_matrix", "get_rotation_matrix"):
+    rotation = _value(candidate)
+    if rotation is not None:
+      break
+
+  translation = None
+  for candidate in ("translation", "get_translation", "trans", "get_trans", "t"):
+    translation = _value(candidate)
+    if translation is not None:
+      break
+
+  transform = None
+  if rotation is None or translation is None:
+    for candidate in ("transform", "get_transform", "matrix", "get_matrix"):
+      transform = _value(candidate)
+      if transform is not None:
+        break
+
+  rot_arr = None
+  trans_arr = None
   if rotation is not None:
     try:
-      rot = np.asarray(rotation, dtype=float).reshape(3, 3)
-      result["rotation"] = rot.tolist()
+      rot_arr = np.asarray(rotation, dtype=float)
+      if rot_arr.size == 9:
+        rot_arr = rot_arr.reshape(3, 3)
     except Exception:
-      pass
+      rot_arr = None
   if translation is not None:
     try:
-      trans = np.asarray(translation, dtype=float).reshape(3)
-      result["translation"] = trans.tolist()
+      trans_arr = np.asarray(translation, dtype=float)
+      if trans_arr.size == 3:
+        trans_arr = trans_arr.reshape(3)
     except Exception:
-      pass
-  if "rotation" in result and "translation" in result:
+      trans_arr = None
+
+  if (rot_arr is None or trans_arr is None) and transform is not None:
     try:
-      mat = np.eye(4, dtype=float)
-      mat[:3, :3] = np.asarray(result["rotation"], dtype=float)
-      mat[:3, 3] = np.asarray(result["translation"], dtype=float)
-      result["matrix"] = mat.tolist()
+      tf_arr = np.asarray(transform, dtype=float).ravel()
+      size = tf_arr.size
+      if size == 3 and trans_arr is None:
+        trans_arr = tf_arr.reshape(3)
+      elif size == 9 and rot_arr is None:
+        rot_arr = tf_arr.reshape(3, 3)
+      elif size == 12:
+        mat34 = tf_arr.reshape(3, 4)
+        if rot_arr is None:
+          rot_arr = mat34[:, :3]
+        if trans_arr is None:
+          trans_arr = mat34[:, 3]
+      elif size == 16:
+        mat4 = tf_arr.reshape(4, 4)
+        if rot_arr is None:
+          rot_arr = mat4[:3, :3]
+        if trans_arr is None:
+          trans_arr = mat4[:3, 3]
     except Exception:
       pass
-  return result or None
+
+  if rot_arr is None or trans_arr is None:
+    return None
+
+  mat = np.eye(4, dtype=float)
+  mat[:3, :3] = rot_arr
+  mat[:3, 3] = trans_arr
+  return {
+    "rotation": rot_arr.tolist(),
+    "translation": trans_arr.tolist(),
+    "matrix": mat.tolist(),
+  }
 
 
 def _yuyv_to_bgr(frame: np.ndarray, width: int, height: int) -> np.ndarray:
