@@ -784,6 +784,23 @@ INDEX_HTML = """
       border-color: rgba(100,200,255,0.6);
       box-shadow: 0 0 40px rgba(100,200,255,0.3), inset 0 0 20px rgba(0,0,0,0.3);
     }
+    .mask-card img {
+      width: 100%;
+      max-height: 420px;
+      object-fit: contain;
+      border-radius: 10px;
+      background: #050505;
+      border: 1px solid rgba(255,255,255,0.08);
+      display: none;
+    }
+    .mask-placeholder {
+      border: 1px dashed rgba(255,255,255,0.15);
+      border-radius: 10px;
+      padding: 30px;
+      text-align: center;
+      color: rgba(255,255,255,0.4);
+      font-size: 12px;
+    }
     .overlay { position: absolute; left:0; top:0; pointer-events:none; }
     
     .row { display: flex; gap: 12px; align-items: center; }
@@ -1062,6 +1079,15 @@ INDEX_HTML = """
         <div class="mono" id="bbox-json" style="margin-top:8px; font-size:12px; color:#555;"></div>
       </div>
 
+      <div class="card mask-card">
+        <h3>SAM Mask Preview</h3>
+        <div class="mask-preview">
+          <img id="sam-mask-img" src="" alt="sam-mask" />
+          <div class="mask-placeholder" id="sam-mask-placeholder">等待SAM分割结果...</div>
+        </div>
+        <div class="mono" id="sam-mask-meta" style="margin-top:8px; font-size:12px; color:#999;">暂无mask</div>
+      </div>
+
       <div class="card">
         <h3>VLM Latest Result</h3>
         <div class="mono" id="vlm-latest-json" style="font-size:12px; color:#555; white-space:pre-wrap;"></div>
@@ -1320,6 +1346,7 @@ INDEX_HTML = """
           target: j.target,
         };
         document.getElementById('bbox-json').textContent = JSON.stringify(info, null, 2);
+        updateMaskPreview(j);
       }
     } catch(e) {
       console.error('[VLM轮询] 错误:', e);
@@ -1327,6 +1354,30 @@ INDEX_HTML = """
   }
   setInterval(pollVlmLatest, 500);
   pollVlmLatest();
+
+  function updateMaskPreview(data) {
+    const maskImg = document.getElementById('sam-mask-img');
+    const placeholder = document.getElementById('sam-mask-placeholder');
+    const meta = document.getElementById('sam-mask-meta');
+    if (!maskImg || !placeholder || !meta) {
+      return;
+    }
+    if (data && data.mask_url) {
+      maskImg.src = data.mask_url + '?ts=' + Date.now();
+      maskImg.style.display = 'block';
+      placeholder.style.display = 'none';
+      if (typeof data.mask_score === 'number' && !Number.isNaN(data.mask_score)) {
+        meta.textContent = `score: ${data.mask_score.toFixed(3)}`;
+      } else {
+        meta.textContent = 'score: -';
+      }
+    } else {
+      maskImg.removeAttribute('src');
+      maskImg.style.display = 'none';
+      placeholder.style.display = 'block';
+      meta.textContent = '暂无mask';
+    }
+  }
 
   async function pollWorldModel() {
     try {
@@ -1613,7 +1664,14 @@ def api_capture(cam: str = Query("front")):
     LATEST_CAPTURED_IMG = {"url": url, "camera": cam, "w": width, "h": height, "ts": int(time.time() * 1000)}
     return {"url": str(abs_path), "camera": cam, "w": width, "h": height}
 # ============ VLM结果存储 ============
-LATEST_VLM_RESULT = {"boxes": [], "image_size": [FRONT_WIDTH, FRONT_HEIGHT], "ts": 0, "annotated_url": ""}
+LATEST_VLM_RESULT = {
+  "boxes": [],
+  "image_size": [FRONT_WIDTH, FRONT_HEIGHT],
+  "ts": 0,
+  "annotated_url": "",
+  "mask_url": "",
+  "mask_score": None,
+}
 
 # ============ 任务日志存储 ============
 TASK_LOGS = []
@@ -1674,7 +1732,7 @@ async def api_vlm_result(request: Request):
   data["ts"] = int(time.time() * 1000)
   global LATEST_VLM_RESULT
   LATEST_VLM_RESULT = data
-  bbox = data["mapped_bbox"]
+  bbox = data.get("mapped_bbox")
   print(f"Received VLM result with bbox: {bbox}")
   if bbox:
       src = CAMERAS.get("front")

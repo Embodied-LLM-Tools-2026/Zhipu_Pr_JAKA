@@ -36,6 +36,9 @@ class ObservationResult:
     raw_response: Optional[Dict[str, Any]] = None
     processed_image_path: Optional[str] = None
     original_image_path: Optional[str] = None
+    surface_mask_path: Optional[str] = None
+    surface_mask_url: Optional[str] = None
+    surface_mask_score: Optional[float] = None
     camera_center: Optional[List[float]] = None
     robot_center: Optional[List[float]] = None
     world_center: Optional[List[float]] = None
@@ -54,6 +57,8 @@ class ObservationResult:
             "surface_points": self.surface_points,
             "annotated_url": self.annotated_url,
             "raw_response": self.raw_response,
+            "surface_mask_url": self.surface_mask_url,
+            "surface_mask_score": self.surface_mask_score,
             "camera_center": self.camera_center,
             "robot_center": self.robot_center,
             "world_center": self.world_center,

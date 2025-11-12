@@ -74,7 +74,7 @@ class SceneCatalogWorker:
 #     "image_size": observation.image_size,
 #     "depth_map": depth_bundle.depth,
 #     "depth_intrinsics": depth_bundle.intrinsics,
-#     "extrinsics": depth_bundle.extrinsics,
+#     "extrinsic": depth_bundle.extrinsic,
 #     "robot_pose": observation.robot_pose,
 # }
     def _process_job(self, job: Dict[str, Any]) -> None:
@@ -82,7 +82,7 @@ class SceneCatalogWorker:
         snapshot = DepthSnapshot(
             depth=job.get("depth_map"),
             intrinsics=job.get("depth_intrinsics"),
-            extrinsics=job.get("extrinsics"),
+            extrinsic=job.get("extrinsic"),
         )
         image_size = job.get("image_size") or [1, 1]
         robot_pose = job.get("robot_pose")

@@ -3,7 +3,7 @@ import json
 import os
 import sys
 import time
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any, List, Tuple
 
 import dashscope
 import numpy as np
@@ -20,7 +20,7 @@ from .observer import VLMObserver, ObservationContext
 from .executor import SkillExecutor, SkillRuntime
 from .planner import BehaviorPlanner
 from .world_model import WorldModel
-from .task_structures import ObservationPhase
+from .task_structures import ObservationPhase, PlanNode
 from .catalog_worker import SceneCatalogWorker
 
 
@@ -312,6 +312,103 @@ class RobotCommandProcessor:
 
 
 # ================================
+# 行为树运行器
+# ================================
+
+
+class BehaviorTreeRunner:
+    """轻量级行为树解释器，支持运行时check/selector以及repeat_until循环。"""
+
+    def __init__(self, root: Optional[PlanNode] = None, world_model=None) -> None:
+        self.root = root
+        self.world_model = world_model
+        self.pending_node: Optional[PlanNode] = None
+        self.pending_node_id: Optional[int] = None
+        self.action_results: Dict[int, str] = {}
+        self.last_status: str = "idle"
+
+    def reset(self, root: Optional[PlanNode]) -> None:
+        self.root = root
+        self.pending_node = None
+        self.pending_node_id = None
+        self.action_results.clear()
+        self.last_status = "idle"
+
+    def tick(self) -> Tuple[Optional[PlanNode], str]:
+        if not self.root:
+            self.last_status = "success"
+            return None, "success"
+        if self.pending_node is not None:
+            # 尚未提交上一个动作的结果
+            return self.pending_node, "running"
+        status, action = self._tick_node(self.root)
+        self.last_status = status
+        if action is not None:
+            self.pending_node = action
+            self.pending_node_id = id(action)
+        return action, status
+
+    def apply_action_result(self, node: PlanNode, success: bool) -> None:
+        node_id = id(node)
+        if self.pending_node_id != node_id:
+            # 忽略不匹配的节点，避免状态错乱
+            return
+        self.pending_node = None
+        self.pending_node_id = None
+        self.action_results[node_id] = "success" if success else "failure"
+
+    def _tick_node(self, node: PlanNode) -> Tuple[str, Optional[PlanNode]]:
+        node_type = node.type
+        if node_type == "check":
+            cond = node.args.get("cond", "")
+            result = (
+                "success"
+                if self.world_model and self.world_model.evaluate_condition(cond)
+                else "failure"
+            )
+            return result, None
+        if node_type == "action":
+            node_id = id(node)
+            if node_id in self.action_results:
+                result = self.action_results.pop(node_id)
+                return result, None
+            return "running", node
+        if node_type == "sequence":
+            return self._tick_sequence(node.children)
+        if node_type == "selector":
+            return self._tick_selector(node.children)
+        if node_type == "repeat_until":
+            cond = node.args.get("cond", "")
+            if self.world_model and self.world_model.evaluate_condition(cond):
+                return "success", None
+            status, action = self._tick_sequence(node.children)
+            if action is not None:
+                return "running", action
+            if status == "failure":
+                return "failure", None
+            return "running", None
+        return "failure", None
+
+    def _tick_sequence(self, children: List[PlanNode]) -> Tuple[str, Optional[PlanNode]]:
+        for child in children:
+            status, action = self._tick_node(child)
+            if action is not None:
+                return "running", action
+            if status == "failure":
+                return "failure", None
+        return "success", None
+
+    def _tick_selector(self, children: List[PlanNode]) -> Tuple[str, Optional[PlanNode]]:
+        for child in children:
+            status, action = self._tick_node(child)
+            if action is not None:
+                return "running", action
+            if status == "success":
+                return "success", None
+        return "failure", None
+
+
+# ================================
 # 视觉-执行管线 TaskProcessor
 # ================================
 
@@ -333,9 +430,13 @@ class TaskProcessor:
         disable_bridge = os.getenv("DISABLE_ROBOT_UI_BRIDGE", "").lower() in {"1", "true", "yes"}
         self.ui_bridge = None if disable_bridge else UIStateBridge(os.getenv("ROBOT_UI_URL"))
         self.current_plan = None
-        self.plan_step_index = 0
+        self.plan_runner = BehaviorTreeRunner(root=None, world_model=self.world)
         self.max_iter = 20
         self._observation_counter = 0
+        self.plan_context: List[Dict[str, Any]] = []
+        self._active_plan_log: List[Dict[str, Any]] = []
+        self._plan_history_limit = int(os.getenv("PLAN_CONTEXT_LIMIT", "6"))
+        self._last_action_name: Optional[str] = None
 
     # ------------------------------------------------------------------
     def set_navigator(self, navigator) -> None:
@@ -365,13 +466,14 @@ class TaskProcessor:
             }
             for node in self.current_plan.steps
         ]
-        current_index = self.plan_step_index if steps_payload else -1
+        current_index = -1
         current_node = None
-        if 0 <= current_index < len(steps_payload):
-            node = self.current_plan.steps[current_index]
-            current_node = node.name or node.type
-        else:
-            current_index = -1
+        if self._last_action_name and steps_payload:
+            for idx, node in enumerate(self.current_plan.steps):
+                if (node.name or node.type) == self._last_action_name:
+                    current_index = idx
+                    current_node = node.name or node.type
+                    break
         try:
             root_dict = self.current_plan.root.to_dict()
         except Exception:
@@ -385,8 +487,10 @@ class TaskProcessor:
         )
 
     def _ensure_plan(self, target_name: str) -> None:
-        self.current_plan = self.planner.make_plan(target_name, self.world)
-        self.plan_step_index = 0
+        history_context = self.plan_context[-self._plan_history_limit :]
+        self.current_plan = self.planner.make_plan(target_name, self.world, plan_context=history_context)
+        self.plan_runner.reset(self.current_plan.root)
+        self._active_plan_log = []
         step_names = [node.name or node.type for node in self.current_plan.steps]
         log_info(f"🧠 当前计划: {step_names}")
         self._publish_plan_state()
@@ -411,7 +515,7 @@ class TaskProcessor:
     def _determine_phase(self, obj_state: Optional[Any]) -> ObservationPhase:
         if obj_state and getattr(obj_state, "visible", False):
             dist = self._estimate_distance_from_state(obj_state)
-            if dist is None or dist <= 5.0:
+            if dist is None or dist <= 2.0:
                 return ObservationPhase.APPROACH
         return ObservationPhase.SEARCH
 
@@ -435,24 +539,40 @@ class TaskProcessor:
         )
         observation, frontend_payload = self.observer.observe(target_name, phase, context, self.navigator)
 
-        self.world.update_from_observation(target_name, observation)
-
         pose_info = self.executor.estimate_observation_pose(observation, self.navigator)
+        distance_attr: Optional[Dict[str, Any]] = None
         if pose_info:
             observation.camera_center = pose_info.get("camera_center")
             observation.robot_center = pose_info.get("robot_center")
             observation.world_center = pose_info.get("world_center")
-            distance_attr: Dict[str, Any] = {}
-            distance_m: Optional[float] = observation.range_estimate
-            if distance_m is None and observation.world_center:
-                wc = np.array(observation.world_center, dtype=float)
-                distance_m = float(np.linalg.norm(wc[:2]))
-            if distance_m is None and observation.robot_center:
-                rc = np.array(observation.robot_center, dtype=float)
-                distance_m = float(np.linalg.norm(rc[:2]) / 1000.0)
+            distance_attr = {}
+            distance_m: Optional[float] = None
+            depth_derived = False
+
+            robot_center = observation.robot_center
+            if robot_center and len(robot_center) >= 3:
+                rc = np.asarray(robot_center[:3], dtype=float)
+                distance_m = float(np.linalg.norm(rc[1:3]) / 1000.0)
+                depth_derived = True
+            elif observation.world_center and observation.robot_pose:
+                target_xy = np.asarray(observation.world_center[:2], dtype=float)
+                pose = observation.robot_pose
+                robot_xy = np.array([float(pose.get("x", 0.0)), float(pose.get("y", 0.0))], dtype=float)
+                distance_m = float(np.linalg.norm(target_xy - robot_xy))
+                depth_derived = True
+            elif observation.range_estimate is not None:
+                distance_m = float(observation.range_estimate)
+
             if distance_m is not None:
                 observation.range_estimate = distance_m
                 distance_attr["range_estimate"] = distance_m
+                if depth_derived:
+                    distance_attr["range_source"] = "depth_localization"
+            if not distance_attr:
+                distance_attr = None
+
+        self.world.update_from_observation(target_name, observation)
+        if pose_info:
             # todo : no need to store every center,only world center is ok
             self.world.update_pose_estimate(
                 target_name,
@@ -460,7 +580,7 @@ class TaskProcessor:
                 robot_center=pose_info.get("robot_center"),
                 world_center=pose_info.get("world_center"),
                 confidence=pose_info.get("confidence"),
-                attrs=distance_attr or None,
+                attrs=distance_attr,
             )
             # todo : merge depth get from frontend
             depth_bundle = observation.depth_snapshot
@@ -471,7 +591,7 @@ class TaskProcessor:
                         "image_size": observation.image_size,
                         "depth_map": depth_bundle.depth,
                         "depth_intrinsics": depth_bundle.intrinsics,
-                        "extrinsics": depth_bundle.extrinsics,
+                        "extrinsic": depth_bundle.extrinsic,
                         "robot_pose": observation.robot_pose,
                     }
                     self.catalog_worker.submit(job)
@@ -480,6 +600,40 @@ class TaskProcessor:
 
         self._publish_world_snapshot()
         return observation, frontend_payload
+
+    # ------------------------------------------------------------------
+    def _append_plan_context(self, entry: Dict[str, Any]) -> None:
+        entry["timestamp"] = time.time()
+        self.plan_context.append(entry)
+        if len(self.plan_context) > self._plan_history_limit:
+            self.plan_context = self.plan_context[-self._plan_history_limit :]
+
+    @staticmethod
+    def _json_safe(value: Any) -> Any:
+        try:
+            json.dumps(value, ensure_ascii=False, default=str)
+            return value
+        except TypeError:
+            if isinstance(value, dict):
+                return {k: TaskProcessor._json_safe(v) for k, v in value.items()}
+            if isinstance(value, (list, tuple)):
+                return [TaskProcessor._json_safe(v) for v in value]
+            return str(value)
+
+    def _finalize_plan_iteration(self, status: str, reason: Optional[str] = None) -> None:
+        if self.current_plan:
+            planned_steps = [node.name or node.type for node in self.current_plan.steps]
+        else:
+            planned_steps = []
+        summary = {
+            "phase": "llm_plan",
+            "status": status,
+            "reason": reason,
+            "planned_steps": planned_steps,
+            "executed": list(self._active_plan_log),
+        }
+        self._append_plan_context(summary)
+        self._active_plan_log = []
 
     # ------------------------------------------------------------------
     def process_grasp_task(self, target_name: str, navigator, cam_name: str = "front") -> Dict[str, Any]:
@@ -492,7 +646,7 @@ class TaskProcessor:
         self.observer.cam_name = cam_name
         self.world.set_goal(target_name)
         self.current_plan = None
-        self.plan_step_index = 0
+        self.plan_runner.reset(None)
         self._observation_counter = 0
         self._publish_world_snapshot()
         self._publish_plan_state()
@@ -504,24 +658,61 @@ class TaskProcessor:
             return {"success": False, "reason": f"initial_observe_failed: {exc}"}
 
         for step in range(1, self.max_iter + 1):
-            if not self.current_plan or self.plan_step_index >= len(self.current_plan.steps):
+            if not self.current_plan:
                 self._ensure_plan(target_name)
-                if not self.current_plan.steps:
+                if not self.current_plan or not self.current_plan.root:
                     log_error("❌ 规划结果为空")
                     return {"success": False, "reason": "planner_return_empty"}
 
-            node = self.current_plan.steps[self.plan_step_index]
-            node_name = node.name or ""
+            action_node, bt_status = self.plan_runner.tick()
+            if action_node is None:
+                if bt_status == "success":
+                    self._finalize_plan_iteration("completed", "plan_executed")
+                    log_success("🎯 行为树计划执行完成")
+                    return {
+                        "success": True,
+                        "result": current_observation.raw_response if current_observation else None,
+                        "annotated_url": current_observation.annotated_url if current_observation else None,
+                    }
+                if bt_status == "failure":
+                    log_warning("⚠️ 行为树失败，重新规划")
+                    self._finalize_plan_iteration("failed", "bt_failure")
+                    self.current_plan = None
+                    self.plan_runner.reset(None)
+                    current_observation = None
+                    current_frontend_payload = None
+                    self._last_action_name = None
+                    self._publish_plan_state()
+                    continue
+                # running但未返回动作，视为异常，触发重规划
+                log_warning("⚠️ 行为树未返回动作，触发重规划")
+                self._finalize_plan_iteration("replan", "no_action")
+                self.current_plan = None
+                self.plan_runner.reset(None)
+                current_observation = None
+                current_frontend_payload = None
+                self._last_action_name = None
+                self._publish_plan_state()
+                continue
+
+            node_name = action_node.name or action_node.type
+            self._last_action_name = node_name
 
             if node_name == "observe_scene":
                 try:
                     current_observation, current_frontend_payload = self._perform_observation(target_name)
+                    exec_record = {"node": "observe_scene", "status": "success"}
                 except Exception as exc:
                     log_error(f"❌ 观测失败: {exc}")
-                    return {"success": False, "reason": f"observe_failed: {exc}"}
-                self.world.record_execution_result({"node": "observe_scene", "status": "success"})
+                    exec_record = {"node": "observe_scene", "status": "failure", "reason": str(exc)}
+                    current_observation = None
+                    current_frontend_payload = None
+                self.world.record_execution_result(exec_record)
+                self._active_plan_log.append(exec_record)
+                self.plan_runner.apply_action_result(action_node, exec_record["status"] == "success")
+                if exec_record["status"] != "success":
+                    continue
                 self._publish_world_snapshot()
-                self.plan_step_index += 1
                 self._publish_plan_state()
                 continue
 
@@ -529,8 +720,9 @@ class TaskProcessor:
                 try:
                     current_observation, current_frontend_payload = self._perform_observation(target_name)
                 except Exception as exc:
-                    log_error(f"❌ 观测失败: {exc}")
-                    return {"success": False, "reason": f"observe_failed: {exc}"}
+                    log_error(f"❌ 兜底观测失败: {exc}")
+                    self.plan_runner.apply_action_result(action_node, False)
+                    continue
 
             runtime = SkillRuntime(
                 navigator=self.navigator,
@@ -541,7 +733,7 @@ class TaskProcessor:
                 surface_region=current_observation.surface_roi if current_observation else None,
                 extra={"step": step, "node": node_name},
             )
-            result = self.executor.execute(node, runtime)
+            result = self.executor.execute(action_node, runtime)
             exec_record = {
                 "node": node_name,
                 "status": result.status,
@@ -549,40 +741,15 @@ class TaskProcessor:
                 "evidence": result.evidence,
             }
             self.world.record_execution_result(exec_record)
+            log_entry = dict(exec_record)
+            log_entry["evidence"] = self._json_safe(log_entry.get("evidence"))
+            self._active_plan_log.append(log_entry)
+            self.plan_runner.apply_action_result(action_node, result.success)
             self._publish_world_snapshot()
-            # todo : 实现每次移动前先观察是通过清空current_observation吗？这是兜底方案？
-            if result.success:
-                self.plan_step_index += 1
-                self._publish_plan_state()
-                movement_nodes = {"approach_far", "approach_bbox", "search_area", "rotate_scan", "finalize_target_pose"}
-                plan_completed = self.current_plan and self.plan_step_index >= len(self.current_plan.steps)
-                if node_name in movement_nodes:
-                    current_observation = None
-                    current_frontend_payload = None
-                    self.current_plan = None
-                    self._publish_plan_state()
-                if plan_completed:
-                    log_success("🎯 行为树计划执行完成")
-                    return {
-                        "success": True,
-                        "result": current_observation.raw_response if current_observation else None,
-                        "annotated_url": current_observation.annotated_url if current_observation else None,
-                    }
+            self._publish_plan_state()
+            if not result.success:
                 continue
-
-            if self.world.should_replan(exec_record):
-                log_warning("🔄 触发重规划")
-                self.current_plan = None
-                current_observation = None
-                current_frontend_payload = None
-                self._publish_plan_state()
-                continue
-
-            return {
-                "success": False,
-                "reason": result.reason or "skill_failed",
-                "last_observation": current_observation.as_dict() if current_observation else {},
-            }
 
         log_error("❌ 达到最大探索次数，未完成任务")
+        self._finalize_plan_iteration("failed", "max_steps_exceeded")
         return {"success": False, "reason": "未能在限定步数内完成抓取任务"}

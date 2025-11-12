@@ -24,7 +24,7 @@
 | --- | --- | --- |
 | **世界模型 (World Model)** | 将视觉观测统一成对象级数据库，维护 `visible / range_estimate / robot_center / world_center` 等字段 | 统一“唯一真相源” (Single Source of Truth)，支撑任务推理与回放 |
 | **VLM Observer + Depth Localization** | 每次 `observe_scene` 时采集 RGB、调用奥比中光深度接口，使用 `TargetLocalizer` 得到相机坐标，再转换为机器人/世界坐标（单位 m） | 保证所有坐标计算都通过同一链路：相机坐标 (mm) → 机器人坐标 (mm) → 世界坐标 (m) |
-| **LLM Planner & 行为树** | 约束 LLM 只输出 `observe_scene / approach_far / approach_bbox / finalize_target_pose / pick ...` 等原子技能，通过 `check` 节点把“距 5 m 阈值”显式写进 BT | 让规划逻辑可解释、可调试，可清晰区分“粗靠近”与“精对齐”阶段 |
+| **LLM Planner & 行为树** | 约束 LLM 只输出 `observe_scene / approach_far / approach_bbox / finalize_target_pose / pick ...` 等原子技能，通过 `check` 节点把“距 2 m 阈值”显式写进 BT | 让规划逻辑可解释、可调试，可清晰区分“粗靠近”与“精对齐”阶段 |
 | **Skill Executor** | `approach_far` 依据世界坐标连线一步到位；`approach_bbox` 负责近距离像素对齐；`finalize_target_pose` 调用深度定位+底盘微调 | 保持动作正交，便于扩展/重用 |
 | **Scene Catalog Worker** | 运行后台线程，将每帧 RGB-D 同样送入 VLM + `TargetLocalizer`，逐渐累积高置信度物体的世界坐标，形成“被动语义记忆” | 发现新物体时自动补充世界模型，实现“观察-记忆”解耦 |
 

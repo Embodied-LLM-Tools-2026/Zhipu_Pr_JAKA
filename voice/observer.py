@@ -16,6 +16,7 @@ from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple
 
 import dashscope  # type: ignore
+import numpy as np
 import requests
 from PIL import Image, ImageDraw
 
@@ -23,6 +24,7 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "t
 
 from task_logger import log_error, log_info, log_success, log_warning  # type: ignore
 from upload_image import upload_file_and_get_url  # type: ignore
+from sam_client import generate_mask  # type: ignore
 
 from config import Config
 from task_structures import ObservationPhase, ObservationResult
@@ -75,7 +77,7 @@ class VLMObserver:
 
         prompt = self._build_prompt(target_name, phase, context, processed_size)
         response = self._call_vlm(image_url, prompt)
-        observation, raw_result = self._parse_response(
+        observation, parsed_payload = self._parse_response(
             response,
             processed_size,
             original_size,
@@ -84,7 +86,7 @@ class VLMObserver:
         )
 
         payload = self._build_frontend_payload(
-            observation, raw_result, original_size, processed_size
+            observation, parsed_payload, original_size, processed_size
         )
 
         if payload:
@@ -187,8 +189,8 @@ class VLMObserver:
             '  "confidence": number (0-1),',
             '  "range_estimate": number // 估计距离（米），无法估计用 -1,',
             '  "analysis": "<简短中文说明>",',
-            '  "surface_roi": [x_min, y_min, x_max, y_max], // 可选',
-            '  "surface_points": [[x, y], ...] // 可选，背景平面点，一般是指承载目标物体的平面',
+            '  "surface_roi": [x_min, y_min, x_max, y_max], // 背景平面区域，承载目标物体的平面',
+            '  "surface_points": [[x, y], ...] // 1-2个背景平面点，一般是指承载目标物体的平面，注意，点一定要打在平面上，不要打在平面之外',
             "}",
             "禁止返回其他键。确保JSON合法。",
         ]
@@ -301,6 +303,14 @@ class VLMObserver:
             processed_image_path=processed_path,
             original_image_path=original_path,
         )
+        mask_preview = self._maybe_generate_surface_mask(
+            original_path=original_path,
+            surface_points=observation.surface_points,
+        )
+        if mask_preview:
+            observation.surface_mask_path = mask_preview.get("path")
+            observation.surface_mask_url = mask_preview.get("url")
+            observation.surface_mask_score = mask_preview.get("score")
 
         payload = {
             "found": found,
@@ -315,6 +325,52 @@ class VLMObserver:
             "surface_points": observation.surface_points,
         }
         return observation, payload
+
+    def _build_frontend_payload(
+        self,
+        observation: ObservationResult,
+        parsed_payload: Dict[str, Any],
+        original_size: List[int],
+        processed_size: List[int],
+    ) -> Dict[str, Any]:
+        """
+        Prepare a compact payload that the FastAPI UI endpoint can consume.
+
+        The UI expects xyxy boxes along with basic metadata so we normalise
+        everything here before posting.
+        """
+        if observation is None:
+            return {}
+        payload_src = parsed_payload if isinstance(parsed_payload, dict) else {}
+        original_bbox = payload_src.get("original_bbox") or payload_src.get("bbox") or []
+        if not isinstance(original_bbox, list):
+            original_bbox = []
+        mapped_bbox = payload_src.get("mapped_bbox")
+        if not mapped_bbox and observation.bbox:
+            mapped_bbox = observation.bbox
+        boxes = [observation.bbox] if observation.bbox else []
+        payload: Dict[str, Any] = {
+            "found": observation.found,
+            "bbox": observation.bbox,
+            "boxes": boxes,
+            "bbox_mode": "xyxy",
+            "mapped_bbox": mapped_bbox,
+            "original_bbox": original_bbox,
+            "image_size": observation.image_size or original_size,
+            "processed_size": processed_size,
+            "confidence": observation.confidence,
+            "analysis": observation.analysis,
+            "range_estimate": observation.range_estimate,
+            "surface_region": observation.surface_roi,
+            "surface_points": observation.surface_points,
+            "annotated_url": observation.annotated_url,
+            "processed_image_path": observation.processed_image_path,
+            "original_image_path": observation.original_image_path,
+            "raw_result": parsed_payload,
+            "mask_url": observation.surface_mask_url,
+            "mask_score": observation.surface_mask_score,
+        }
+        return payload
 
     def _push_detection_to_frontend(self, payload: Dict[str, Any]) -> None:
         try:
@@ -433,6 +489,38 @@ class VLMObserver:
         return {
             "path": annotated_path,
             "url": self._path_to_static_url(annotated_path),
+        }
+
+    def _maybe_generate_surface_mask(
+        self,
+        original_path: str,
+        surface_points: Optional[List[List[int]]],
+    ) -> Optional[Dict[str, Any]]:
+        if not surface_points or not original_path:
+            return None
+        try:
+            with Image.open(original_path) as img:
+                rgb = np.array(img.convert("RGB"))
+        except Exception as exc:
+            log_warning(f"[SAM] 无法读取原图生成mask: {exc}")
+            return None
+        mask, score = generate_mask(rgb, surface_points)
+        if mask is None:
+            return None
+        mask = (mask > 0).astype(np.uint8) * 255
+        base_dir = os.path.dirname(original_path)
+        ts = int(time.time() * 1000)
+        mask_name = f"sam_mask_{ts}.png"
+        mask_path = os.path.join(base_dir, mask_name)
+        try:
+            Image.fromarray(mask, mode="L").save(mask_path, format="PNG")
+        except Exception as exc:
+            log_warning(f"[SAM] 保存mask失败: {exc}")
+            return None
+        return {
+            "path": mask_path,
+            "url": self._path_to_static_url(mask_path),
+            "score": score,
         }
 
     @staticmethod

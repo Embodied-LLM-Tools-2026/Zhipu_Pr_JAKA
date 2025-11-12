@@ -1,4 +1,5 @@
 import base64
+import io
 import math
 import os
 import random
@@ -29,7 +30,6 @@ except Exception:  # pragma: no cover
     cv2 = None
 
 from tools.sam_client import generate_mask
-from tools.zerograsp_wrapper import get_shared_zerograsp_runner
 
 DEFAULT_DEPTH_API = os.getenv("DEPTH_FRAME_API", "http://127.0.0.1:8000/api/depth/frame")
 
@@ -165,6 +165,7 @@ class TargetLocalizer:
         range_estimate: Optional[float] = None,
         rgb_frame: Optional[np.ndarray] = None,
         timeout: float = 1.2,
+        surface_mask: Optional[np.ndarray] = None,
     ) -> Optional[Dict[str, Any]]:
         snapshot = fetch_snapshot(self.depth_api, timeout=timeout)
         return self.localize_object(
@@ -173,6 +174,7 @@ class TargetLocalizer:
             surface_points_hint=surface_points_hint,
             range_estimate=range_estimate,
             rgb_frame=rgb_frame,
+            surface_mask=surface_mask,
         )
 
     def localize_object(
@@ -183,6 +185,7 @@ class TargetLocalizer:
         surface_points_hint: Optional[List[List[float]]] = None,
         range_estimate: Optional[float] = None,
         rgb_frame: Optional[np.ndarray] = None,
+        surface_mask: Optional[np.ndarray] = None,
     ) -> Optional[Dict[str, Any]]:
         bbox_int = list(map(int, bbox))
         if len(bbox_int) != 4:
@@ -193,6 +196,7 @@ class TargetLocalizer:
             bbox=bbox_int,
             rgb_frame=rgb_frame,
             surface_points_hint=surface_points_hint,
+            surface_mask_override=surface_mask,
         )
         if transform is None:
             return None
@@ -210,18 +214,9 @@ class TargetLocalizer:
             "edge_total_points": edge_info.get("total_points"),
             "edge_residual": edge_info.get("residual"),
             "surface_points": transform.get("surface_points"),
+            "surface_mask_available": transform.get("surface_mask_available", False),
             "bbox": transform["bbox"],
         }
-
-        # using absolute threshold for close-range objects
-        # if range_estimate is not None and range_estimate <= 0.5:
-        #     zg = self._run_zero_grasp_inference(
-        #         transform_result=transform,
-        #         bbox=transform["bbox"],
-        #         rgb_frame=rgb_frame,
-        #     )
-        #     if zg is not None:
-        #         payload["zerograsp"] = zg
 
         return payload
 
@@ -235,6 +230,7 @@ class TargetLocalizer:
         bbox: List[int],
         rgb_frame: Optional[np.ndarray],
         surface_points_hint: Optional[List[List[float]]],
+        surface_mask_override: Optional[np.ndarray] = None,
     ) -> Optional[Dict[str, Any]]:
         depth = snapshot.depth
         height, width = depth.shape
@@ -272,12 +268,18 @@ class TargetLocalizer:
         coordinate_3d_array = np.mean(object_points_np, axis=0)
         obj_center_depth = float(coordinate_3d_array[2])
 
-        surface_mask = self._build_surface_mask(
-            rgb_frame=rgb_frame,
-            surface_points_hint=surface_points_hint,
-            depth_width=width,
-            depth_height=height,
+        surface_mask = (
+            self._build_surface_mask(
+                rgb_frame=rgb_frame,
+                surface_points_hint=surface_points_hint,
+                depth_width=width,
+                depth_height=height,
+            )
+            if surface_mask_override is None
+            else self._resize_mask_to_depth(surface_mask_override, width, height)
         )
+        mask_available = surface_mask is not None
+        camera_params = self._camera_params_from_snapshot(snapshot, width, height)
 
         support_points = self._collect_support_points(
             depth_data=depth,
@@ -295,6 +297,10 @@ class TargetLocalizer:
             "object_points": object_points_np,
             "support_points": support_points,
             "surface_points": surface_points_hint,
+            "surface_mask_available": mask_available,
+            "camera_params": camera_params,
+            "intrinsics_raw": snapshot.intrinsics,
+            "extrinsic_raw": snapshot.extrinsic,
             "bbox": (x_min, x_max, y_min, y_max),
             "depth_data": depth,
             "depth_width": width,
@@ -402,18 +408,27 @@ class TargetLocalizer:
         if not surface_points_hint or rgb_frame is None:
             return None
         try:
-            mask = generate_mask(rgb_frame, surface_points_hint)
+            mask, _ = generate_mask(rgb_frame, surface_points_hint)
         except Exception as exc:
             print(f"[SAM] 生成mask失败: {exc}")
             return None
         if mask is None:
             return None
-        if mask.shape[0] != depth_height or mask.shape[1] != depth_width:
-            if cv2 is not None:
-                mask = cv2.resize(mask, (depth_width, depth_height), interpolation=cv2.INTER_NEAREST)
-            else:
-                mask = np.array(Image.fromarray(mask).resize((depth_width, depth_height)))
-        return mask
+        return self._resize_mask_to_depth(mask, depth_width, depth_height)
+
+    def _resize_mask_to_depth(
+        self,
+        mask: np.ndarray,
+        depth_width: int,
+        depth_height: int,
+    ) -> np.ndarray:
+        if mask.shape[0] == depth_height and mask.shape[1] == depth_width:
+            return mask
+        if cv2 is not None:
+            return cv2.resize(mask, (depth_width, depth_height), interpolation=cv2.INTER_NEAREST)
+        return np.array(
+            Image.fromarray(mask).resize((depth_width, depth_height), resample=Image.NEAREST)
+        )
 
     def _collect_support_points(
         self,
@@ -446,6 +461,55 @@ class TargetLocalizer:
         if not support_points:
             return np.empty((0, 3))
         return np.asarray(support_points)
+
+    @staticmethod
+    def _camera_params_from_snapshot(snapshot: DepthSnapshot, width: int, height: int) -> Dict[str, float]:
+        params = _normalize_intrinsics(snapshot.intrinsics, width, height)
+        return {
+            "camera_fx": float(params.get("fx", 0.0)),
+            "camera_fy": float(params.get("fy", 0.0)),
+            "camera_cx": float(params.get("cx", width / 2.0)),
+            "camera_cy": float(params.get("cy", height / 2.0)),
+            "camera_width": int(width),
+            "camera_height": int(height),
+        }
+
+    @staticmethod
+    def _structured_point_cloud(depth_data: np.ndarray, intrinsics: Any, extrinsic: Any) -> Optional[np.ndarray]:
+        height, width = depth_data.shape
+        params = _normalize_intrinsics(intrinsics, width, height)
+        fx = float(params.get("fx") or 0.0)
+        fy = float(params.get("fy") or 0.0)
+        if fx == 0.0 or fy == 0.0:
+            return None
+        cx = float(params.get("cx", width / 2.0))
+        cy = float(params.get("cy", height / 2.0))
+        u, v = np.meshgrid(np.arange(width), np.arange(height))
+        z = depth_data.astype(np.float32)
+        x = (u.astype(np.float32) - cx) * z / fx
+        y = (v.astype(np.float32) - cy) * z / fy
+        points = np.stack([x, y, z], axis=-1)
+        extr_matrix = _extract_extrinsic_matrix(extrinsic)
+        if extr_matrix is not None:
+            rot = extr_matrix[:3, :3]
+            trans = extr_matrix[:3, 3]
+            pts = points.reshape(-1, 3)
+            pts = (rot @ pts.T).T + trans
+            points = pts.reshape(height, width, 3)
+        return points
+
+    @staticmethod
+    def _encode_png(image: np.ndarray) -> str:
+        pil = Image.fromarray(image.astype(np.uint8, copy=False))
+        buf = io.BytesIO()
+        pil.save(buf, format="PNG")
+        return base64.b64encode(buf.getvalue()).decode("ascii")
+
+    @staticmethod
+    def _encode_npy(array: np.ndarray) -> str:
+        buffer = io.BytesIO()
+        np.save(buffer, array)
+        return base64.b64encode(buffer.getvalue()).decode("ascii")
 
     def _fit_edge_orientation(self, points: np.ndarray) -> Dict[str, Any]:
         result: Dict[str, Any] = {
@@ -531,63 +595,78 @@ class TargetLocalizer:
         )
         return result
 
-    def _run_zero_grasp_inference(
+    def run_zero_grasp_inference(
         self,
         *,
         transform_result: Dict[str, Any],
         bbox: Tuple[int, int, int, int],
         rgb_frame: Optional[np.ndarray],
     ) -> Optional[Dict[str, Any]]:
-        ws_url = os.getenv("ZEROGRASP_WS_URL")
-        if not ws_url:
-            return None
-        runner = get_shared_zerograsp_runner(
-            ws_url=ws_url,
-            camera_cfg_path=os.getenv("ZEROGRASP_CAMERA_CFG"),
-        )
-        if runner is None:
+        http_url = "http://10.46.118.233:8000"
+        if not http_url:
             return None
 
         depth_data = transform_result.get("depth_data")
         if depth_data is None or depth_data.size == 0:
             return None
+        depth_height, depth_width = depth_data.shape
 
         if rgb_frame is None:
             return None
-
-        depth_height, depth_width = depth_data.shape
         if rgb_frame.shape[0] != depth_height or rgb_frame.shape[1] != depth_width:
             if cv2 is None:
                 return None
-            rgb_frame = cv2.resize(
-                rgb_frame, (depth_width, depth_height), interpolation=cv2.INTER_AREA
-            )
+            rgb_frame = cv2.resize(rgb_frame, (depth_width, depth_height), interpolation=cv2.INTER_AREA)
 
-        mask = np.zeros((depth_height, depth_width), dtype=np.uint8)
-        x_min, x_max, y_min, y_max = bbox
-        x_min = max(0, int(x_min))
-        x_max = min(depth_width, int(x_max))
-        y_min = max(0, int(y_min))
-        y_max = min(depth_height, int(y_max))
-        if x_min >= x_max or y_min >= y_max:
+        camera_params = transform_result.get("camera_params")
+        intr_raw = transform_result.get("intrinsics_raw")
+        extr_raw = transform_result.get("extrinsic_raw")
+        if not camera_params or not intr_raw:
             return None
-        mask[y_min:y_max, x_min:x_max] = 255
+
+        points3d = self._structured_point_cloud(depth_data, intr_raw, extr_raw)
+        if points3d is None:
+            return None
+
+        bbox_dict = {
+            "x_min": int(bbox[0]),
+            "y_min": int(bbox[2]),
+            "x_max": int(bbox[1]),
+            "y_max": int(bbox[3]),
+        }
+
+        payload: Dict[str, Any] = {
+            "rgb": self._encode_png(rgb_frame),
+            "points3d": self._encode_npy(points3d.astype(np.float32, copy=False)),
+            "bbox": bbox_dict,
+            "camera": camera_params,
+            "frame_id": "frame-0",
+            "object_id": 0,
+            "grasp_limit": 5,
+        }
+        sam2_url = "http://10.46.118.233:5000/predict"
+        if sam2_url:
+            payload["sam2_url"] = sam2_url
 
         try:
-            result = runner.infer(
-                rgb_image=rgb_frame.astype(np.uint8, copy=False),
-                depth_image=depth_data.astype(np.uint16, copy=False),
-                mask_image=mask,
-            )
-        except Exception as exc:  # pragma: no cover
-            print(f"[ZeroGrasp] Runtime error: {exc}")
+            timeout = float(os.getenv("ZEROGRASP_TIMEOUT", "60"))
+        except ValueError:
+            timeout = 60.0
+
+        try:
+            resp = requests.post(http_url, json=payload, timeout=timeout)
+            resp.raise_for_status()
+        except requests.Timeout:
+            print("[ZeroGrasp] 请求超时")
+            return None
+        except Exception as exc:  # noqa: BLE001
+            print(f"[ZeroGrasp] 请求失败: {exc}")
             return None
 
-        if result is None:
-            return None
-        if isinstance(result, dict):
-            return self._to_serializable(result)
-        return {"raw": self._to_serializable(result)}
+        try:
+            return self._to_serializable(resp.json())
+        except Exception:
+            return {"raw": resp.text}
 
     @staticmethod
     def _to_serializable(value: Any) -> Any:
