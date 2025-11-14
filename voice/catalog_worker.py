@@ -71,7 +71,6 @@ class SceneCatalogWorker:
                 self.queue.task_done()
 # job = {
 #     "image_path": observation.original_image_path,
-#     "image_size": observation.image_size,
 #     "depth_map": depth_bundle.depth,
 #     "depth_intrinsics": depth_bundle.intrinsics,
 #     "extrinsic": depth_bundle.extrinsic,
@@ -84,7 +83,6 @@ class SceneCatalogWorker:
             intrinsics=job.get("depth_intrinsics"),
             extrinsic=job.get("extrinsic"),
         )
-        image_size = job.get("image_size") or [1, 1]
         robot_pose = job.get("robot_pose")
         if image_path is None or snapshot is None or robot_pose is None:
             log_warning("⚠️ 场景建模任务缺少必要字段")
@@ -227,4 +225,3 @@ class SceneCatalogWorker:
         robot_point_mm = SkillExecutor.transform_camera_to_robot(cam_point_mm)
         world_point_m = SkillExecutor.transform_robot_to_world(robot_point_mm, robot_pose)
         return cam_point_mm, robot_point_mm, world_point_m
-

@@ -1341,7 +1341,6 @@ INDEX_HTML = """
         const info = {
           found: j.found,
           bbox: j.original_bbox || j.bbox || j.boxes || [],
-          image_size: j.image_size,
           forward_distance: j.forward_distance,
           target: j.target,
         };

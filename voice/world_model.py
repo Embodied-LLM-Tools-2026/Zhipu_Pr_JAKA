@@ -122,13 +122,10 @@ class WorldModel:
             obj.last_seen = time.time()
             obj.annotated_url = observation.annotated_url or obj.annotated_url
             obj.seen_in = current_area or obj.seen_in
-            obj.attrs["analysis"] = observation.analysis
             if observation.range_estimate is not None:
                 obj.attrs["range_estimate"] = observation.range_estimate
             if observation.surface_points:
                 obj.attrs["surface_points"] = observation.surface_points
-            if observation.surface_roi:
-                obj.attrs["surface_region"] = observation.surface_roi
             if observation.camera_center:
                 obj.camera_center = observation.camera_center
             if observation.robot_center:

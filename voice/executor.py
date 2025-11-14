@@ -23,6 +23,7 @@ from task_logger import log_error, log_info, log_success, log_warning  # type: i
 
 from localize_target import TargetLocalizer
 from task_structures import ExecutionResult, PlanNode
+from .sam_worker import sam_mask_worker  # type: ignore
 
 
 @dataclass
@@ -32,7 +33,6 @@ class SkillRuntime:
     observation: Any = None
     frontend_payload: Optional[Dict[str, Any]] = None
     surface_points: Optional[Any] = None
-    surface_region: Optional[Any] = None
     extra: Dict[str, Any] = field(default_factory=dict)
 
 
@@ -427,6 +427,15 @@ class SkillExecutor:
         rgb_frame = None
         surface_mask = None
         mask_path = getattr(observation, "surface_mask_path", None)
+        if (not mask_path or not os.path.isfile(mask_path)) and getattr(observation, "surface_mask_task_id", None):
+            wait_timeout = float(os.getenv("SAM_MASK_WAIT_TIMEOUT", "3"))
+            result = sam_mask_worker.wait_for_result(getattr(observation, "surface_mask_task_id"), timeout=wait_timeout)
+            if result:
+                mask_path = result.get("path")
+                observation.surface_mask_path = mask_path
+                observation.surface_mask_url = result.get("url")
+                observation.surface_mask_score = result.get("score")
+                setattr(observation, "surface_mask_task_id", None)
         if mask_path and os.path.isfile(mask_path):
             try:
                 with Image.open(mask_path) as mask_img:

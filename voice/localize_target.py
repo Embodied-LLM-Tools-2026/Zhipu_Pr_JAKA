@@ -463,15 +463,28 @@ class TargetLocalizer:
         return np.asarray(support_points)
 
     @staticmethod
-    def _camera_params_from_snapshot(snapshot: DepthSnapshot, width: int, height: int) -> Dict[str, float]:
+    def _camera_params_from_snapshot(snapshot: DepthSnapshot, width: int, height: int) -> Dict[str, Any]:
+        """
+        Build the camera payload expected by the ZeroGrasp service.
+        """
         params = _normalize_intrinsics(snapshot.intrinsics, width, height)
+        width_i = int(width)
+        height_i = int(height)
+        intrinsics = {
+            "fx": float(params.get("fx", 0.0)),
+            "fy": float(params.get("fy", 0.0)),
+            "cx": float(params.get("cx", width / 2.0)),
+            "cy": float(params.get("cy", height / 2.0)),
+        }
         return {
-            "camera_fx": float(params.get("fx", 0.0)),
-            "camera_fy": float(params.get("fy", 0.0)),
-            "camera_cx": float(params.get("cx", width / 2.0)),
-            "camera_cy": float(params.get("cy", height / 2.0)),
-            "camera_width": int(width),
-            "camera_height": int(height),
+            "width": width_i,
+            "height": height_i,
+            "camera_width": width_i,
+            "camera_height": height_i,
+            "rectified_width": width_i,
+            "rectified_height": height_i,
+            "color_intrinsics": intrinsics.copy(),
+            "depth_intrinsics": intrinsics.copy(),
         }
 
     @staticmethod
@@ -602,8 +615,8 @@ class TargetLocalizer:
         bbox: Tuple[int, int, int, int],
         rgb_frame: Optional[np.ndarray],
     ) -> Optional[Dict[str, Any]]:
-        http_url = "http://10.46.118.233:8000"
-        if not http_url:
+        zerograsp_url = os.getenv("ZEROGRASP_URL", "http://10.46.118.233:8000/predict")
+        if not zerograsp_url:
             return None
 
         depth_data = transform_result.get("depth_data")
@@ -644,7 +657,7 @@ class TargetLocalizer:
             "object_id": 0,
             "grasp_limit": 5,
         }
-        sam2_url = "http://10.46.118.233:5000/predict"
+        sam2_url = os.getenv("SAM2_URL", "http://10.46.118.233:5000")
         if sam2_url:
             payload["sam2_url"] = sam2_url
 
@@ -654,7 +667,7 @@ class TargetLocalizer:
             timeout = 60.0
 
         try:
-            resp = requests.post(http_url, json=payload, timeout=timeout)
+            resp = requests.post(zerograsp_url, json=payload, timeout=timeout)
             resp.raise_for_status()
         except requests.Timeout:
             print("[ZeroGrasp] 请求超时")

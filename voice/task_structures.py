@@ -23,14 +23,11 @@ class ObservationPhase(enum.Enum):
 @dataclass
 class ObservationResult:
     """Structured output returned by the VLM observer."""
-    # todo : add depth info in ObservationResult
+
     found: bool
     bbox: List[float]
-    image_size: List[int]
     confidence: float
     range_estimate: Optional[float]
-    analysis: str
-    surface_roi: Optional[List[int]] = None
     surface_points: Optional[List[List[int]]] = None
     annotated_url: Optional[str] = None
     raw_response: Optional[Dict[str, Any]] = None
@@ -39,6 +36,7 @@ class ObservationResult:
     surface_mask_path: Optional[str] = None
     surface_mask_url: Optional[str] = None
     surface_mask_score: Optional[float] = None
+    surface_mask_task_id: Optional[str] = None
     camera_center: Optional[List[float]] = None
     robot_center: Optional[List[float]] = None
     world_center: Optional[List[float]] = None
@@ -49,16 +47,14 @@ class ObservationResult:
         return {
             "found": self.found,
             "bbox": self.bbox,
-            "image_size": self.image_size,
             "confidence": self.confidence,
             "range_estimate": self.range_estimate,
-            "analysis": self.analysis,
-            "surface_roi": self.surface_roi,
             "surface_points": self.surface_points,
             "annotated_url": self.annotated_url,
             "raw_response": self.raw_response,
             "surface_mask_url": self.surface_mask_url,
             "surface_mask_score": self.surface_mask_score,
+            "surface_mask_task_id": self.surface_mask_task_id,
             "camera_center": self.camera_center,
             "robot_center": self.robot_center,
             "world_center": self.world_center,

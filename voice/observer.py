@@ -24,7 +24,7 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "t
 
 from task_logger import log_error, log_info, log_success, log_warning  # type: ignore
 from upload_image import upload_file_and_get_url  # type: ignore
-from sam_client import generate_mask  # type: ignore
+from .sam_worker import sam_mask_worker  # type: ignore
 
 from config import Config
 from task_structures import ObservationPhase, ObservationResult
@@ -34,9 +34,6 @@ from action_sequence.navigate import Navigate
 class ObservationContext:
     step: int
     max_steps: int
-    last_analysis: Optional[str] = None
-    surface_region: Optional[List[int]] = None
-    surface_points: Optional[List[List[int]]] = None
 
 
 class VLMObserver:
@@ -75,7 +72,7 @@ class VLMObserver:
             file_path=processed_path,
         )
 
-        prompt = self._build_prompt(target_name, phase, context, processed_size)
+        prompt = self._build_prompt(target_name, phase, context)
         response = self._call_vlm(image_url, prompt)
         observation, parsed_payload = self._parse_response(
             response,
@@ -86,7 +83,7 @@ class VLMObserver:
         )
 
         payload = self._build_frontend_payload(
-            observation, parsed_payload, original_size, processed_size
+            observation, parsed_payload, processed_size
         )
 
         if payload:
@@ -175,7 +172,6 @@ class VLMObserver:
         target_name: str,
         phase: ObservationPhase,
         context: ObservationContext,
-        image_size: List[int],
     ) -> str:
         base = [
             f"你是部署在服务机器人上的视觉助手。目标物体是“{target_name}”。",
@@ -185,11 +181,7 @@ class VLMObserver:
             "{",
             '  "found": true/false,',
             '  "bbox": [x_min, y_max, x_max, y_min],',
-            '  "image_size": [width, height],',
             '  "confidence": number (0-1),',
-            '  "range_estimate": number // 估计距离（米），无法估计用 -1,',
-            '  "analysis": "<简短中文说明>",',
-            '  "surface_roi": [x_min, y_min, x_max, y_max], // 背景平面区域，承载目标物体的平面',
             '  "surface_points": [[x, y], ...] // 1-2个背景平面点，一般是指承载目标物体的平面，注意，点一定要打在平面上，不要打在平面之外',
             "}",
             "禁止返回其他键。确保JSON合法。",
@@ -239,7 +231,6 @@ class VLMObserver:
         found = bool(result.get("found"))
         bbox = result.get("bbox") or []
         confidence = float(result.get("confidence", 0.0) or 0.0)
-        analysis = result.get("analysis", "")
         range_estimate = result.get("range_estimate", None)
         if isinstance(range_estimate, (str, int, float)):
             try:
@@ -248,9 +239,6 @@ class VLMObserver:
                     range_estimate = None
             except (TypeError, ValueError):
                 range_estimate = None
-        surface_roi = result.get("surface_roi")
-        if not isinstance(surface_roi, list) or len(surface_roi) != 4:
-            surface_roi = None
         surface_points = None
         if isinstance(result.get("surface_points"), list):
             surface_points = []
@@ -266,62 +254,43 @@ class VLMObserver:
         remapped_bbox = self._remap_bbox_to_original(
             bbox, processed_size, original_size
         )
-        annotated = None
-        if remapped_bbox:
-            boxes_for_ui = [remapped_bbox]
-        else:
-            boxes_for_ui = []
-        if boxes_for_ui:
-            annotated = self._save_annotated_image(
-                original_path,
-                boxes_for_ui,
-                surface_region=self._remap_roi_to_original(
-                    surface_roi, processed_size, original_size
-                ),
-                surface_points=self._remap_points_to_original(
-                surface_points, processed_size, original_size
-                ),
-            )
-
+        remapped_points = self._remap_points_to_original(surface_points, processed_size, original_size)
+        final_bbox = remapped_bbox if remapped_bbox else (bbox if isinstance(bbox, list) else [])
         observation = ObservationResult(
             found=found,
-            bbox=remapped_bbox or [],
-            image_size=original_size,
+            bbox=final_bbox,
             confidence=confidence,
             range_estimate=range_estimate,
-            analysis=analysis,
-            surface_roi=self._remap_roi_to_original(
-                surface_roi, processed_size, original_size
-            )
-            if surface_roi
-            else None,
-            surface_points=self._remap_points_to_original(
-                surface_points, processed_size, original_size
-            ),
-            annotated_url=annotated["url"] if annotated else None,
+            surface_points=remapped_points,
             raw_response=result,
             processed_image_path=processed_path,
             original_image_path=original_path,
         )
-        mask_preview = self._maybe_generate_surface_mask(
-            original_path=original_path,
-            surface_points=observation.surface_points,
-        )
-        if mask_preview:
-            observation.surface_mask_path = mask_preview.get("path")
-            observation.surface_mask_url = mask_preview.get("url")
-            observation.surface_mask_score = mask_preview.get("score")
+        boxes_for_ui = [final_bbox] if final_bbox else []
+        annotated = None
+        if boxes_for_ui:
+            annotated = self._save_annotated_image(
+                original_path,
+                boxes_for_ui,
+                surface_points=observation.surface_points,
+            )
+            if annotated:
+                observation.annotated_url = annotated.get("url")
+
+        if observation.surface_points:
+            job_id = sam_mask_worker.submit(
+                image_path=observation.original_image_path,
+                surface_points=observation.surface_points,
+            )
+            observation.surface_mask_task_id = job_id
 
         payload = {
             "found": found,
             "original_bbox": bbox,
             "mapped_bbox": remapped_bbox,
-            "image_size": original_size,
-            "analysis": analysis,
             "confidence": confidence,
             "range_estimate": range_estimate,
             "annotated_url": observation.annotated_url,
-            "surface_region": observation.surface_roi,
             "surface_points": observation.surface_points,
         }
         return observation, payload
@@ -330,7 +299,6 @@ class VLMObserver:
         self,
         observation: ObservationResult,
         parsed_payload: Dict[str, Any],
-        original_size: List[int],
         processed_size: List[int],
     ) -> Dict[str, Any]:
         """
@@ -356,12 +324,9 @@ class VLMObserver:
             "bbox_mode": "xyxy",
             "mapped_bbox": mapped_bbox,
             "original_bbox": original_bbox,
-            "image_size": observation.image_size or original_size,
             "processed_size": processed_size,
             "confidence": observation.confidence,
-            "analysis": observation.analysis,
             "range_estimate": observation.range_estimate,
-            "surface_region": observation.surface_roi,
             "surface_points": observation.surface_points,
             "annotated_url": observation.annotated_url,
             "processed_image_path": observation.processed_image_path,
@@ -414,28 +379,6 @@ class VLMObserver:
         return remapped
 
     @staticmethod
-    def _remap_roi_to_original(
-        roi: Optional[List[int]],
-        processed_size: List[int],
-        original_size: List[int],
-    ) -> Optional[List[int]]:
-        if not roi or len(roi) != 4:
-            return None
-        proc_w, proc_h = processed_size
-        orig_w, orig_h = original_size
-        if proc_w == 0 or proc_h == 0:
-            return None
-        sx = orig_w / proc_w
-        sy = orig_h / proc_h
-        x_min, y_min, x_max, y_max = roi
-        x_min = max(0, min(orig_w, x_min * sx))
-        x_max = max(0, min(orig_w, x_max * sx))
-        y_min = max(0, min(orig_h, y_min * sy))
-        y_max = max(0, min(orig_h, y_max * sy))
-        if x_min >= x_max or y_min >= y_max:
-            return None
-        return [int(x_min), int(y_min), int(x_max), int(y_max)]
-
     @staticmethod
     def _remap_points_to_original(
         points: Optional[List[List[int]]],
@@ -463,7 +406,6 @@ class VLMObserver:
         self,
         image_path: str,
         boxes: List[List[int]],
-        surface_region: Optional[List[int]] = None,
         surface_points: Optional[List[List[int]]] = None,
     ) -> Dict[str, str]:
         base_dir = os.path.dirname(image_path)
@@ -471,9 +413,6 @@ class VLMObserver:
             draw = ImageDraw.Draw(img)
             for x1, y1, x2, y2 in boxes:
                 draw.rectangle([(x1, y1), (x2, y2)], outline="red", width=4)
-            if surface_region:
-                sx1, sy1, sx2, sy2 = surface_region
-                draw.rectangle([(sx1, sy1), (sx2, sy2)], outline="green", width=3)
             if surface_points:
                 for px, py in surface_points:
                     r = 6
@@ -489,38 +428,6 @@ class VLMObserver:
         return {
             "path": annotated_path,
             "url": self._path_to_static_url(annotated_path),
-        }
-
-    def _maybe_generate_surface_mask(
-        self,
-        original_path: str,
-        surface_points: Optional[List[List[int]]],
-    ) -> Optional[Dict[str, Any]]:
-        if not surface_points or not original_path:
-            return None
-        try:
-            with Image.open(original_path) as img:
-                rgb = np.array(img.convert("RGB"))
-        except Exception as exc:
-            log_warning(f"[SAM] 无法读取原图生成mask: {exc}")
-            return None
-        mask, score = generate_mask(rgb, surface_points)
-        if mask is None:
-            return None
-        mask = (mask > 0).astype(np.uint8) * 255
-        base_dir = os.path.dirname(original_path)
-        ts = int(time.time() * 1000)
-        mask_name = f"sam_mask_{ts}.png"
-        mask_path = os.path.join(base_dir, mask_name)
-        try:
-            Image.fromarray(mask, mode="L").save(mask_path, format="PNG")
-        except Exception as exc:
-            log_warning(f"[SAM] 保存mask失败: {exc}")
-            return None
-        return {
-            "path": mask_path,
-            "url": self._path_to_static_url(mask_path),
-            "score": score,
         }
 
     @staticmethod

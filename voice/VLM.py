@@ -522,20 +522,10 @@ class TaskProcessor:
     def _perform_observation(self, target_name: str) -> tuple[Any, Dict[str, Any]]:
         self._observation_counter += 1
         obj_state = self.world.objects.get(target_name)
-        last_analysis = None
-        surface_region = None
-        surface_points = None
-        if obj_state:
-            last_analysis = obj_state.attrs.get("analysis")
-            surface_region = obj_state.attrs.get("surface_region")
-            surface_points = obj_state.attrs.get("surface_points")
         phase = self._determine_phase(obj_state)
         context = ObservationContext(
             step=self._observation_counter,
             max_steps=self.max_iter,
-            last_analysis=last_analysis,
-            surface_region=surface_region,
-            surface_points=surface_points,
         )
         observation, frontend_payload = self.observer.observe(target_name, phase, context, self.navigator)
 
@@ -588,7 +578,6 @@ class TaskProcessor:
                 try:
                     job = {
                         "image_path": observation.original_image_path,
-                        "image_size": observation.image_size,
                         "depth_map": depth_bundle.depth,
                         "depth_intrinsics": depth_bundle.intrinsics,
                         "extrinsic": depth_bundle.extrinsic,
@@ -730,7 +719,6 @@ class TaskProcessor:
                 observation=current_observation,
                 frontend_payload=current_frontend_payload,
                 surface_points=current_observation.surface_points if current_observation else None,
-                surface_region=current_observation.surface_roi if current_observation else None,
                 extra={"step": step, "node": node_name},
             )
             result = self.executor.execute(action_node, runtime)
