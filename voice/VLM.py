@@ -3,6 +3,7 @@ import json
 import os
 import sys
 import time
+import uuid
 from typing import Optional, Dict, Any, List, Tuple
 
 import dashscope
@@ -18,9 +19,15 @@ from task_logger import log_info, log_success, log_warning, log_error  # type: i
 
 from .observer import VLMObserver, ObservationContext
 from .executor import SkillExecutor, SkillRuntime
-from .planner import BehaviorPlanner
+from .planner import BehaviorPlanner, ReflectionAdvisor
 from .world_model import WorldModel
-from .task_structures import ObservationPhase, PlanNode
+from .task_structures import (
+    ObservationPhase,
+    PlanNode,
+    PlanContextEntry,
+    ExecutionTurn,
+    ReflectionEntry,
+)
 from .catalog_worker import SceneCatalogWorker
 
 
@@ -433,10 +440,28 @@ class TaskProcessor:
         self.plan_runner = BehaviorTreeRunner(root=None, world_model=self.world)
         self.max_iter = 20
         self._observation_counter = 0
-        self.plan_context: List[Dict[str, Any]] = []
+        self.plan_context: List[PlanContextEntry] = []
+        self.execution_history: List[ExecutionTurn] = []
+        self.reflection_log: List[ReflectionEntry] = []
         self._active_plan_log: List[Dict[str, Any]] = []
         self._plan_history_limit = int(os.getenv("PLAN_CONTEXT_LIMIT", "6"))
+        self._execution_history_limit = int(os.getenv("EXEC_HISTORY_LIMIT", "60"))
+        self._reflection_limit = int(os.getenv("REFLECTION_HISTORY_LIMIT", "8"))
         self._last_action_name: Optional[str] = None
+        self._timeline: List[Dict[str, Any]] = []
+        self._timeline_limit = int(os.getenv("EXEC_TIMELINE_LIMIT", "30"))
+        self._last_vlm_ts = 0.0
+        self._last_tracker_ts = 0.0
+        self._vlm_refresh_interval = float(os.getenv("VLM_REFRESH_INTERVAL", "3.0"))
+        self._failure_notice_threshold = int(os.getenv("FAIL_NOTICE_THRESHOLD", "2"))
+        self._last_status_message: Optional[str] = None
+        self._current_plan_id: Optional[str] = None
+        self._current_plan_entry: Optional[PlanContextEntry] = None
+        self._next_plan_hint: Optional[str] = None
+        self.reflection = ReflectionAdvisor(
+            llm_api_key=getattr(self.planner, "llm_api_key", None),
+            llm_model=getattr(self.planner, "llm_model", "deepseek-chat"),
+        )
 
     # ------------------------------------------------------------------
     def set_navigator(self, navigator) -> None:
@@ -455,8 +480,16 @@ class TaskProcessor:
     def _publish_plan_state(self) -> None:
         if not self.ui_bridge:
             return
+        timeline_payload = self._timeline_payload()
         if not self.current_plan:
-            self.ui_bridge.post_plan_state(root=None, steps=[], metadata={}, current_index=-1, current_node=None)
+            self.ui_bridge.post_plan_state(
+                root=None,
+                steps=[],
+                metadata={},
+                current_index=-1,
+                current_node=None,
+                timeline=timeline_payload,
+            )
             return
         steps_payload = [
             {
@@ -478,21 +511,41 @@ class TaskProcessor:
             root_dict = self.current_plan.root.to_dict()
         except Exception:
             root_dict = None
+        metadata_payload = dict(self.current_plan.metadata or {})
+        metadata_payload.setdefault("source", metadata_payload.get("source", "planner"))
+        metadata_payload["timeline_size"] = len(self._timeline)
         self.ui_bridge.post_plan_state(
             root=root_dict,
             steps=steps_payload,
-            metadata=self.current_plan.metadata,
+            metadata=metadata_payload,
             current_index=current_index,
             current_node=current_node,
+            timeline=timeline_payload,
         )
 
     def _ensure_plan(self, target_name: str) -> None:
-        history_context = self.plan_context[-self._plan_history_limit :]
-        self.current_plan = self.planner.make_plan(target_name, self.world, plan_context=history_context)
+        recent_history = [entry.to_prompt_dict() for entry in self.plan_context[-self._plan_history_limit :]]
+        if self._next_plan_hint:
+            recent_history.append(
+                {
+                    "phase": "reflection_hint",
+                    "hint": self._next_plan_hint,
+                }
+            )
+        self.current_plan = self.planner.make_plan(target_name, self.world, plan_context=recent_history)
         self.plan_runner.reset(self.current_plan.root)
         self._active_plan_log = []
         self._last_action_name = None
+        self._timeline.clear()
+        self._last_status_message = None
         step_names = [node.name or node.type for node in self.current_plan.steps]
+        self._current_plan_id = uuid.uuid4().hex[:8]
+        self._current_plan_entry = PlanContextEntry(
+            plan_id=self._current_plan_id,
+            goal=target_name,
+            planner_thought=self.current_plan.metadata.get("thought"),
+            planned_steps=step_names,
+        )
         log_info(f"🧠 当前计划: {step_names}")
         self._publish_plan_state()
 
@@ -528,8 +581,36 @@ class TaskProcessor:
             step=self._observation_counter,
             max_steps=self.max_iter,
         )
+        should_force = self._should_force_vlm(force_vlm)
         observation, frontend_payload = self.observer.observe(
-            target_name, phase, context, self.navigator, force_vlm=force_vlm
+            target_name, phase, context, self.navigator, force_vlm=should_force
+        )
+        now_ts = time.time()
+        source = getattr(observation, "source", "vlm")
+        if source == "vlm":
+            self._last_vlm_ts = now_ts
+        else:
+            self._last_tracker_ts = now_ts
+        summary = self._summarize_observation(observation)
+        setattr(observation, "summary", summary)
+        announce_level = "success" if getattr(observation, "found", False) else "warning"
+        self._announce_status(
+            f"👀 观测[{source}] {summary}",
+            announce_level,
+            push_hint=announce_level != "success",
+        )
+        event_status = "success" if getattr(observation, "found", False) else "observe"
+        self._record_timeline_event(
+            stage="observe",
+            node="observe_scene",
+            status=event_status,
+            detail=summary,
+        )
+        self._append_execution_turn(
+            stage="observe",
+            node="observe_scene",
+            status=event_status,
+            observation=summary,
         )
 
         pose_info = self.executor.estimate_observation_pose(observation, self.navigator)
@@ -594,11 +675,43 @@ class TaskProcessor:
         return observation, frontend_payload
 
     # ------------------------------------------------------------------
-    def _append_plan_context(self, entry: Dict[str, Any]) -> None:
-        entry["timestamp"] = time.time()
+    def _append_plan_context(self, entry: PlanContextEntry) -> None:
         self.plan_context.append(entry)
         if len(self.plan_context) > self._plan_history_limit:
             self.plan_context = self.plan_context[-self._plan_history_limit :]
+
+    def _trigger_reflection(self, trigger: str, reason: Optional[str], plan_entry: PlanContextEntry) -> None:
+        if not self.reflection:
+            return
+        relevant_turns = [turn for turn in self.execution_history if turn.plan_id == plan_entry.plan_id]
+        reflection = self.reflection.reflect(plan_entry.goal, plan_entry, relevant_turns)
+        if not reflection:
+            return
+        diagnosis = reflection.get("diagnosis") or reason or "执行失败"
+        adjustment_hint = reflection.get("adjustment_hint")
+        try:
+            confidence = float(reflection.get("confidence", 0.0) or 0.0)
+        except Exception:
+            confidence = 0.0
+        entry = ReflectionEntry(
+            plan_id=plan_entry.plan_id,
+            goal=plan_entry.goal,
+            trigger=trigger,
+            diagnosis=diagnosis,
+            adjustment_hint=adjustment_hint,
+            confidence=confidence,
+        )
+        self.reflection_log.append(entry)
+        if len(self.reflection_log) > self._reflection_limit:
+            self.reflection_log = self.reflection_log[-self._reflection_limit :]
+        if adjustment_hint:
+            self._next_plan_hint = adjustment_hint
+        self._emit_ui_log(f"🧠 反思: {diagnosis}", "warning")
+
+    def _latest_reflection(self) -> Optional[Dict[str, Any]]:
+        if not self.reflection_log:
+            return None
+        return self.reflection_log[-1].to_dict()
 
     @staticmethod
     def _json_safe(value: Any) -> Any:
@@ -612,19 +725,194 @@ class TaskProcessor:
                 return [TaskProcessor._json_safe(v) for v in value]
             return str(value)
 
-    def _finalize_plan_iteration(self, status: str, reason: Optional[str] = None) -> None:
-        if self.current_plan:
-            planned_steps = [node.name or node.type for node in self.current_plan.steps]
-        else:
-            planned_steps = []
-        summary = {
-            "phase": "llm_plan",
-            "status": status,
-            "reason": reason,
-            "planned_steps": planned_steps,
-            "executed": list(self._active_plan_log),
+    def _emit_ui_log(self, message: str, level: str = "info") -> None:
+        if not self.ui_bridge or not message:
+            return
+        try:
+            self.ui_bridge.post_task_log(message=message, level=level)
+        except Exception:
+            pass
+
+    def _push_suggestion(self, message: str, level: str = "info") -> None:
+        if not self.ui_bridge or not message:
+            return
+        try:
+            self.ui_bridge.post_suggestion(message=message, level=level)
+        except Exception:
+            pass
+
+    def _announce_status(self, message: str, level: str = "info", *, push_hint: bool = False) -> None:
+        if not message:
+            return
+        self._last_status_message = message
+        status_entry = {
+            "message": message,
+            "level": level,
+            "ts": time.time(),
         }
-        self._append_plan_context(summary)
+        self.world.task_memory["last_status"] = status_entry
+        if level in {"error", "warning"}:
+            log_warning(message)
+        else:
+            log_info(message)
+        self._emit_ui_log(message, level)
+        if push_hint or level in {"error", "warning"}:
+            self._push_suggestion(message, level)
+
+    def _handle_runtime_notifications(self, runtime: Optional[SkillRuntime]) -> None:
+        if runtime is None or not runtime.extra:
+            return
+        notes = runtime.extra.get("notifications") or []
+        if not isinstance(notes, list):
+            return
+        for note in notes:
+            if isinstance(note, dict):
+                msg = note.get("message")
+                level = note.get("level", "info")
+            else:
+                msg = str(note)
+                level = "info"
+            if not msg:
+                continue
+            self._push_suggestion(msg, level)
+            self._emit_ui_log(msg, level)
+    def _record_timeline_event(
+        self,
+        *,
+        stage: str,
+        node: str,
+        status: str,
+        detail: Optional[str] = None,
+        elapsed: Optional[float] = None,
+    ) -> None:
+        entry = {
+            "ts": int(time.time() * 1000),
+            "time": time.strftime("%H:%M:%S"),
+            "stage": stage,
+            "node": node,
+            "status": status,
+            "detail": detail or "",
+        }
+        if elapsed is not None:
+            entry["elapsed"] = float(elapsed)
+        self._timeline.append(entry)
+        if len(self._timeline) > self._timeline_limit:
+            self._timeline = self._timeline[-self._timeline_limit :]
+
+    def _timeline_payload(self) -> List[Dict[str, Any]]:
+        return [dict(entry) for entry in self._timeline]
+
+    def _append_execution_turn(
+        self,
+        *,
+        stage: str,
+        node: str,
+        status: str,
+        observation: Optional[str] = None,
+        action: Optional[str] = None,
+        detail: Optional[str] = None,
+        evidence: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        if not self._current_plan_id:
+            return
+        turn = ExecutionTurn(
+            plan_id=self._current_plan_id,
+            stage=stage,
+            node=node,
+            status=status,
+            observation=observation,
+            action=action,
+            detail=detail,
+            evidence=self._json_safe(evidence) if evidence else None,
+        )
+        self.execution_history.append(turn)
+        if len(self.execution_history) > self._execution_history_limit:
+            self.execution_history = self.execution_history[-self._execution_history_limit :]
+
+    def _should_force_vlm(self, requested: bool) -> bool:
+        if requested:
+            return True
+        if not getattr(self.observer, "tracker", None):
+            return True
+        if not self.observer.tracker.is_active():
+            return True
+        now = time.time()
+        if (now - self._last_vlm_ts) > self._vlm_refresh_interval:
+            return True
+        return False
+
+    def _summarize_observation(self, observation: Optional[Any]) -> str:
+        if observation is None:
+            return "未获得观测结果"
+        source = getattr(observation, "source", "vlm")
+        found = bool(getattr(observation, "found", False))
+        confidence = getattr(observation, "confidence", None)
+        range_est = getattr(observation, "range_estimate", None)
+        bbox = getattr(observation, "bbox", None)
+        parts = [f"{source.upper()} {'FOUND' if found else 'MISS'}"]
+        if confidence is not None:
+            try:
+                parts.append(f"conf={float(confidence):.2f}")
+            except Exception:
+                parts.append(f"conf={confidence}")
+        if range_est is not None:
+            try:
+                parts.append(f"dist={float(range_est):.2f}m")
+            except Exception:
+                parts.append(f"dist={range_est}")
+        if bbox:
+            bbox_text = ",".join(str(int(v)) for v in bbox[:4])
+            parts.append(f"bbox=[{bbox_text}]")
+        return " | ".join(parts)
+
+    def _format_skill_detail(
+        self,
+        node_name: str,
+        result: ExecutionResult,
+        runtime: Optional[SkillRuntime],
+    ) -> str:
+        evidence = result.evidence or {}
+        pieces: List[str] = []
+        if "best_score" in evidence:
+            pieces.append(f"score={evidence['best_score']:.3f}")
+        if "tcp_position_mm" in evidence:
+            pieces.append(f"tcp={evidence['tcp_position_mm']}")
+        if "rot_vec" in evidence:
+            pieces.append(f"rot={evidence['rot_vec']}")
+        if "grasp_count" in evidence:
+            pieces.append(f"grasps={evidence['grasp_count']}")
+        if runtime and runtime.extra:
+            summary = runtime.extra.get("observation_summary")
+            if summary:
+                pieces.append(f"obs:{summary}")
+        if result.reason and result.status != "success":
+            pieces.append(f"reason={result.reason}")
+        if not pieces:
+            pieces.append(result.status)
+        return " | ".join(str(p) for p in pieces)
+
+    def _finalize_plan_iteration(self, status: str, reason: Optional[str] = None) -> None:
+        entry = self._current_plan_entry
+        if entry is None:
+            entry = PlanContextEntry(
+                plan_id=self._current_plan_id or uuid.uuid4().hex[:8],
+                goal=self.world.goal or "unknown",
+                planned_steps=[node.name or node.type for node in self.current_plan.steps] if self.current_plan else [],
+            )
+        entry.status = status
+        entry.failure_reason = reason if status != "completed" else None
+        entry.executed = [
+            {"node": log.get("node"), "status": log.get("status")}
+            for log in self._active_plan_log
+        ]
+        entry.timestamp = time.time()
+        self._append_plan_context(entry)
+        self._current_plan_entry = None
+        self._current_plan_id = None
+        if status == "completed":
+            self._next_plan_hint = None
+        else:
+            self._trigger_reflection(status, reason, entry)
         self._active_plan_log = []
 
     # ------------------------------------------------------------------
@@ -649,14 +937,33 @@ class TaskProcessor:
             )
         except Exception as exc:
             log_error(f"❌ 初始观测失败: {exc}")
-            return {"success": False, "reason": f"initial_observe_failed: {exc}"}
+            self._emit_ui_log(f"❌ 初始观测失败: {exc}", "error")
+            self._record_timeline_event(
+                stage="observe",
+                node="observe_scene",
+                status="failure",
+                detail=str(exc),
+            )
+            return {
+                "success": False,
+                "reason": f"initial_observe_failed: {exc}",
+                "timeline": self._timeline_payload(),
+                "status": self._last_status_message,
+                "reflection": self._latest_reflection(),
+            }
 
         for step in range(1, self.max_iter + 1):
             if not self.current_plan:
                 self._ensure_plan(target_name)
                 if not self.current_plan or not self.current_plan.root:
                     log_error("❌ 规划结果为空")
-                    return {"success": False, "reason": "planner_return_empty"}
+                    return {
+                        "success": False,
+                        "reason": "planner_return_empty",
+                        "timeline": self._timeline_payload(),
+                        "status": self._last_status_message,
+                        "reflection": self._latest_reflection(),
+                    }
 
             action_node, bt_status = self.plan_runner.tick()
             if action_node is None:
@@ -667,6 +974,9 @@ class TaskProcessor:
                         "success": True,
                         "result": current_observation.raw_response if current_observation else None,
                         "annotated_url": current_observation.annotated_url if current_observation else None,
+                        "timeline": self._timeline_payload(),
+                        "status": self._last_status_message,
+                        "reflection": self._latest_reflection(),
                     }
                 if bt_status == "failure":
                     log_warning("⚠️ 行为树失败，重新规划")
@@ -700,6 +1010,20 @@ class TaskProcessor:
                     exec_record = {"node": "observe_scene", "status": "success"}
                 except Exception as exc:
                     log_error(f"❌ 观测失败: {exc}")
+                    self._emit_ui_log(f"❌ 观测失败: {exc}", "error")
+                    self._record_timeline_event(
+                        stage="observe",
+                        node="observe_scene",
+                        status="failure",
+                        detail=str(exc),
+                    )
+                    self._append_execution_turn(
+                        stage="observe",
+                        node="observe_scene",
+                        status="failure",
+                        detail=str(exc),
+                    )
+                    self._publish_plan_state()
                     exec_record = {"node": "observe_scene", "status": "failure", "reason": str(exc)}
                     current_observation = None
                     current_frontend_payload = None
@@ -719,16 +1043,40 @@ class TaskProcessor:
                     )
                 except Exception as exc:
                     log_error(f"❌ 兜底观测失败: {exc}")
+                    self._emit_ui_log(f"❌ 兜底观测失败: {exc}", "error")
+                    self._record_timeline_event(
+                        stage="observe",
+                        node="observe_scene",
+                        status="failure",
+                        detail=str(exc),
+                    )
+                    self._append_execution_turn(
+                        stage="observe",
+                        node="observe_scene",
+                        status="failure",
+                        detail=str(exc),
+                    )
+                    self._publish_plan_state()
                     self.plan_runner.apply_action_result(action_node, False)
                     continue
 
+            runtime_extra = {
+                "step": step,
+                "node": node_name,
+            }
+            if current_observation is not None:
+                runtime_extra["observation_source"] = getattr(current_observation, "source", "unknown")
+                runtime_extra["observation_found"] = bool(getattr(current_observation, "found", False))
+                summary_text = getattr(current_observation, "summary", None)
+                if summary_text:
+                    runtime_extra["observation_summary"] = summary_text
             runtime = SkillRuntime(
                 navigator=self.navigator,
                 world_model=self.world,
                 observation=current_observation,
                 frontend_payload=current_frontend_payload,
                 surface_points=current_observation.surface_points if current_observation else None,
-                extra={"step": step, "node": node_name},
+                extra=runtime_extra,
             )
             result = self.executor.execute(action_node, runtime)
             exec_record = {
@@ -737,7 +1085,42 @@ class TaskProcessor:
                 "reason": result.reason,
                 "evidence": result.evidence,
             }
+            detail = self._format_skill_detail(node_name, result, runtime)
+            self._record_timeline_event(
+                stage="skill",
+                node=node_name,
+                status=result.status,
+                detail=detail,
+                elapsed=result.elapsed,
+            )
+            observation_text = None
+            if runtime and runtime.extra:
+                observation_text = runtime.extra.get("observation_summary")
+            self._append_execution_turn(
+                stage="skill",
+                node=node_name,
+                status=result.status,
+                observation=observation_text,
+                action=node_name,
+                detail=result.reason or detail,
+                evidence=result.evidence,
+            )
+            self._handle_runtime_notifications(runtime)
+            announce_level = "success" if result.success else "warning"
+            self._announce_status(
+                f"⚙️ {node_name}: {detail}",
+                announce_level,
+                push_hint=not result.success,
+            )
             self.world.record_execution_result(exec_record)
+            if result.status != "success":
+                fail_counts = self.world.task_memory.get("fail_counts", {})
+                fail_total = fail_counts.get(node_name, 0)
+                if fail_total >= self._failure_notice_threshold:
+                    self._push_suggestion(
+                        f"{node_name} 已连续失败 {fail_total} 次，请检查环境或尝试其他动作",
+                        "error",
+                    )
             log_entry = dict(exec_record)
             log_entry["evidence"] = self._json_safe(log_entry.get("evidence"))
             self._active_plan_log.append(log_entry)
@@ -749,4 +1132,10 @@ class TaskProcessor:
 
         log_error("❌ 达到最大探索次数，未完成任务")
         self._finalize_plan_iteration("failed", "max_steps_exceeded")
-        return {"success": False, "reason": "未能在限定步数内完成抓取任务"}
+        return {
+            "success": False,
+            "reason": "未能在限定步数内完成抓取任务",
+            "timeline": self._timeline_payload(),
+            "status": self._last_status_message,
+            "reflection": self._latest_reflection(),
+        }

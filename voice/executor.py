@@ -30,6 +30,11 @@ from localize_target import TargetLocalizer
 from task_structures import ExecutionResult, PlanNode
 from .sam_worker import sam_mask_worker  # type: ignore
 
+try:
+    from action_sequence.gripper_controller import GripperController
+except Exception:  # pragma: no cover - optional hardware dependency
+    GripperController = None
+
 
 @dataclass
 class SkillRuntime:
@@ -240,8 +245,10 @@ class _ArmIKClient(Node):
 class SkillExecutor:
     """Executes behaviour tree action nodes by calling registered skills."""
 
-    def __init__(self, navigator=None) -> None:
+    def __init__(self, navigator=None, gripper_controller: Optional["GripperController"] = None) -> None:
         self.navigator = navigator
+        self._gripper = gripper_controller
+        self._gripper_port = os.getenv("GRIPPER_SERIAL_PORT") or None
         self.depth_localizer = TargetLocalizer()
         self.target_distance = 0.5
         self.moved_to_center = False
@@ -264,6 +271,9 @@ class SkillExecutor:
         self._arm_service_timeout = float(os.getenv("JAKA_SERVICE_TIMEOUT", "10.0"))
         self._arm_joint_speed = float(os.getenv("JAKA_JOINT_SPEED", "5.0"))
         self._arm_joint_acc = float(os.getenv("JAKA_JOINT_ACC", "5.0"))
+        self.low_grasp_score_threshold = float(
+            os.getenv("GRASP_CONFIRM_THRESHOLD", "0.45")
+        )
 
     # ------------------------------------------------------------------
     @staticmethod
@@ -309,15 +319,20 @@ class SkillExecutor:
                 node=node.name or "unknown",
                 reason="unsupported_skill",
             )
+        start_ts = time.perf_counter()
         try:
-            return handler(node.args or {}, runtime)
+            result = handler(node.args or {}, runtime)
         except Exception as exc:
             log_error(f"❌ 执行技能 {node.name} 发生异常: {exc}")
+            elapsed = time.perf_counter() - start_ts
             return ExecutionResult(
                 status="failure",
                 node=node.name or "unknown",
                 reason=str(exc),
+                elapsed=elapsed,
             )
+        result.elapsed = time.perf_counter() - start_ts
+        return result
 
     # ------------------------------------------------------------------
     # Skill implementations
@@ -327,6 +342,55 @@ class SkillExecutor:
         success = self.control_turn_around(runtime.navigator, math.radians(angle))
         status = "success" if success else "failure"
         return ExecutionResult(status=status, node="rotate_scan")
+
+    def _skill_search_area(self, args: Dict[str, Any], runtime: SkillRuntime) -> ExecutionResult:
+        turns = max(1, int(args.get("turns", 2)))
+        angle = float(args.get("angle_deg", 45.0))
+        for _ in range(turns):
+            result = self._skill_rotate_scan({"angle_deg": angle}, runtime)
+            if result.status != "success":
+                return ExecutionResult(status="failure", node="search_area", reason="rotate_failed")
+        pattern = args.get("pattern", "in_place")
+        log_info(f"🔍 search_area 完成, pattern={pattern}, turns={turns}")
+        return ExecutionResult(status="success", node="search_area", evidence={"turns": turns, "pattern": pattern})
+
+    def _skill_navigate_area(self, args: Dict[str, Any], runtime: SkillRuntime) -> ExecutionResult:
+        navigator = runtime.navigator
+        if navigator is None:
+            return ExecutionResult(status="failure", node="navigate_area", reason="navigator_missing")
+        target_marker = args.get("marker")
+        area_name = args.get("area") or args.get("target")
+        pose = args.get("pose")
+        world = runtime.world_model
+        if pose is None and area_name and world:
+            area = world.areas.get(area_name)
+            if area and area.pose and len(area.pose) >= 3:
+                pose = {"x": area.pose[0], "y": area.pose[1], "theta": area.pose[2]}
+        success = False
+        mode = None
+        if target_marker:
+            mode = "marker"
+            success = navigator.navigate_to_target(target_marker)
+        elif pose:
+            mode = "pose"
+            theta = float(pose.get("theta", 0.0))
+            x = float(pose.get("x", 0.0))
+            y = float(pose.get("y", 0.0))
+            success = navigator.move_to_position(theta, x, y)
+        else:
+            return ExecutionResult(status="failure", node="navigate_area", reason="missing_target")
+        if success and world:
+            world.robot["pose"] = navigator.get_current_pose()
+        status = "success" if success else "failure"
+        evidence = {"mode": mode or "unknown", "area": area_name, "marker": target_marker}
+        return ExecutionResult(status=status, node="navigate_area", reason=None if success else "navigate_failed", evidence=evidence)
+
+    def _skill_return_home(self, args: Dict[str, Any], runtime: SkillRuntime) -> ExecutionResult:
+        params = dict(args)
+        if not params.get("area") and not params.get("marker") and not params.get("pose"):
+            params["area"] = args.get("default_area", "home")
+        log_info(f"🏠 return_home 调用 navigate_area: {params}")
+        return self._skill_navigate_area(params, runtime)
 
     # def _skill_search_area(self, args: Dict[str, Any], runtime: SkillRuntime) -> ExecutionResult:
     #     order = args.get("area_order", [])
@@ -573,6 +637,7 @@ class SkillExecutor:
         if isinstance(grasps, list) and grasps:
             best = max(grasps, key=lambda g: g.get("score", 0.0))
         runtime.extra["zerograsp_result"] = grasp_result
+        notifications = runtime.extra.setdefault("notifications", [])
         if "grasp_pose" in runtime.extra:
             runtime.extra.pop("grasp_pose", None)
         evidence: Dict[str, Any] = {"grasp_count": len(grasps) if isinstance(grasps, list) else 0}
@@ -594,6 +659,20 @@ class SkillExecutor:
                     "best_translation_mm": best.get("translation_mm"),
                 }
             )
+            if evidence.get("best_score") is not None and evidence["best_score"] < self.low_grasp_score_threshold:
+                notifications.append(
+                    {
+                        "message": f"抓取置信度偏低 ({evidence['best_score']:.2f})，请确认是否继续",  # noqa: E501
+                        "level": "warning",
+                    }
+                )
+            if not grasp_pose_info:
+                notifications.append(
+                    {
+                        "message": "未能解析有效的抓取姿态，请重新观测或调整目标",
+                        "level": "warning",
+                    }
+                )
         def _fmt_vec(vec: Any, precision: int = 1) -> str:
             try:
                 values = list(vec)
@@ -654,6 +733,47 @@ class SkillExecutor:
         log_warning("⚠️ place技能尚未实现，默认返回成功")
         return ExecutionResult(status="success", node="place")
 
+    def _skill_open_gripper(self, args: Dict[str, Any], runtime: SkillRuntime) -> ExecutionResult:
+        controller = self._ensure_gripper()
+        if controller is None:
+            return ExecutionResult(status="failure", node="open_gripper", reason="gripper_unavailable")
+        try:
+            controller.open()
+            log_success("🖐️ 夹爪已张开")
+            return ExecutionResult(status="success", node="open_gripper")
+        except Exception as exc:
+            log_error(f"❌ open_gripper 失败: {exc}")
+            return ExecutionResult(status="failure", node="open_gripper", reason=str(exc))
+
+    def _skill_close_gripper(self, args: Dict[str, Any], runtime: SkillRuntime) -> ExecutionResult:
+        controller = self._ensure_gripper()
+        if controller is None:
+            return ExecutionResult(status="failure", node="close_gripper", reason="gripper_unavailable")
+        try:
+            controller.close()
+            log_success("✊ 夹爪已闭合")
+            return ExecutionResult(status="success", node="close_gripper")
+        except Exception as exc:
+            log_error(f"❌ close_gripper 失败: {exc}")
+            return ExecutionResult(status="failure", node="close_gripper", reason=str(exc))
+
+    def _skill_handover_item(self, args: Dict[str, Any], runtime: SkillRuntime) -> ExecutionResult:
+        controller = self._ensure_gripper()
+        if controller is None:
+            return ExecutionResult(status="failure", node="handover_item", reason="gripper_unavailable")
+        item = args.get("item")
+        if not item and runtime and runtime.extra:
+            item = runtime.extra.get("requested_item")
+        wait_sec = float(args.get("wait_sec", 1.0))
+        log_info(f"🤝 开始递交物品: {item or 'unknown'}，等待 {wait_sec:.1f}s")
+        try:
+            time.sleep(max(0.0, wait_sec))
+            controller.deliver(item)
+            return ExecutionResult(status="success", node="handover_item", evidence={"item": item})
+        except Exception as exc:
+            log_error(f"❌ handover_item 失败: {exc}")
+            return ExecutionResult(status="failure", node="handover_item", reason=str(exc))
+
     def _skill_recover(self, args: Dict[str, Any], runtime: SkillRuntime) -> ExecutionResult:
         mode = args.get("mode", "backoff")
         log_info(f"🔁 recover skill triggered, mode={mode}")
@@ -672,6 +792,22 @@ class SkillExecutor:
             node="recover",
             reason=None if success else "recover_failed",
         )
+
+    def _ensure_gripper(self) -> Optional["GripperController"]:
+        if self._gripper:
+            return self._gripper
+        if not GripperController:
+            log_warning("⚠️ GripperController 未安装，无法控制夹爪")
+            return None
+        if not self._gripper_port:
+            log_warning("⚠️ 未设置 GRIPPER_SERIAL_PORT，无法初始化夹爪")
+            return None
+        try:
+            self._gripper = GripperController(self._gripper_port)
+        except Exception as exc:
+            log_warning(f"⚠️ 初始化夹爪控制器失败: {exc}")
+            self._gripper = None
+        return self._gripper
 
     def _call_linear_axis_move(self, target_x_mm: float) -> None:
         """

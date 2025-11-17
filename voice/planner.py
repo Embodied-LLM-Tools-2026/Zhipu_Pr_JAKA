@@ -21,7 +21,7 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "t
 
 from task_logger import log_error, log_info, log_success, log_warning  # type: ignore
 
-from .task_structures import CompiledPlan, PlanNode
+from .task_structures import CompiledPlan, PlanNode, PlanContextEntry, ExecutionTurn
 
 
 class PlanValidationError(Exception):
@@ -96,19 +96,31 @@ class BehaviorPlanner:
             "allowed_actions": [
                 "observe_scene",
                 "rotate_scan",
+                "search_area",
+                "navigate_area",
                 "approach_far",
                 "finalize_target_pose",
                 "predict_grasp_point",
                 "execute_grasp",
+                "open_gripper",
+                "close_gripper",
+                "handover_item",
+                "return_home",
                 "recover",
             ],
             "action_docs": {
                 "observe_scene": "触发 RGBD/VLM 观测，刷新对场景的认知，可选force_vlm=true强制调用VLM重新检测",
                 "rotate_scan": "原地旋转或摆头扫描寻找目标",
+                "search_area": "在当前位置执行多次旋转或扫描，用于重新搜寻目标",
+                "navigate_area": "通过导航到达指定区域/marker/坐标，area字段对应world.areas中的名字",
                 "approach_far": "当距离目标物体大于2米时沿机器人与目标连线迈大步靠近",
                 "finalize_target_pose": "进行精确定位调整底盘姿态至抓取位",
                 "predict_grasp_point": "在精确定位后，调用ZeroGrasp等接口，预测抓取点",
                 "execute_grasp": "根据预测结果执行抓取策略",
+                "open_gripper": "打开夹爪，为递交或重新抓取做准备",
+                "close_gripper": "闭合夹爪，将目标夹紧",
+                "handover_item": "面向用户递交物品，可配合open_gripper使用",
+                "return_home": "导航回home区域或指定marker，常用于任务结束重置",
                 # "recover": "执行回退/重置动作以从失败状态恢复",
             },
             "rules": [
@@ -120,6 +132,8 @@ class BehaviorPlanner:
                 "距离足够近(<=2米)后执行 finalize_target_pose，随后 predict_grasp_point → execute_grasp 完成抓取",
                 "在 finalize_target_pose 前必须执行 observe_scene(force_vlm=true) 以刷新桌面与目标bbox",
                 "如需在局部重复执行动作直到条件满足，可使用 repeat_until 节点，其children为需要循环的子树，cond为退出条件",
+                "当需要切换到另一个区域/工作站时先使用 navigate_area，再继续观察与操作",
+                "需要向用户递交物品时：close_gripper→(移动/导航)→handover_item→open_gripper",
             ],
             "example_plan": self._example_plan(),
             "notes": [
@@ -259,4 +273,87 @@ class BehaviorPlanner:
                 {"type": "action", "name": "predict_grasp_point", "args": {"target": goal}},
                 {"type": "action", "name": "execute_grasp", "args": {"target": goal}},
             ],
+        }
+
+
+class ReflectionAdvisor:
+    """Helper that generates diagnosis/hint pairs after a failed attempt."""
+
+    def __init__(self, llm_api_key: Optional[str] = None, llm_model: str = "deepseek-chat") -> None:
+        self.llm_api_key = llm_api_key or os.getenv("DEEPSEEK_REFLECT_API_KEY") or os.getenv("DEEPSEEK_API_KEY")
+        self.llm_model = llm_model
+        self.llm_api_base = os.getenv("DEEPSEEK_API_BASE", "https://api.deepseek.com")
+
+    def reflect(
+        self, goal: str, plan_entry: PlanContextEntry, execution_turns: List[ExecutionTurn]
+    ) -> Optional[Dict[str, Any]]:
+        history = [turn.to_prompt_dict() for turn in execution_turns[-5:]] if execution_turns else []
+        prompt = {
+            "goal": goal,
+            "plan": plan_entry.to_prompt_dict(),
+            "recent_execution": history,
+            "instruction": (
+                "根据计划与执行日志，分析失败原因并给出下一次规划应注意的事项。"
+                "输出JSON，字段包括 diagnosis(中文)、adjustment_hint(中文)和confidence(0-1)。"
+            ),
+        }
+        if not self.llm_api_key:
+            return self._fallback_reflection(plan_entry, execution_turns)
+        try:
+            url = f"{self.llm_api_base.rstrip('/')}/chat/completions"
+            headers = {
+                "Authorization": f"Bearer {self.llm_api_key}",
+                "Content-Type": "application/json",
+            }
+            payload = {
+                "model": self.llm_model,
+                "messages": [
+                    {
+                        "role": "system",
+                        "content": "你是机器人任务专家，负责分析失败原因并提出改进建议，务必输出JSON。",
+                    },
+                    {"role": "user", "content": json.dumps(prompt, ensure_ascii=False)},
+                ],
+                "temperature": 0.2,
+                "top_p": 0.8,
+                "response_format": {"type": "json_object"},
+            }
+            response = requests.post(url, headers=headers, json=payload, timeout=30)
+            response.raise_for_status()
+            data = response.json()
+            choices = data.get("choices") or []
+            if not choices:
+                raise RuntimeError("no_reflection_choices")
+            message = choices[0].get("message") or {}
+            content = message.get("content", "")
+            if isinstance(content, list):
+                if content and isinstance(content[0], dict):
+                    payload_text = content[0].get("text", "")
+                else:
+                    payload_text = "".join(str(item) for item in content)
+            elif isinstance(content, dict):
+                payload_text = content.get("text", "")
+            else:
+                payload_text = str(content)
+            return json.loads(payload_text)
+        except Exception as exc:
+            log_warning(f"⚠️ 反思阶段调用LLM失败: {exc}")
+            return self._fallback_reflection(plan_entry, execution_turns)
+
+    @staticmethod
+    def _fallback_reflection(
+        plan_entry: PlanContextEntry, execution_turns: List[ExecutionTurn]
+    ) -> Dict[str, Any]:
+        diagnosis = plan_entry.failure_reason or "执行失败，具体原因未知"
+        if execution_turns:
+            tail = execution_turns[-1]
+            diagnosis = tail.detail or tail.status or diagnosis
+        if plan_entry.planned_steps:
+            hint = f"重新审视步骤「{plan_entry.planned_steps[-1]}」，确保感知和位姿准确。"
+        else:
+            hint = "重新进行完整观测，确认目标位置后再执行动作。"
+        return {
+            "diagnosis": diagnosis,
+            "adjustment_hint": hint,
+            "confidence": 0.2,
         }

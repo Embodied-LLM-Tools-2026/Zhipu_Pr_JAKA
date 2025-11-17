@@ -55,6 +55,8 @@ class WorldModel:
         self.task_memory: Dict[str, Any] = {
             "tried_areas": [],
             "fail_counts": {},
+            "recent_failures": [],
+            "last_status": None,
         }
         self.goal: Optional[str] = None
         self.version: int = 0
@@ -213,6 +215,15 @@ class WorldModel:
             if node and status == "failure":
                 fail_counts = self.task_memory.setdefault("fail_counts", {})
                 fail_counts[node] = fail_counts.get(node, 0) + 1
+                recent = self.task_memory.setdefault("recent_failures", [])
+                entry = {
+                    "node": node,
+                    "reason": result.get("reason"),
+                    "ts": time.time(),
+                }
+                recent.append(entry)
+                if len(recent) > 20:
+                    self.task_memory["recent_failures"] = recent[-20:]
             self.version += 1
 
     def should_replan(self, exec_result: Dict[str, Any]) -> bool:

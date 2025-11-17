@@ -1034,6 +1034,89 @@ INDEX_HTML = """
       font-size: 11px;
       color: #9bd;
     }
+    .timeline {
+      margin-top: 10px;
+      max-height: 200px;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .timeline::-webkit-scrollbar { width: 4px; }
+    .timeline-entry {
+      border: 1px solid rgba(100,200,255,0.2);
+      border-radius: 8px;
+      padding: 6px 8px;
+      background: rgba(7,15,35,0.55);
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+    .timeline-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 11px;
+      color: #9bd;
+    }
+    .timeline-stage {
+      font-weight: 600;
+      letter-spacing: 0.5px;
+      text-transform: uppercase;
+      color: #64c8ff;
+    }
+    .timeline-node {
+      font-size: 11px;
+      color: #ccc;
+    }
+    .timeline-status {
+      font-weight: 600;
+      text-transform: uppercase;
+      font-size: 10px;
+    }
+    .timeline-status.success { color: #00ff88; }
+    .timeline-status.failure { color: #ff6666; }
+    .timeline-status.observe { color: #64c8ff; }
+    .timeline-detail {
+      font-size: 11px;
+      color: #b0c4ff;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    .suggestion-list {
+      margin-top: 8px;
+      max-height: 220px;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .suggestion-entry {
+      border: 1px solid rgba(100,200,255,0.2);
+      border-radius: 6px;
+      padding: 6px 8px;
+      font-size: 12px;
+      color: #d0d9ff;
+      background: rgba(10,18,40,0.7);
+    }
+    .suggestion-entry .tag {
+      font-size: 10px;
+      text-transform: uppercase;
+      color: #64c8ff;
+      margin-right: 6px;
+    }
+    .suggestion-entry.warning { border-color: rgba(255,170,0,0.6); color: #ffd899; }
+    .suggestion-entry.error { border-color: rgba(255,80,80,0.7); color: #ffb0b0; }
+    .control-bar {
+      display: flex;
+      gap: 8px;
+      margin-top: 10px;
+      flex-wrap: wrap;
+    }
+    .control-bar button {
+      flex: 1;
+      min-width: 90px;
+    }
     .small-label {
       font-size: 11px;
       color: #9bd;
@@ -1101,10 +1184,6 @@ INDEX_HTML = """
     <div class="grid">
       <div class="card vlm-box">
         <h3>VLM Payload / Result</h3>
-        <div class="row">
-          <button onclick="mockVLM()">Mock VLM</button>
-          <button onclick="clearBoxes()">Clear Boxes</button>
-        </div>
         <div style="position:relative; margin-top:8px;">
           <img id="vlm-img" class="vlm-img" src="" alt="captured" onload="syncCanvasSize()" />
           <canvas id="overlay" class="overlay"></canvas>
@@ -1120,17 +1199,6 @@ INDEX_HTML = """
         </div>
         <div class="mono" id="sam-mask-meta" style="margin-top:8px; font-size:12px; color:#999;">暂无mask</div>
       </div>
-
-      <div class="card">
-        <h3>VLM Latest Result</h3>
-        <div class="mono" id="vlm-latest-json" style="font-size:12px; color:#555; white-space:pre-wrap;"></div>
-      </div>
-
-      <div class="card">
-        <h3>Control Signals (example)</h3>
-        <div class="mono" id="signals">cmd_vel: {linear: 0.0, angular: 0.0}</div>
-      </div>
-
       <div class="card">
         <h3>World Model State</h3>
         <div class="small-label" id="world-model-updated">等待数据...</div>
@@ -1140,10 +1208,31 @@ INDEX_HTML = """
       </div>
 
       <div class="card">
+        <h3>Assistant Suggestions</h3>
+        <div class="row" style="margin-bottom:8px; gap:8px; align-items:center;">
+          <button onclick="clearSuggestions()" style="font-size:11px; padding:4px 8px;">Clear</button>
+          <span style="font-size:11px; color:#888; flex:1; text-align:right;" id="suggestion-count">0 entries</span>
+        </div>
+        <div id="suggestion-list" class="suggestion-list">
+          <div class="plan-placeholder">暂无建议</div>
+        </div>
+        <div class="small-label" style="margin-top:12px;">Quick Controls</div>
+        <div class="control-bar">
+          <button onclick="sendControl('pause')">Pause Plan</button>
+          <button onclick="sendControl('resume')">Resume</button>
+          <button onclick="sendControl('force_observe')">Force Observe</button>
+        </div>
+      </div>
+
+      <div class="card">
         <h3>Behavior Tree Monitor</h3>
         <div class="small-label" id="plan-updated">等待计划...</div>
         <div id="plan-steps" class="plan-steps">
           <div class="plan-placeholder">当前没有激活的行为树</div>
+        </div>
+        <div class="small-label" style="margin-top: 10px;">Execution Timeline</div>
+        <div id="execution-timeline" class="timeline">
+          <div class="plan-placeholder">等待执行记录</div>
         </div>
         <pre id="plan-tree-json" class="plan-json mono"></pre>
       </div>
@@ -1151,9 +1240,9 @@ INDEX_HTML = """
   </div>
 
 <script>
-  let lastVlmTs = 0;
   let lastWorldTs = -1;
   let lastPlanTs = -1;
+  let lastSuggestionSize = 0;
   // 简单轮询刷新三个相机图像
   setInterval(() => {
     ['front','left','right'].forEach(id => {
@@ -1186,16 +1275,6 @@ INDEX_HTML = """
   }
   setInterval(pollLatestCapture, 500);
   pollLatestCapture();
-
-  // Mock VLM：向后端要一些框（你可以替换成真实VLM推理接口）
-  async function mockVLM() {
-    const imgEl = document.getElementById('vlm-img');
-    if (!imgEl.src) { alert('先 Capture 一张图'); return; }
-    const r = await fetch('/api/vlm/mock');
-    const j = await r.json();
-    drawBoxes(j.boxes || []);
-    document.getElementById('bbox-json').textContent = JSON.stringify(j, null, 2);
-  }
 
   // 画框：像素坐标 xyxy（左上到右下）
   function drawBoxes(boxes) {
@@ -1262,10 +1341,6 @@ INDEX_HTML = """
       }
 
       // 控制信号示例
-      const signals = document.getElementById('signals');
-      if (signals) {
-        signals.textContent = `cmd_vel: { linear: ${t.velocity.linear.toFixed(2)}, angular: ${t.velocity.angular.toFixed(2)} }`;
-      }
 
       // 获取 AGV 实时位置信息
       try {
@@ -1358,35 +1433,6 @@ INDEX_HTML = """
   pollTaskLogs();
 
   // VLM最新结果轮询展示
-  async function pollVlmLatest() {
-    try {
-      const r = await fetch('/api/vlm/latest');
-      const j = await r.json();
-      document.getElementById('vlm-latest-json').textContent = JSON.stringify(j, null, 2);
-      if (j.ts && j.ts !== lastVlmTs) {
-        lastVlmTs = j.ts;
-        const imgEl = document.getElementById('vlm-img');
-        // 后端返回了标注图片，用标注图替换原图
-        if (j.annotated_url) {
-          imgEl.src = j.annotated_url + '?ts=' + Date.now();
-          console.log('[VLM] 显示后端标注图:', j.annotated_url);
-        }
-        const info = {
-          found: j.found,
-          bbox: j.original_bbox || j.bbox || j.boxes || [],
-          forward_distance: j.forward_distance,
-          target: j.target,
-        };
-        document.getElementById('bbox-json').textContent = JSON.stringify(info, null, 2);
-        updateMaskPreview(j);
-      }
-    } catch(e) {
-      console.error('[VLM轮询] 错误:', e);
-    }
-  }
-  setInterval(pollVlmLatest, 500);
-  pollVlmLatest();
-
   function updateMaskPreview(data) {
     const maskImg = document.getElementById('sam-mask-img');
     const placeholder = document.getElementById('sam-mask-placeholder');
@@ -1503,6 +1549,71 @@ INDEX_HTML = """
     }
   }
 
+  async function pollSuggestions() {
+    try {
+      const resp = await fetch('/api/suggestions');
+      if (!resp.ok) {
+        return;
+      }
+      const data = await resp.json();
+      renderSuggestions(data.suggestions || []);
+    } catch (e) {
+      console.error('[Suggestions] 获取失败:', e);
+    }
+  }
+
+  function renderSuggestions(items) {
+    const listEl = document.getElementById('suggestion-list');
+    const countEl = document.getElementById('suggestion-count');
+    if (!listEl || !countEl) {
+      return;
+    }
+    countEl.textContent = items.length + ' entries';
+    if (!items.length) {
+      listEl.innerHTML = '<div class="plan-placeholder">暂无建议</div>';
+      lastSuggestionSize = 0;
+      return;
+    }
+    if (items.length === lastSuggestionSize) {
+      return;
+    }
+    lastSuggestionSize = items.length;
+    listEl.innerHTML = items.slice(-50).map(entry => {
+      const cls = entry.level ? entry.level.toLowerCase() : 'info';
+      const time = entry.time || '--:--:--';
+      const msg = entry.message || '';
+      return `
+        <div class="suggestion-entry ${cls}">
+          <div><span class="tag">${cls}</span>${msg}</div>
+          <div style="font-size:10px; color:#888;">${time}</div>
+        </div>
+      `;
+    }).join('');
+    listEl.scrollTop = listEl.scrollHeight;
+  }
+
+  async function clearSuggestions() {
+    try {
+      await fetch('/api/suggestions', { method: 'DELETE' });
+      renderSuggestions([]);
+    } catch (e) {
+      console.error('[Suggestions] 清空失败:', e);
+    }
+  }
+
+  async function sendControl(action) {
+    try {
+      await fetch('/api/task/control', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action }),
+      });
+      console.log('[Control] sent', action);
+    } catch (e) {
+      console.error('[Control] 发送失败:', e);
+    }
+  }
+
   function renderPlanState(state) {
     const statusEl = document.getElementById('plan-updated');
     const stepsEl = document.getElementById('plan-steps');
@@ -1532,6 +1643,7 @@ INDEX_HTML = """
         </div>
       `;
     }).join('');
+    renderTimeline(state.timeline || []);
     try {
       jsonEl.textContent = JSON.stringify(state.root || {}, null, 2);
     } catch (err) {
@@ -1539,10 +1651,46 @@ INDEX_HTML = """
     }
   }
 
+  function renderTimeline(entries) {
+    const container = document.getElementById('execution-timeline');
+    if (!container) {
+      return;
+    }
+    if (!entries.length) {
+      container.innerHTML = '<div class="plan-placeholder">暂无执行记录</div>';
+      return;
+    }
+    container.innerHTML = entries.map(entry => {
+      const status = (entry.status || 'info').toLowerCase();
+      const stage = (entry.stage || 'event').toUpperCase();
+      const node = entry.node || '-';
+      const timeLabel = entry.time || '--:--:--';
+      const detail = entry.detail || '';
+      const elapsed = typeof entry.elapsed === 'number'
+        ? entry.elapsed.toFixed(2) + 's'
+        : (entry.elapsed || '--');
+      return `
+        <div class="timeline-entry">
+          <div class="timeline-header">
+            <span class="timeline-stage">${stage} · ${node}</span>
+            <span class="timeline-status ${status}">${status}</span>
+          </div>
+          <div class="timeline-header" style="font-size:10px;">
+            <span>${timeLabel}</span>
+            <span class="timeline-node">elapsed: ${elapsed}</span>
+          </div>
+          <div class="timeline-detail">${detail}</div>
+        </div>
+      `;
+    }).join('');
+  }
+
   setInterval(pollWorldModel, 700);
   pollWorldModel();
   setInterval(pollPlanState, 700);
   pollPlanState();
+  setInterval(pollSuggestions, 1000);
+  pollSuggestions();
 </script>
 </body>
 </html>
@@ -1709,6 +1857,25 @@ LATEST_VLM_RESULT = {
 TASK_LOGS = []
 MAX_LOGS = 10000
 
+# ============ 建议/提示存储 ============
+SUGGESTIONS = []
+MAX_SUGGESTIONS = 200
+
+def add_suggestion(message: str, level: str = "info"):
+  global SUGGESTIONS
+  import datetime
+  entry = {
+    "ts": int(time.time() * 1000),
+    "time": datetime.datetime.now().strftime("%H:%M:%S"),
+    "level": level,
+    "message": message,
+  }
+  SUGGESTIONS.append(entry)
+  if len(SUGGESTIONS) > MAX_SUGGESTIONS:
+    SUGGESTIONS = SUGGESTIONS[-MAX_SUGGESTIONS:]
+  print(f"[SUGGESTION][{level.upper()}] {message}")
+  return entry
+
 # ============ 世界模型 & 行为树状态 ============
 WORLD_MODEL_STATE = {
   "snapshot": None,
@@ -1720,6 +1887,12 @@ PLAN_STATE = {
   "metadata": {},
   "current_index": -1,
   "current_node": None,
+  "timeline": [],
+  "ts": 0,
+}
+
+CONTROL_STATE = {
+  "last_action": None,
   "ts": 0,
 }
 
@@ -2030,6 +2203,26 @@ def api_clear_logs():
   TASK_LOGS = []
   return {"ok": True}
 
+@APP.post("/api/suggestions")
+async def api_add_suggestion(request: Request):
+  data = await request.json()
+  message = data.get("message", "")
+  level = data.get("level", "info")
+  if not message:
+    return JSONResponse({"error": "message required"}, status_code=400)
+  entry = add_suggestion(message, level)
+  return {"ok": True, "suggestion": entry}
+
+@APP.get("/api/suggestions")
+def api_list_suggestions():
+  return {"suggestions": SUGGESTIONS}
+
+@APP.delete("/api/suggestions")
+def api_clear_suggestions():
+  global SUGGESTIONS
+  SUGGESTIONS = []
+  return {"ok": True}
+
 @APP.post("/api/world_model/update")
 async def api_world_model_update(request: Request):
   """外部推送世界模型快照"""
@@ -2057,6 +2250,8 @@ async def api_plan_update(request: Request):
     PLAN_STATE["current_index"] = int(data.get("current_index", -1))
   if "current_node" in data:
     PLAN_STATE["current_node"] = data.get("current_node")
+  if "timeline" in data:
+    PLAN_STATE["timeline"] = data.get("timeline") or []
   PLAN_STATE["ts"] = int(time.time() * 1000)
   return {"ok": True, "ts": PLAN_STATE["ts"]}
 
@@ -2064,6 +2259,17 @@ async def api_plan_update(request: Request):
 def api_plan_get():
   """获取最近的行为树/执行步骤"""
   return PLAN_STATE
+
+@APP.post("/api/task/control")
+async def api_task_control(request: Request):
+  data = await request.json()
+  action = (data.get("action") or "").strip().lower()
+  if not action:
+    return JSONResponse({"error": "action required"}, status_code=400)
+  CONTROL_STATE["last_action"] = action
+  CONTROL_STATE["ts"] = int(time.time() * 1000)
+  add_task_log(f"控制指令: {action}", "warning")
+  return {"ok": True, "action": action, "ts": CONTROL_STATE["ts"]}
 
 # ============ 启动 ============
 def _cleanup():

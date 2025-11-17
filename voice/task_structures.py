@@ -9,6 +9,7 @@ in the modular TaskProcessor redesign.
 from __future__ import annotations
 
 import enum
+import time
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 from localize_target import DepthSnapshot
@@ -116,3 +117,81 @@ class CompiledPlan:
     root: PlanNode
     steps: List[PlanNode]
     metadata: Dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class PlanContextEntry:
+    """High-level summary of a single planning attempt."""
+
+    plan_id: str
+    goal: str
+    planner_thought: Optional[str] = None
+    planned_steps: List[str] = field(default_factory=list)
+    status: str = "running"
+    failure_reason: Optional[str] = None
+    executed: List[Dict[str, Any]] = field(default_factory=list)
+    timestamp: float = field(default_factory=time.time)
+
+    def to_prompt_dict(self) -> Dict[str, Any]:
+        """Compact representation for planner prompts."""
+        return {
+            "plan_id": self.plan_id,
+            "goal": self.goal,
+            "status": self.status,
+            "planned_steps": self.planned_steps,
+            "failure_reason": self.failure_reason,
+            "executed": self.executed,
+            "planner_thought": self.planner_thought,
+            "timestamp": self.timestamp,
+        }
+
+
+@dataclass
+class ExecutionTurn:
+    """Fact log for an atomic observation or skill execution."""
+
+    plan_id: str
+    stage: str
+    node: str
+    status: str
+    observation: Optional[str] = None
+    action: Optional[str] = None
+    detail: Optional[str] = None
+    evidence: Optional[Dict[str, Any]] = None
+    timestamp: float = field(default_factory=time.time)
+
+    def to_prompt_dict(self) -> Dict[str, Any]:
+        return {
+            "plan_id": self.plan_id,
+            "stage": self.stage,
+            "node": self.node,
+            "status": self.status,
+            "observation": self.observation,
+            "action": self.action,
+            "detail": self.detail,
+            "timestamp": self.timestamp,
+        }
+
+
+@dataclass
+class ReflectionEntry:
+    """Structured reflection outcome after a failed attempt."""
+
+    plan_id: str
+    goal: str
+    trigger: str
+    diagnosis: str
+    adjustment_hint: Optional[str] = None
+    confidence: float = 0.0
+    timestamp: float = field(default_factory=time.time)
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "plan_id": self.plan_id,
+            "goal": self.goal,
+            "trigger": self.trigger,
+            "diagnosis": self.diagnosis,
+            "adjustment_hint": self.adjustment_hint,
+            "confidence": self.confidence,
+            "timestamp": self.timestamp,
+        }

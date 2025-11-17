@@ -18,6 +18,8 @@ class UIStateBridge:
         self.timeout = timeout
         self._world_failed = False
         self._plan_failed = False
+        self._log_failed = False
+        self._suggest_failed = False
 
     def post_world_model(self, snapshot: Dict[str, Any]) -> None:
         """Upload the latest world-model snapshot to the UI."""
@@ -37,6 +39,7 @@ class UIStateBridge:
         metadata: Optional[Dict[str, Any]] = None,
         current_index: int = -1,
         current_node: Optional[str] = None,
+        timeline: Optional[List[Dict[str, Any]]] = None,
     ) -> None:
         """Upload the active behaviour tree and execution pointer."""
         payload = {
@@ -45,11 +48,33 @@ class UIStateBridge:
             "metadata": metadata or {},
             "current_index": current_index,
             "current_node": current_node,
+            "timeline": timeline or [],
         }
         self._post(
             endpoint="/api/plan/update",
             payload=payload,
             flag_attr="_plan_failed",
+        )
+
+    def post_task_log(self, message: str, level: str = "info") -> None:
+        """Append a log line to the UI task log panel."""
+        if not message:
+            return
+        payload = {"message": message, "level": level}
+        self._post(
+            endpoint="/api/task/log",
+            payload=payload,
+            flag_attr="_log_failed",
+        )
+
+    def post_suggestion(self, message: str, level: str = "info") -> None:
+        if not message:
+            return
+        payload = {"message": message, "level": level}
+        self._post(
+            endpoint="/api/suggestions",
+            payload=payload,
+            flag_attr="_suggest_failed",
         )
 
     def _post(self, *, endpoint: str, payload: Dict[str, Any], flag_attr: str) -> None:
