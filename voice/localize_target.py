@@ -1,9 +1,12 @@
 import base64
 import io
+import json
 import math
 import os
 import random
 import sys
+import time
+from datetime import datetime
 from dataclasses import dataclass
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
@@ -138,7 +141,7 @@ def decode_snapshot(payload: Dict[str, Any]) -> DepthSnapshot:
 
 
 def fetch_snapshot(api_url: str = DEFAULT_DEPTH_API, *, timeout: float = 1.2) -> DepthSnapshot:
-    response = requests.get(api_url, timeout=timeout)
+    response = requests.get(api_url, params={"align": "1"}, timeout=timeout)
     response.raise_for_status()
     data = response.json()
     return decode_snapshot(data)
@@ -166,6 +169,7 @@ class TargetLocalizer:
         rgb_frame: Optional[np.ndarray] = None,
         timeout: float = 1.2,
         surface_mask: Optional[np.ndarray] = None,
+        include_transform: bool = False,
     ) -> Optional[Dict[str, Any]]:
         snapshot = fetch_snapshot(self.depth_api, timeout=timeout)
         return self.localize_object(
@@ -175,6 +179,7 @@ class TargetLocalizer:
             range_estimate=range_estimate,
             rgb_frame=rgb_frame,
             surface_mask=surface_mask,
+            include_transform=include_transform,
         )
 
     def localize_object(
@@ -186,6 +191,7 @@ class TargetLocalizer:
         range_estimate: Optional[float] = None,
         rgb_frame: Optional[np.ndarray] = None,
         surface_mask: Optional[np.ndarray] = None,
+        include_transform: bool = False,
     ) -> Optional[Dict[str, Any]]:
         bbox_int = list(map(int, bbox))
         if len(bbox_int) != 4:
@@ -217,6 +223,9 @@ class TargetLocalizer:
             "surface_mask_available": transform.get("surface_mask_available", False),
             "bbox": transform["bbox"],
         }
+
+        if include_transform:
+            payload["transform_result"] = transform
 
         return payload
 
@@ -614,72 +623,145 @@ class TargetLocalizer:
         transform_result: Dict[str, Any],
         bbox: Tuple[int, int, int, int],
         rgb_frame: Optional[np.ndarray],
+        timings: Optional[Dict[str, float]] = None,
+        events: Optional[List[Tuple[str, str]]] = None,
     ) -> Optional[Dict[str, Any]]:
         zerograsp_url = os.getenv("ZEROGRASP_URL", "http://10.46.118.233:8000/predict")
         if not zerograsp_url:
             return None
 
-        depth_data = transform_result.get("depth_data")
-        if depth_data is None or depth_data.size == 0:
-            return None
-        depth_height, depth_width = depth_data.shape
+        total_start = time.perf_counter()
 
-        if rgb_frame is None:
-            return None
-        if rgb_frame.shape[0] != depth_height or rgb_frame.shape[1] != depth_width:
-            if cv2 is None:
+        def _event(label: str) -> None:
+            if events is not None:
+                events.append((datetime.now().strftime("%H:%M:%S.%f")[:-3], label))
+
+        try:
+            _event("zerograsp.start")
+            debug_flag = os.getenv("ZEROGRASP_DEBUG")
+            debug_enabled = debug_flag not in (None, "", "0", "false", "False")
+
+            def _debug(message: str) -> None:
+                if debug_enabled:
+                    print(f"[ZeroGrasp][debug] {message}")
+
+            depth_data = transform_result.get("depth_data")
+            if depth_data is None or depth_data.size == 0:
+                _debug("missing depth data")
                 return None
-            rgb_frame = cv2.resize(rgb_frame, (depth_width, depth_height), interpolation=cv2.INTER_AREA)
+            depth_height, depth_width = depth_data.shape
 
-        camera_params = transform_result.get("camera_params")
-        intr_raw = transform_result.get("intrinsics_raw")
-        extr_raw = transform_result.get("extrinsic_raw")
-        if not camera_params or not intr_raw:
-            return None
+            if rgb_frame is None:
+                _debug("missing rgb frame")
+                return None
+            if rgb_frame.shape[0] != depth_height or rgb_frame.shape[1] != depth_width:
+                if cv2 is None:
+                    _debug("cv2 unavailable for rgb resize")
+                    return None
+                rgb_frame = cv2.resize(rgb_frame, (depth_width, depth_height), interpolation=cv2.INTER_AREA)
 
-        points3d = self._structured_point_cloud(depth_data, intr_raw, extr_raw)
-        if points3d is None:
-            return None
+            camera_params = transform_result.get("camera_params")
+            intr_raw = transform_result.get("intrinsics_raw")
+            extr_raw = transform_result.get("extrinsic_raw")
+            if not camera_params or not intr_raw:
+                _debug("camera parameters or intrinsics missing")
+                return None
 
-        bbox_dict = {
-            "x_min": int(bbox[0]),
-            "y_min": int(bbox[2]),
-            "x_max": int(bbox[1]),
-            "y_max": int(bbox[3]),
-        }
+            _event("zerograsp.point_cloud.start")
+            pc_start = time.perf_counter()
+            points3d = self._structured_point_cloud(depth_data, intr_raw, extr_raw)
+            if timings is not None:
+                timings["point_cloud"] = time.perf_counter() - pc_start
+            if points3d is None:
+                _debug("unable to build structured point cloud")
+                return None
+            _event("zerograsp.point_cloud.end")
 
-        payload: Dict[str, Any] = {
-            "rgb": self._encode_png(rgb_frame),
-            "points3d": self._encode_npy(points3d.astype(np.float32, copy=False)),
-            "bbox": bbox_dict,
-            "camera": camera_params,
-            "frame_id": "frame-0",
-            "object_id": 0,
-            "grasp_limit": 5,
-        }
-        sam2_url = os.getenv("SAM2_URL", "http://10.46.118.233:5000")
-        if sam2_url:
-            payload["sam2_url"] = sam2_url
+            _event("zerograsp.encode_rgb.start")
+            rgb_encode_start = time.perf_counter()
+            rgb_b64 = self._encode_png(rgb_frame)
+            if timings is not None:
+                timings["encode_rgb"] = time.perf_counter() - rgb_encode_start
+            _event("zerograsp.encode_rgb.end")
 
-        try:
-            timeout = float(os.getenv("ZEROGRASP_TIMEOUT", "60"))
-        except ValueError:
-            timeout = 60.0
+            points32 = points3d.astype(np.float32, copy=False)
+            _event("zerograsp.encode_points.start")
+            points_encode_start = time.perf_counter()
+            points_b64 = self._encode_npy(points32)
+            if timings is not None:
+                timings["encode_points"] = time.perf_counter() - points_encode_start
+            _event("zerograsp.encode_points.end")
 
-        try:
-            resp = requests.post(zerograsp_url, json=payload, timeout=timeout)
-            resp.raise_for_status()
-        except requests.Timeout:
-            print("[ZeroGrasp] 请求超时")
-            return None
-        except Exception as exc:  # noqa: BLE001
-            print(f"[ZeroGrasp] 请求失败: {exc}")
-            return None
+            bbox_dict = {
+                "x_min": int(bbox[0]),
+                "y_min": int(bbox[2]),
+                "x_max": int(bbox[1]),
+                "y_max": int(bbox[3]),
+            }
 
-        try:
-            return self._to_serializable(resp.json())
-        except Exception:
-            return {"raw": resp.text}
+            payload: Dict[str, Any] = {
+                "rgb": rgb_b64,
+                "points3d": points_b64,
+                "bbox": bbox_dict,
+                "camera": camera_params,
+                "frame_id": "frame-0",
+                "object_id": 0,
+                "grasp_limit": 1,
+            }
+            sam2_url = os.getenv("SAM2_URL", "http://10.46.118.233:5000")
+            if sam2_url:
+                payload["sam2_url"] = sam2_url
+
+            json_payload = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+            payload_bytes = len(json_payload.encode("utf-8"))
+            payload_mb = payload_bytes / (1024 * 1024)
+            if timings is not None:
+                timings["payload_size_mb"] = payload_mb
+
+            try:
+                timeout = float(os.getenv("ZEROGRASP_TIMEOUT", "60"))
+            except ValueError:
+                timeout = 60.0
+
+            request_start = None
+            try:
+                _debug(
+                    f"posting payload: rgb={rgb_frame.shape}, points3d={points3d.shape}, bbox={bbox_dict}, "
+                    f"camera=({camera_params.get('width')}, {camera_params.get('height')})",
+                )
+                _event("zerograsp.request.start")
+                request_start = time.perf_counter()
+                resp = requests.post(
+                    zerograsp_url,
+                    data=json_payload,
+                    headers={"Content-Type": "application/json"},
+                    timeout=timeout,
+                )
+                resp.raise_for_status()
+            except requests.Timeout:
+                print("[ZeroGrasp] 请求超时")
+                return None
+            except Exception as exc:  # noqa: BLE001
+                print(f"[ZeroGrasp] 请求失败: {exc}")
+                return None
+            finally:
+                if timings is not None and request_start is not None:
+                    request_duration = time.perf_counter() - request_start
+                    timings["request"] = request_duration
+                    if request_duration > 0:
+                        timings["request_bandwidth_mb_s"] = payload_mb / request_duration
+                        timings["request_bandwidth_mbit_s"] = (payload_mb * 8) / request_duration
+                if request_start is not None:
+                    _event("zerograsp.request.end")
+
+            try:
+                return self._to_serializable(resp.json())
+            except Exception:
+                return {"raw": resp.text}
+        finally:
+            if timings is not None:
+                timings["total"] = time.perf_counter() - total_start
+            _event("zerograsp.end")
 
     @staticmethod
     def _to_serializable(value: Any) -> Any:

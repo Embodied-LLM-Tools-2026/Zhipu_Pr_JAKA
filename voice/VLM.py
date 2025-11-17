@@ -491,6 +491,7 @@ class TaskProcessor:
         self.current_plan = self.planner.make_plan(target_name, self.world, plan_context=history_context)
         self.plan_runner.reset(self.current_plan.root)
         self._active_plan_log = []
+        self._last_action_name = None
         step_names = [node.name or node.type for node in self.current_plan.steps]
         log_info(f"🧠 当前计划: {step_names}")
         self._publish_plan_state()
@@ -519,7 +520,7 @@ class TaskProcessor:
                 return ObservationPhase.APPROACH
         return ObservationPhase.SEARCH
 
-    def _perform_observation(self, target_name: str) -> tuple[Any, Dict[str, Any]]:
+    def _perform_observation(self, target_name: str, *, force_vlm: bool = False) -> tuple[Any, Dict[str, Any]]:
         self._observation_counter += 1
         obj_state = self.world.objects.get(target_name)
         phase = self._determine_phase(obj_state)
@@ -527,7 +528,9 @@ class TaskProcessor:
             step=self._observation_counter,
             max_steps=self.max_iter,
         )
-        observation, frontend_payload = self.observer.observe(target_name, phase, context, self.navigator)
+        observation, frontend_payload = self.observer.observe(
+            target_name, phase, context, self.navigator, force_vlm=force_vlm
+        )
 
         pose_info = self.executor.estimate_observation_pose(observation, self.navigator)
         distance_attr: Optional[Dict[str, Any]] = None
@@ -641,7 +644,9 @@ class TaskProcessor:
         self._publish_plan_state()
 
         try:
-            current_observation, current_frontend_payload = self._perform_observation(target_name)
+            current_observation, current_frontend_payload = self._perform_observation(
+                target_name, force_vlm=True
+            )
         except Exception as exc:
             log_error(f"❌ 初始观测失败: {exc}")
             return {"success": False, "reason": f"initial_observe_failed: {exc}"}
@@ -689,7 +694,9 @@ class TaskProcessor:
 
             if node_name == "observe_scene":
                 try:
-                    current_observation, current_frontend_payload = self._perform_observation(target_name)
+                    current_observation, current_frontend_payload = self._perform_observation(
+                        target_name, force_vlm=bool(action_node.args.get("force_vlm"))
+                    )
                     exec_record = {"node": "observe_scene", "status": "success"}
                 except Exception as exc:
                     log_error(f"❌ 观测失败: {exc}")
@@ -707,7 +714,9 @@ class TaskProcessor:
 
             if current_observation is None:
                 try:
-                    current_observation, current_frontend_payload = self._perform_observation(target_name)
+                    current_observation, current_frontend_payload = self._perform_observation(
+                        target_name, force_vlm=False
+                    )
                 except Exception as exc:
                     log_error(f"❌ 兜底观测失败: {exc}")
                     self.plan_runner.apply_action_result(action_node, False)

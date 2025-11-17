@@ -18,10 +18,12 @@ except Exception:
 
 try:
   from pyorbbecsdk import (
+    AlignFilter,
     Config,
     Pipeline,
     OBSensorType,
     OBFormat,
+    OBStreamType,
     OBError,
     FormatConvertFilter,
     VideoFrame,
@@ -30,10 +32,12 @@ try:
     OBPoint2f,
   )
 except Exception as exc:  # noqa: F841
+  AlignFilter = None
   Config = None
   Pipeline = None
   OBSensorType = None
   OBFormat = None
+  OBStreamType = None
   OBError = Exception  # type: ignore
   FormatConvertFilter = None
   VideoFrame = None
@@ -383,6 +387,7 @@ class OrbbecStreamBase:
         self.name = name
         self.pipeline: Any = None
         self.config: Any = None
+        self.align_filter: Optional[Any] = None
         self.thread: Optional[threading.Thread] = None
         self.running = False
         self.lock = threading.Lock()
@@ -437,6 +442,18 @@ class OrbbecStreamBase:
                 frames = self.pipeline.wait_for_frames(100)
                 if frames is None:
                     continue
+                if self.align_filter is not None:
+                    try:
+                        aligned = self.align_filter.process(frames)
+                    except Exception as exc:
+                        print(f"⚠️  Align filter failed: {exc}")
+                        aligned = None
+                    if not aligned:
+                        continue
+                    try:
+                        frames = aligned.as_frame_set()
+                    except AttributeError:
+                        frames = aligned
                 image = self._extract_frame(frames)
                 color_frame = frames.get_color_frame()
                 depth_frame = frames.get_depth_frame()
@@ -501,6 +518,17 @@ class OrbbecStreamBase:
             f.write(jpeg)
         return f"/static/captures/{out_path.name}"
 class OrbbecColorStream(OrbbecStreamBase):
+    def __init__(self, name: str, *, align_to_color: bool = True):
+        super().__init__(name)
+        self.align_to_color = bool(align_to_color and HAS_ORBBEC and AlignFilter is not None and OBStreamType is not None)
+        if self.align_to_color:
+            try:
+                self.align_filter = AlignFilter(align_to_stream=OBStreamType.COLOR_STREAM)
+                print("[Orbbec] Depth-to-color alignment enabled for", name)
+            except Exception as exc:
+                print(f"[Orbbec] Failed to create AlignFilter: {exc}")
+                self.align_filter = None
+
     def _build_stream(self) -> Tuple[Any, Any]:
         if not HAS_ORBBEC:
             raise RuntimeError("Orbbec SDK unavailable")
@@ -518,6 +546,11 @@ class OrbbecColorStream(OrbbecStreamBase):
         except Exception as e:
             print(e)
             return
+        if self.align_to_color and hasattr(pipeline, "enable_frame_sync"):
+            try:
+                pipeline.enable_frame_sync()
+            except Exception as exc:
+                print(f"[Orbbec] enable_frame_sync failed: {exc}")
         return pipeline, config
 
     def _extract_frame(self, frames: Any) -> Optional[np.ndarray]:

@@ -42,6 +42,7 @@ class ObservationResult:
     world_center: Optional[List[float]] = None
     depth_snapshot: Optional[DepthSnapshot] = None
     robot_pose: Optional[Dict[str, float]] = None
+    source: str = "vlm"
 
     def as_dict(self) -> Dict[str, Any]:
         return {
@@ -58,6 +59,7 @@ class ObservationResult:
             "camera_center": self.camera_center,
             "robot_center": self.robot_center,
             "world_center": self.world_center,
+            "source": self.source,
         }
 
 

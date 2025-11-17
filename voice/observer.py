@@ -12,13 +12,22 @@ import json
 import os
 import sys
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
+import threading
 
 import dashscope  # type: ignore
 import numpy as np
 import requests
 from PIL import Image, ImageDraw
+
+try:
+    import cv2  # type: ignore
+
+    CV2_AVAILABLE = True
+except Exception:  # pragma: no cover
+    cv2 = None
+    CV2_AVAILABLE = False
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "tools")))
 
@@ -36,6 +45,117 @@ class ObservationContext:
     max_steps: int
 
 
+def _create_csrt_tracker():
+    if not CV2_AVAILABLE:
+        return None
+    if hasattr(cv2, "legacy") and hasattr(cv2.legacy, "TrackerCSRT_create"):
+        return cv2.legacy.TrackerCSRT_create()
+    if hasattr(cv2, "TrackerCSRT_create"):
+        return cv2.TrackerCSRT_create()
+    return None
+
+
+def _xyxy_to_xywh(bbox: Tuple[float, float, float, float]) -> Tuple[float, float, float, float]:
+    x1, y1, x2, y2 = bbox
+    return (x1, y1, max(1.0, x2 - x1), max(1.0, y2 - y1))
+
+
+def _xywh_to_xyxy(bbox: Tuple[float, float, float, float]) -> Tuple[int, int, int, int]:
+    x, y, w, h = bbox
+    return (
+        int(round(x)),
+        int(round(y)),
+        int(round(x + w)),
+        int(round(y + h)),
+    )
+
+
+def _clamp_bbox(bbox: Tuple[int, int, int, int], width: int, height: int) -> Tuple[int, int, int, int]:
+    x1, y1, x2, y2 = bbox
+    x1 = max(0, min(width - 1, x1))
+    x2 = max(0, min(width - 1, x2))
+    y1 = max(0, min(height - 1, y1))
+    y2 = max(0, min(height - 1, y2))
+    if x2 <= x1:
+        x2 = min(width - 1, x1 + 1)
+    if y2 <= y1:
+        y2 = min(height - 1, y1 + 1)
+    return (x1, y1, x2, y2)
+
+
+class TrackerManager:
+    """Lightweight CSRT tracker wrapper to reuse VLM bbox between observations."""
+
+    def __init__(self, max_age: float = 2.5) -> None:
+        self.max_age = max_age
+        self._tracker = None
+        self._last_update = 0.0
+        self._last_bbox: Optional[Tuple[int, int, int, int]] = None
+        self._frame_size: Optional[Tuple[int, int]] = None
+        self._lock = threading.RLock()
+
+    def reset(self, frame: Optional[np.ndarray], bbox_xyxy: List[float]) -> bool:
+        if not CV2_AVAILABLE or frame is None or frame.size == 0:
+            self.invalidate()
+            return False
+        tracker = _create_csrt_tracker()
+        if tracker is None:
+            self.invalidate()
+            return False
+        x1, y1, x2, y2 = map(float, bbox_xyxy)
+        xywh = _xyxy_to_xywh((x1, y1, x2, y2))
+        ok = tracker.init(frame, xywh)
+        if not ok:
+            self.invalidate()
+            return False
+        h, w = frame.shape[:2]
+        with self._lock:
+            self._tracker = tracker
+            self._frame_size = (w, h)
+            self._last_bbox = _clamp_bbox(_xywh_to_xyxy(xywh), w, h)
+            self._last_update = time.time()
+        return True
+
+    def update(self, frame: Optional[np.ndarray]) -> Optional[Tuple[int, int, int, int]]:
+        if frame is None or frame.size == 0:
+            return None
+        with self._lock:
+            if not self._tracker or (time.time() - self._last_update) > self.max_age:
+                self.invalidate()
+                return None
+            ok, bbox = self._tracker.update(frame)
+            if not ok:
+                self.invalidate()
+                return None
+            h, w = frame.shape[:2]
+            xyxy = _clamp_bbox(_xywh_to_xyxy(bbox), w, h)
+            self._last_bbox = xyxy
+            self._last_update = time.time()
+            self._frame_size = (w, h)
+            return xyxy
+
+    def is_active(self) -> bool:
+        with self._lock:
+            if self._tracker is None:
+                return False
+            if (time.time() - self._last_update) > self.max_age:
+                self.invalidate()
+                return False
+            return True
+
+    def invalidate(self) -> None:
+        with self._lock:
+            self._tracker = None
+            self._last_bbox = None
+            self._frame_size = None
+            self._last_update = 0.0
+
+    @property
+    def last_bbox(self) -> Optional[Tuple[int, int, int, int]]:
+        with self._lock:
+            return self._last_bbox
+
+
 class VLMObserver:
     """Encapsulates VLM interaction for image understanding."""
 
@@ -46,6 +166,42 @@ class VLMObserver:
             raise ValueError("请设置Zhipu_real_demo_API_KEY环境变量用于DashScope调用")
         self.vlm_model = Config.VLM_NAME
         self.target_resolution = (1000, 1000)
+        self.tracker = TrackerManager(max_age=float(os.getenv("TRACKER_MAX_AGE", "2.5")))
+        self._frame_lock = threading.RLock()
+        self._latest_capture: Optional[VLMObserver.CaptureInfo] = None
+        self._latest_frame: Optional[np.ndarray] = None
+        self._frame_thread: Optional[threading.Thread] = None
+        self._frame_stop = threading.Event()
+        self._frame_interval = float(os.getenv("TRACKER_FRAME_INTERVAL", "0.25"))
+
+    def _start_frame_loop(self) -> None:
+        if self._frame_thread and self._frame_thread.is_alive():
+            return
+        self._frame_stop.clear()
+        self._frame_thread = threading.Thread(target=self._frame_loop, name="vlm_frame_loop", daemon=True)
+        self._frame_thread.start()
+
+    def _frame_loop(self) -> None:
+        while not self._frame_stop.is_set():
+            capture = self._capture_image(self.cam_name)
+            if capture.path:
+                frame = self._load_frame_bgr(capture.path)
+                if frame is not None:
+                    capture.width = frame.shape[1]
+                    capture.height = frame.shape[0]
+                self._update_cached_frame(capture, frame)
+                if frame is not None:
+                    self.tracker.update(frame)
+            time.sleep(max(0.05, self._frame_interval))
+
+    def _update_cached_frame(self, capture: "VLMObserver.CaptureInfo", frame: Optional[np.ndarray]) -> None:
+        with self._frame_lock:
+            self._latest_capture = capture
+            self._latest_frame = frame
+
+    def _get_latest_frame(self) -> Tuple[Optional["VLMObserver.CaptureInfo"], Optional[np.ndarray]]:
+        with self._frame_lock:
+            return self._latest_capture, self._latest_frame
 
     # ------------------------------------------------------------------
     def observe(
@@ -54,33 +210,73 @@ class VLMObserver:
         phase: ObservationPhase,
         context: ObservationContext,
         navigator: Navigate,
+        *,
+        force_vlm: bool = False,
     ) -> Tuple[ObservationResult, Dict[str, Any]]:
-        """Capture, query VLM and return structured observation."""
-        image_capture = self._capture_image(self.cam_name)
-        if not image_capture.path:
-            raise RuntimeError("采集图片失败")
+        """Capture, optionally reuse tracker, otherwise call VLM for structured observation."""
+        self._start_frame_loop()
+        image_capture, frame_bgr = self._get_latest_frame()
+        if force_vlm or image_capture is None or not image_capture.path:
+            image_capture = self._capture_image(self.cam_name)
+            if not image_capture.path:
+                raise RuntimeError("采集图片失败")
+            frame_bgr = self._load_frame_bgr(image_capture.path)
+            if frame_bgr is not None:
+                image_capture.width = frame_bgr.shape[1]
+                image_capture.height = frame_bgr.shape[0]
+            self._update_cached_frame(image_capture, frame_bgr)
+            if frame_bgr is not None:
+                self.tracker.update(frame_bgr)
         depth_snapshot = fetch_snapshot()
         if not depth_snapshot:
             raise RuntimeError("采集深度快照失败")
-        prep_info = self._prepare_image_for_vlm(image_capture.path)
-        processed_path = prep_info["path"]
-        original_size = prep_info["original_size"]
-        processed_size = prep_info["processed_size"]
-        image_url = upload_file_and_get_url(
-            api_key=self.vlm_api_key,
-            model_name=self.vlm_model,
-            file_path=processed_path,
-        )
+        tracker_bbox: Optional[Tuple[int, int, int, int]] = None
+        if not force_vlm and self.tracker.is_active():
+            tracker_bbox = self.tracker.last_bbox
 
-        prompt = self._build_prompt(target_name, phase, context)
-        response = self._call_vlm(image_url, prompt)
-        observation, parsed_payload = self._parse_response(
-            response,
-            processed_size,
-            original_size,
-            processed_path,
-            image_capture.path,
-        )
+        parsed_payload: Dict[str, Any]
+        processed_size: List[int]
+        if tracker_bbox is not None:
+            width = frame_bgr.shape[1] if frame_bgr is not None else image_capture.width
+            height = frame_bgr.shape[0] if frame_bgr is not None else image_capture.height
+            if not width:
+                width = self.target_resolution[0]
+            if not height:
+                height = self.target_resolution[1]
+            frame_shape = (width, height)
+            observation, parsed_payload, processed_size = self._build_tracker_observation(
+                tracker_bbox, image_capture.path, frame_shape
+            )
+        else:
+            prep_info = self._prepare_image_for_vlm(image_capture.path)
+            processed_path = prep_info["path"]
+            original_size = prep_info["original_size"]
+            processed_size = prep_info["processed_size"]
+            image_url = upload_file_and_get_url(
+                api_key=self.vlm_api_key,
+                model_name=self.vlm_model,
+                file_path=processed_path,
+            )
+
+            prompt = self._build_prompt(target_name, phase, context)
+            response = self._call_vlm(image_url, prompt)
+            observation, parsed_payload = self._parse_response(
+                response,
+                processed_size,
+                original_size,
+                processed_path,
+                image_capture.path,
+            )
+            observation.source = "vlm"
+            if observation.found and observation.bbox:
+                if frame_bgr is None:
+                    frame_bgr = self._load_frame_bgr(image_capture.path)
+                if frame_bgr is not None:
+                    self.tracker.reset(frame_bgr, observation.bbox)
+                else:
+                    self.tracker.invalidate()
+            else:
+                self.tracker.invalidate()
 
         payload = self._build_frontend_payload(
             observation, parsed_payload, processed_size
@@ -120,6 +316,46 @@ class VLMObserver:
         except Exception as exc:
             log_error(f"❌ 采集图片失败: {exc}")
             return VLMObserver.CaptureInfo(path="", width=0, height=0, url="")
+
+    @staticmethod
+    def _load_frame_bgr(image_path: str) -> Optional[np.ndarray]:
+        if not CV2_AVAILABLE or not image_path:
+            return None
+        try:
+            frame = cv2.imread(image_path)
+            if frame is None or frame.size == 0:
+                return None
+            return frame
+        except Exception:
+            return None
+
+    def _build_tracker_observation(
+        self,
+        bbox: Tuple[int, int, int, int],
+        image_path: str,
+        frame_shape: Tuple[int, int],
+    ) -> Tuple[ObservationResult, Dict[str, Any], List[int]]:
+        width, height = int(frame_shape[0]), int(frame_shape[1])
+        bbox_list = [int(b) for b in bbox]
+        observation = ObservationResult(
+            found=True,
+            bbox=bbox_list,
+            confidence=0.5,
+            range_estimate=None,
+            raw_response={"source": "tracker", "bbox": bbox_list},
+            processed_image_path=image_path,
+            original_image_path=image_path,
+            source="tracker",
+        )
+        payload = {
+            "found": True,
+            "mapped_bbox": bbox_list,
+            "original_bbox": bbox_list,
+            "confidence": observation.confidence,
+            "source": "tracker",
+        }
+        processed_size = [width, height]
+        return observation, payload, processed_size
 
     def _prepare_image_for_vlm(self, image_path: str) -> Dict[str, Any]:
         info: Dict[str, Any] = {
@@ -266,6 +502,7 @@ class VLMObserver:
             processed_image_path=processed_path,
             original_image_path=original_path,
         )
+        observation.source = "vlm"
         boxes_for_ui = [final_bbox] if final_bbox else []
         annotated = None
         if boxes_for_ui:
@@ -335,6 +572,7 @@ class VLMObserver:
             "mask_url": observation.surface_mask_url,
             "mask_score": observation.surface_mask_score,
         }
+        payload["source"] = getattr(observation, "source", payload_src.get("source") or "vlm")
         return payload
 
     def _push_detection_to_frontend(self, payload: Dict[str, Any]) -> None:

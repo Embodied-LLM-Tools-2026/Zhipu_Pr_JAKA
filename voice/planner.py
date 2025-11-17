@@ -103,7 +103,7 @@ class BehaviorPlanner:
                 "recover",
             ],
             "action_docs": {
-                "observe_scene": "触发 RGBD/VLM 观测，刷新对场景的认知",
+                "observe_scene": "触发 RGBD/VLM 观测，刷新对场景的认知，可选force_vlm=true强制调用VLM重新检测",
                 "rotate_scan": "原地旋转或摆头扫描寻找目标",
                 "approach_far": "当距离目标物体大于2米时沿机器人与目标连线迈大步靠近",
                 "finalize_target_pose": "进行精确定位调整底盘姿态至抓取位",
@@ -118,6 +118,7 @@ class BehaviorPlanner:
                 "在固定场景内：先 observe_scene，如未看到目标则 rotate_scan 后再次 observe_scene",
                 f"当 objects.{goal}.attrs.range_estimate 大于 2 时，必须重复调用 approach_far，并在每次移动前后 observe_scene，直到距离<=2米",
                 "距离足够近(<=2米)后执行 finalize_target_pose，随后 predict_grasp_point → execute_grasp 完成抓取",
+                "在 finalize_target_pose 前必须执行 observe_scene(force_vlm=true) 以刷新桌面与目标bbox",
                 "如需在局部重复执行动作直到条件满足，可使用 repeat_until 节点，其children为需要循环的子树，cond为退出条件",
             ],
             "example_plan": self._example_plan(),
@@ -235,7 +236,7 @@ class BehaviorPlanner:
         return {
             "type": "sequence",
             "children": [
-                {"type": "action", "name": "observe_scene", "args": {"target": goal}},
+                {"type": "action", "name": "observe_scene", "args": {"target": goal, "force_vlm": True}},
                 {
                     "type": "repeat_until",
                     "args": {"cond": f"objects.{goal}.visible==true"},
@@ -252,9 +253,9 @@ class BehaviorPlanner:
                         {"type": "action", "name": "observe_scene", "args": {"target": goal}},
                     ],
                 },
-                {"type": "action", "name": "observe_scene", "args": {"target": goal}},
+                {"type": "action", "name": "observe_scene", "args": {"target": goal, "force_vlm": True}},
                 {"type": "action", "name": "finalize_target_pose", "args": {"target": goal}},
-                {"type": "action", "name": "observe_scene", "args": {"target": goal}},
+                {"type": "action", "name": "observe_scene", "args": {"target": goal, "force_vlm": True}},
                 {"type": "action", "name": "predict_grasp_point", "args": {"target": goal}},
                 {"type": "action", "name": "execute_grasp", "args": {"target": goal}},
             ],
