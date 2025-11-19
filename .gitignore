@@ -5,3 +5,4 @@ ckpts/
 output_voices/
 sam2.1_b.pt
 objectLocalization/objectDectection/weights/
+UI/static/captures/

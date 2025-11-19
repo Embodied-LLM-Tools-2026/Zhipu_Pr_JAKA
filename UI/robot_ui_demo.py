@@ -838,6 +838,7 @@ INDEX_HTML = """
     
     .row { display: flex; gap: 12px; align-items: center; }
     .kpi { display: grid; grid-template-columns: repeat(3,1fr); gap: 8px; }
+    .kpi.single { grid-template-columns: 1fr; }
     .kpi .item {
       background: linear-gradient(135deg, rgba(100,200,255,0.1), rgba(0,212,255,0.05));
       border: 1px solid rgba(100,200,255,0.2);
@@ -939,7 +940,7 @@ INDEX_HTML = """
     
     .wm-list {
       margin-top: 8px;
-      max-height: 260px;
+      height: 240px;
       overflow-y: auto;
       display: flex;
       flex-direction: column;
@@ -986,7 +987,8 @@ INDEX_HTML = """
       display: flex;
       flex-direction: column;
       gap: 8px;
-      max-height: 220px;
+      flex: 1;
+      min-height: 0;
       overflow-y: auto;
     }
     .plan-steps::-webkit-scrollbar { width: 4px; }
@@ -1025,7 +1027,7 @@ INDEX_HTML = """
     }
     .plan-json {
       margin-top: 10px;
-      max-height: 160px;
+      height: 120px;
       overflow-y: auto;
       border: 1px solid rgba(100,200,255,0.2);
       border-radius: 8px;
@@ -1036,7 +1038,7 @@ INDEX_HTML = """
     }
     .timeline {
       margin-top: 10px;
-      max-height: 200px;
+      height: 160px;
       overflow-y: auto;
       display: flex;
       flex-direction: column;
@@ -1085,7 +1087,7 @@ INDEX_HTML = """
     }
     .suggestion-list {
       margin-top: 8px;
-      max-height: 220px;
+      height: 220px;
       overflow-y: auto;
       display: flex;
       flex-direction: column;
@@ -1122,6 +1124,21 @@ INDEX_HTML = """
       color: #9bd;
       margin-top: 4px;
     }
+
+    .card.fixed-card {
+      display: flex;
+      flex-direction: column;
+      height: 360px;
+    }
+    .card.fixed-card.small-card { height: 320px; }
+    .card.fixed-card.large-card { height: 460px; }
+    .card.fixed-card .card-content {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      margin-top: 8px;
+    }
   </style>
 </head>
 <body>
@@ -1133,6 +1150,7 @@ INDEX_HTML = """
         <div class="grid cams">
           <div class="cam-wrap front-cam">
             <img id="cam-front" class="front-cam-img" width="1280" height="800" src="/api/cam/front?ts=0" alt="front" />
+            <canvas id="front-overlay" class="overlay"></canvas>
             <div class="cam-toolbar">
               <button onclick="capture('front')">Capture</button>
             </div>
@@ -1154,18 +1172,10 @@ INDEX_HTML = """
 
       <div class="card">
         <h3>Robot Telemetry</h3>
-        <div class="kpi">
+        <div class="kpi single">
           <div class="item">
             <div>AGV Position (Real-time)</div>
             <div class="mono">θ=<span id="theta">-</span>rad, x=<span id="agv-x">-</span>m, y=<span id="agv-y">-</span>m</div>
-          </div>
-          <div class="item">
-            <div>Velocity</div>
-            <div class="mono">v=<span id="vlin">0</span> m/s, ω=<span id="vang">0</span> rad/s</div>
-          </div>
-          <div class="item">
-            <div>Chassis Action</div>
-            <div class="mono" id="action">idle</div>
           </div>
         </div>
       </div>
@@ -1199,47 +1209,54 @@ INDEX_HTML = """
         </div>
         <div class="mono" id="sam-mask-meta" style="margin-top:8px; font-size:12px; color:#999;">暂无mask</div>
       </div>
-      <div class="card">
+      <div class="card fixed-card small-card">
         <h3>World Model State</h3>
-        <div class="small-label" id="world-model-updated">等待数据...</div>
-        <div id="world-model-entries" class="wm-list">
-          <div class="wm-empty">尚未收到世界模型快照</div>
+        <div class="card-content">
+          <div class="small-label" id="world-model-updated">等待数据...</div>
+          <div id="world-model-entries" class="wm-list">
+            <div class="wm-empty">尚未收到世界模型快照</div>
+          </div>
         </div>
       </div>
 
-      <div class="card">
+      <div class="card fixed-card small-card">
         <h3>Assistant Suggestions</h3>
-        <div class="row" style="margin-bottom:8px; gap:8px; align-items:center;">
-          <button onclick="clearSuggestions()" style="font-size:11px; padding:4px 8px;">Clear</button>
-          <span style="font-size:11px; color:#888; flex:1; text-align:right;" id="suggestion-count">0 entries</span>
-        </div>
-        <div id="suggestion-list" class="suggestion-list">
-          <div class="plan-placeholder">暂无建议</div>
-        </div>
-        <div class="small-label" style="margin-top:12px;">Quick Controls</div>
-        <div class="control-bar">
-          <button onclick="sendControl('pause')">Pause Plan</button>
-          <button onclick="sendControl('resume')">Resume</button>
-          <button onclick="sendControl('force_observe')">Force Observe</button>
+        <div class="card-content">
+          <div class="row" style="margin-bottom:8px; gap:8px; align-items:center;">
+            <button onclick="clearSuggestions()" style="font-size:11px; padding:4px 8px;">Clear</button>
+            <span style="font-size:11px; color:#888; flex:1; text-align:right;" id="suggestion-count">0 entries</span>
+          </div>
+          <div id="suggestion-list" class="suggestion-list">
+            <div class="plan-placeholder">暂无建议</div>
+          </div>
+          <div class="small-label" style="margin-top:12px;">Quick Controls</div>
+          <div class="control-bar">
+            <button onclick="sendControl('pause')">Pause Plan</button>
+            <button onclick="sendControl('resume')">Resume</button>
+            <button onclick="sendControl('force_observe')">Force Observe</button>
+          </div>
         </div>
       </div>
 
-      <div class="card">
+      <div class="card fixed-card large-card">
         <h3>Behavior Tree Monitor</h3>
-        <div class="small-label" id="plan-updated">等待计划...</div>
-        <div id="plan-steps" class="plan-steps">
-          <div class="plan-placeholder">当前没有激活的行为树</div>
+        <div class="card-content">
+          <div class="small-label" id="plan-updated">等待计划...</div>
+          <div id="plan-steps" class="plan-steps">
+            <div class="plan-placeholder">当前没有激活的行为树</div>
+          </div>
+          <div class="small-label">Execution Timeline</div>
+          <div id="execution-timeline" class="timeline">
+            <div class="plan-placeholder">等待执行记录</div>
+          </div>
+          <pre id="plan-tree-json" class="plan-json mono"></pre>
         </div>
-        <div class="small-label" style="margin-top: 10px;">Execution Timeline</div>
-        <div id="execution-timeline" class="timeline">
-          <div class="plan-placeholder">等待执行记录</div>
-        </div>
-        <pre id="plan-tree-json" class="plan-json mono"></pre>
       </div>
     </div>
   </div>
 
 <script>
+  let lastVlmTs = -1;
   let lastWorldTs = -1;
   let lastPlanTs = -1;
   let lastSuggestionSize = 0;
@@ -1247,7 +1264,11 @@ INDEX_HTML = """
   setInterval(() => {
     ['front','left','right'].forEach(id => {
       const img = document.getElementById('cam-' + id);
+      if (!img) return;
       img.src = '/api/cam/' + id + '?ts=' + Date.now(); // 防缓存
+      if (id === 'front') {
+        syncCanvasSize(document.getElementById('front-overlay'), img);
+      }
     });
   }, 50);
 
@@ -1255,6 +1276,7 @@ INDEX_HTML = """
   async function capture(which) {
     await fetch('/api/capture?cam=' + which);
     clearBoxes();
+    clearBoxes('front-overlay');
     document.getElementById('bbox-json').textContent = '';
   }
   let lastCapturePath = '';
@@ -1268,6 +1290,7 @@ INDEX_HTML = """
         // 新的capture，显示原图
         imgEl.src = j.url + '?ts=' + Date.now();
         clearBoxes();
+        clearBoxes('front-overlay');
         document.getElementById('bbox-json').textContent = '';
         console.log('[Capture] 显示原图:', j.url);
       }
@@ -1276,12 +1299,62 @@ INDEX_HTML = """
   setInterval(pollLatestCapture, 500);
   pollLatestCapture();
 
+  async function pollVlmResult() {
+    try {
+      const resp = await fetch('/api/vlm/latest');
+      if (!resp.ok) {
+        return;
+      }
+      const data = await resp.json();
+      if (!data || typeof data.ts !== 'number') {
+        return;
+      }
+      if (data.ts === lastVlmTs) {
+        return;
+      }
+      lastVlmTs = data.ts;
+      const boxes = Array.isArray(data.boxes) ? data.boxes : (data.bbox ? [data.bbox] : []);
+      if (boxes.length) {
+        drawBoxes(boxes);
+        drawBoxes(boxes, 'front-overlay', 'cam-front');
+      } else {
+        clearBoxes();
+        clearBoxes('front-overlay');
+      }
+      const bboxJson = document.getElementById('bbox-json');
+      if (bboxJson) {
+        const summary = {
+          bbox: data.bbox,
+          mapped_bbox: data.mapped_bbox,
+          confidence: data.confidence,
+          range_estimate: data.range_estimate,
+          analysis: data.analysis,
+          surface_points: data.surface_points,
+          mask_score: data.mask_score,
+        };
+        bboxJson.textContent = JSON.stringify(summary, null, 2);
+      }
+      if (data.annotated_url) {
+        const imgEl = document.getElementById('vlm-img');
+        if (imgEl) {
+          imgEl.src = data.annotated_url + '?ts=' + Date.now();
+        }
+      }
+      updateMaskPreview(data);
+    } catch(e) {
+      console.error('[VLM] 获取失败:', e);
+    }
+  }
+  setInterval(pollVlmResult, 400);
+  pollVlmResult();
+
   // 画框：像素坐标 xyxy（左上到右下）
-  function drawBoxes(boxes) {
-    const img = document.getElementById('vlm-img');
-    const canvas = document.getElementById('overlay');
+  function drawBoxes(boxes, canvasId = 'overlay', imgId = 'vlm-img') {
+    const canvas = document.getElementById(canvasId);
+    const img = document.getElementById(imgId);
+    if (!canvas || !img) return;
     const ctx = canvas.getContext('2d');
-    syncCanvasSize(); // 对齐尺寸
+    syncCanvasSize(canvas, img); // 对齐尺寸
     ctx.clearRect(0,0,canvas.width, canvas.height);
     ctx.lineWidth = 3;
     ctx.strokeStyle = 'red';
@@ -1291,15 +1364,15 @@ INDEX_HTML = """
     });
   }
 
-  function clearBoxes() {
-    const canvas = document.getElementById('overlay');
+  function clearBoxes(canvasId = 'overlay') {
+    const canvas = document.getElementById(canvasId);
+    if (!canvas) return;
     const ctx = canvas.getContext('2d');
-    ctx.clearRect(0,0,canvas.width, canvas.height);
+    ctx.clearRect(0,0,canvas.width,canvas.height);
   }
 
-  function syncCanvasSize() {
-    const img = document.getElementById('vlm-img');
-    const canvas = document.getElementById('overlay');
+  function syncCanvasSize(canvas = document.getElementById('overlay'), img = document.getElementById('vlm-img')) {
+    if (!canvas || !img) return;
     const r = img.getBoundingClientRect();
     canvas.style.width = r.width + 'px';
     canvas.style.height = r.height + 'px';
@@ -1318,13 +1391,6 @@ INDEX_HTML = """
       if (pitch) pitch.textContent = t.orientation.pitch.toFixed(1);
       const roll = document.getElementById('roll');
       if (roll) roll.textContent = t.orientation.roll.toFixed(1);
-      const vlin = document.getElementById('vlin');
-      if (vlin) vlin.textContent = t.velocity.linear.toFixed(2);
-      const vang = document.getElementById('vang');
-      if (vang) vang.textContent = t.velocity.angular.toFixed(2);
-      const action = document.getElementById('action');
-      if (action) action.textContent = t.chassis_action;
-
       const s = await (await fetch('/api/status')).json();
       const steps = s.steps || [];
       const cur = s.current;
@@ -1953,6 +2019,26 @@ async def api_vlm_result(request: Request):
       "surface_points": data.get("surface_points"),
       "range_estimate": data.get("range_estimate"),
   }
+
+@APP.post("/api/vlm/mask")
+async def api_vlm_mask(request: Request):
+  data = await request.json()
+  mask_url = data.get("mask_url") or data.get("url")
+  if not mask_url:
+    return JSONResponse({"ok": False, "error": "missing mask_url"}, status_code=400)
+  global LATEST_VLM_RESULT
+  image_path = data.get("image_path")
+  last_image = LATEST_VLM_RESULT.get("original_image_path")
+  if image_path and last_image and image_path != last_image:
+    print(f"[VLM] Received mask for {image_path}, but latest image is {last_image}")
+  LATEST_VLM_RESULT["mask_url"] = mask_url
+  if "path" in data:
+    LATEST_VLM_RESULT["surface_mask_path"] = data.get("path")
+  LATEST_VLM_RESULT["mask_score"] = data.get("mask_score") or data.get("score")
+  LATEST_VLM_RESULT["mask_job_id"] = data.get("job_id")
+  LATEST_VLM_RESULT["mask_ts"] = data.get("timestamp") or int(time.time() * 1000)
+  LATEST_VLM_RESULT["ts"] = int(time.time() * 1000)
+  return {"ok": True}
 
 # VLM结果获取接口（UI端轮询）
 @APP.get("/api/vlm/latest")

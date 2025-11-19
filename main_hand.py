@@ -76,18 +76,22 @@ print("VRC (流式,VAD,win) running...")
 # 依赖检查已集成到DependencyManager类中
 
 # 先导入 utils.task_logger 以避免与 voice.utils 冲突
-from tools.task_logger import log_info, log_success, log_warning, log_error
+from tools.logging.task_logger import log_info, log_success, log_warning, log_error
 
-from voice.config import Config
-from voice.deps import DependencyManager
-from voice.TTS import TextToSpeechEngine
-from voice.ASR import SenseVoiceRecognizer
-from voice.VLM import RobotCommandProcessor,TaskProcessor
-from voice.PinyinMatcher import PinyinMatcher
-from voice.utils import SimplifiedVoiceRecorder, SimplifiedAudioPlayer
+from voice.utils.config import Config
+from voice.utils.deps import DependencyManager
+from voice.audio.TTS import TextToSpeechEngine
+from voice.audio.ASR import SenseVoiceRecognizer
+from voice.agents.VLM import RobotCommandProcessor, TaskProcessor as BehaviorTreeTaskProcessor
+from voice.agents.function_call import FunctionCallTaskProcessor
+from voice.audio.PinyinMatcher import PinyinMatcher
+from voice.audio.audio_utils import SimplifiedVoiceRecorder, SimplifiedAudioPlayer
 from action_sequence.navigate import Navigate
 from action_sequence.gripper_controller import GripperController
 from action_sequence.taskexecutor import TaskExecutor
+
+TASK_PROCESSOR_MODE = os.getenv("TASK_PROCESSOR_MODE", "behavior_tree").lower()
+TaskProcessor = FunctionCallTaskProcessor if TASK_PROCESSOR_MODE == "function_call" else BehaviorTreeTaskProcessor
 
 # 设置环境
 Config.setup_environment()

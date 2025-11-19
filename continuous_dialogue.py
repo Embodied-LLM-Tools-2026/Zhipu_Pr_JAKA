@@ -25,10 +25,10 @@ sys.path.insert(0, voice_dir)
 project_root = os.path.dirname(__file__)
 sys.path.insert(0, project_root)
 # 导入语音模块
-from voice.utils import SimplifiedVoiceRecorder
-from voice.ASR import SenseVoiceRecognizer
-from Pr.voice.VLM import RobotCommandProcessor
-from voice.TTS import TextToSpeechEngine
+from voice.audio.audio_utils import SimplifiedVoiceRecorder
+from voice.audio.ASR import SenseVoiceRecognizer
+from voice.agents.VLM import RobotCommandProcessor
+from voice.audio.TTS import TextToSpeechEngine
 
 # 配置日志
 logging.basicConfig(
@@ -124,7 +124,7 @@ class TTSAdapter:
         try:
             self.engine = TextToSpeechEngine()
             # 导入音频管理器用于播放
-            from voice.utils import CrossPlatformAudioManager
+            from voice.audio.audio_utils import CrossPlatformAudioManager
 
             self.audio_manager = CrossPlatformAudioManager()
             return True
