@@ -16,6 +16,8 @@ import uuid
 from typing import Any, Dict, List, Optional
 
 import requests
+import base64
+from zhipuai import ZhipuAI
 
 from tools.logging.task_logger import log_error, log_info, log_success, log_warning  # type: ignore
 from tools.ui.ui_state_bridge import UIStateBridge  # type: ignore
@@ -396,16 +398,17 @@ class FunctionCallTaskProcessor:
         self.tools = FunctionCallToolset(self.api, self)
         self.max_rounds = int(os.getenv("FUNCTION_CALL_MAX_ROUNDS", "16"))
         self.temperature = float(os.getenv("FUNCTION_CALL_TEMPERATURE", "0.1"))
-        self.model = os.getenv("FUNCTION_CALL_MODEL", getattr(self.planner, "llm_model", "deepseek-chat"))
+        self.model = os.getenv("FUNCTION_CALL_MODEL", "glm-4.5v")
         self.api_key = (
             os.getenv("FUNCTION_CALL_API_KEY")
-            or os.getenv("DEEPSEEK_FUNCTION_CALL_API_KEY")
-            or os.getenv("DEEPSEEK_API_KEY")
+            or os.getenv("ZHIPUAI_API_KEY")
             or getattr(self.planner, "llm_api_key", None)
         )
         if not self.api_key:
-            raise RuntimeError("FunctionCallTaskProcessor 需要配置 FUNCTION_CALL_API_KEY 或 DEEPSEEK_API_KEY")
-        self.api_base = os.getenv("DEEPSEEK_API_BASE", "https://api.deepseek.com")
+            raise RuntimeError("FunctionCallTaskProcessor 需要配置 FUNCTION_CALL_API_KEY 或 ZHIPUAI_API_KEY")
+        
+        self.client = ZhipuAI(api_key=self.api_key)
+        
         self.system_prompt = os.getenv(
             "FUNCTION_CALL_SYSTEM_PROMPT",
             (
@@ -429,6 +432,30 @@ class FunctionCallTaskProcessor:
         self._tool_instruction = self._build_tool_instruction()
         self._failure_threshold = int(os.getenv("FUNCTION_CALL_FAILURE_THRESHOLD", "3"))
         self._failure_count = 0
+
+    def _get_current_image_base64(self, cam_name: str = "front") -> Optional[str]:
+        try:
+            # Capture image from local API
+            resp = requests.get(
+                f"http://127.0.0.1:8000/api/capture?cam={cam_name}",
+                timeout=3,
+            )
+            if resp.status_code != 200:
+                log_warning(f"Failed to capture image: {resp.status_code}")
+                return None
+            
+            data = resp.json()
+            image_path = data.get("url")
+            if not image_path or not os.path.exists(image_path):
+                log_warning(f"Image path invalid: {image_path}")
+                return None
+                
+            with open(image_path, "rb") as img_file:
+                img_base = base64.b64encode(img_file.read()).decode("utf-8")
+            return img_base
+        except Exception as e:
+            log_error(f"Error getting camera image: {e}")
+            return None
 
     # ------------------------------------------------------------------
     def set_navigator(self, navigator) -> None:
@@ -520,29 +547,18 @@ class FunctionCallTaskProcessor:
 
     # ------------------------------------------------------------------
     def _call_llm(self, messages: List[Dict[str, Any]]) -> Dict[str, Any]:
-        payload = {
-            "model": self.model,
-            "messages": messages,
-            "functions": self.tools.specs(),
-            "function_call": "auto",
-            "temperature": self.temperature,
-        }
-        headers = {
-            "Authorization": f"Bearer {self.api_key}",
-            "Content-Type": "application/json",
-        }
-        response = requests.post(
-            f"{self.api_base.rstrip('/')}/chat/completions",
-            headers=headers,
-            json=payload,
-            timeout=45,
-        )
-        response.raise_for_status()
-        data = response.json()
-        choices = data.get("choices") or []
-        if not choices:
-            raise RuntimeError("function_call_llm_no_choice")
-        return choices[0]["message"]
+        try:
+            response = self.client.chat.completions.create(
+                model=self.model,
+                messages=messages,
+                tools=[{"type": "function", "function": spec} for spec in self.tools.specs()],
+                tool_choice="auto",
+                temperature=self.temperature,
+            )
+            return response.choices[0].message.model_dump()
+        except Exception as e:
+            log_error(f"LLM call failed: {e}")
+            raise RuntimeError(f"function_call_llm_failed: {e}")
 
     def _initial_messages(self, goal: str) -> List[Dict[str, Any]]:
         snapshot = self.world.snapshot()
@@ -551,10 +567,25 @@ class FunctionCallTaskProcessor:
             "world": snapshot,
             "instructions": self._mission_text,
         }
+        
+        content_parts = [
+            {"type": "text", "text": json.dumps(user_payload, ensure_ascii=False)},
+            {"type": "text", "text": self._tool_instruction}
+        ]
+        
+        # Add initial image
+        img_base = self._get_current_image_base64()
+        if img_base:
+            content_parts.insert(0, {
+                "type": "image_url",
+                "image_url": {
+                    "url": img_base
+                }
+            })
+            
         return [
             {"role": "system", "content": self.system_prompt},
-            {"role": "user", "content": json.dumps(user_payload, ensure_ascii=False)},
-            {"role": "user", "content": self._tool_instruction},
+            {"role": "user", "content": content_parts},
         ]
 
     def _parse_arguments(self, arguments: Optional[str]) -> Dict[str, Any]:
@@ -597,59 +628,90 @@ class FunctionCallTaskProcessor:
             log_info(f"[FunctionCall] 回合 {round_id}")
             message = self._call_llm(messages)
             messages.append(message)
-            function_call = message.get("function_call")
-            if function_call:
-                fn_name = function_call.get("name")
-                raw_args = function_call.get("arguments")
-                args = self._parse_arguments(raw_args)
-                start_ts = time.time()
-                result = self.tools.dispatch(fn_name, args)
-                elapsed = time.time() - start_ts
-                trace.append(
-                    {
-                        "round": round_id,
-                        "function": fn_name,
-                        "args": args,
-                        "result": result,
-                    }
-                )
-                status = "success" if result.get("ok") else "failure"
-                detail = result.get("reason") or result.get("error")
-                self._record_timeline_event(
-                    stage="function_call",
-                    node=fn_name or "unknown",
-                    status=status,
-                    detail=detail,
-                    elapsed=elapsed,
-                )
-                self._append_execution_turn(
-                    stage="function_call",
-                    node=fn_name or "unknown",
-                    status=status,
-                    detail=json.dumps({"args": args, "result": result}, ensure_ascii=False),
-                )
-                if status == "success":
-                    log_success(f"[FunctionCall] {fn_name} 成功")
-                    self._publish_world_snapshot()
-                    self._failure_count = 0
-                else:
-                    msg = f"[FunctionCall] {fn_name} 失败: {detail}"
-                    log_warning(msg)
-                    self._emit_ui_log(msg, "warning")
-                    self._failure_count += 1
-                    if self._failure_threshold > 0 and self._failure_count >= self._failure_threshold:
-                        self._auto_recover(messages, trace, target_name)
+            tool_calls = message.get("tool_calls")
+            if tool_calls:
+                # Handle multiple tool calls if present, though usually one
+                for tool_call in tool_calls:
+                    fn_name = tool_call.get("function", {}).get("name")
+                    raw_args = tool_call.get("function", {}).get("arguments")
+                    call_id = tool_call.get("id")
+                    
+                    args = self._parse_arguments(raw_args)
+                    start_ts = time.time()
+                    result = self.tools.dispatch(fn_name, args)
+                    elapsed = time.time() - start_ts
+                    
+                    trace.append(
+                        {
+                            "round": round_id,
+                            "function": fn_name,
+                            "args": args,
+                            "result": result,
+                        }
+                    )
+                    status = "success" if result.get("ok") else "failure"
+                    detail = result.get("reason") or result.get("error")
+                    self._record_timeline_event(
+                        stage="function_call",
+                        node=fn_name or "unknown",
+                        status=status,
+                        detail=detail,
+                        elapsed=elapsed,
+                    )
+                    self._append_execution_turn(
+                        stage="function_call",
+                        node=fn_name or "unknown",
+                        status=status,
+                        detail=json.dumps({"args": args, "result": result}, ensure_ascii=False),
+                    )
+                    
+                    if status == "success":
+                        log_success(f"[FunctionCall] {fn_name} 成功")
+                        self._publish_world_snapshot()
                         self._failure_count = 0
-                messages.append(
-                    {
-                        "role": "function",
-                        "name": fn_name,
-                        "content": json.dumps(result, ensure_ascii=False),
-                    }
-                )
-                if result.get("terminate"):
-                    final_result = result
+                    else:
+                        msg = f"[FunctionCall] {fn_name} 失败: {detail}"
+                        log_warning(msg)
+                        self._emit_ui_log(msg, "warning")
+                        self._failure_count += 1
+                        if self._failure_threshold > 0 and self._failure_count >= self._failure_threshold:
+                            self._auto_recover(messages, trace, target_name)
+                            self._failure_count = 0
+                            
+                    messages.append(
+                        {
+                            "role": "tool",
+                            "tool_call_id": call_id,
+                            "content": json.dumps(result, ensure_ascii=False),
+                        }
+                    )
+                    
+                    if result.get("terminate"):
+                        final_result = result
+                        break
+                
+                if final_result:
                     break
+
+                # Inject new image after tool execution for the next round
+                img_base = self._get_current_image_base64()
+                if img_base:
+                    messages.append({
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "image_url",
+                                "image_url": {
+                                    "url": img_base
+                                }
+                            },
+                            {
+                                "type": "text",
+                                "text": "Current scene state after action."
+                            }
+                        ]
+                    })
+                
                 continue
 
             # No tool call -> final response
