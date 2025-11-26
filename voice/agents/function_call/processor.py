@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import os
+import textwrap
 import time
 import uuid
 from typing import Any, Dict, List, Optional
@@ -24,7 +25,7 @@ from tools.ui.ui_state_bridge import UIStateBridge  # type: ignore
 
 from ...control.apis import RobotAPI
 from ...control.world_model import WorldModel
-from ...control.executor import SkillExecutor
+from ...control.executor import SkillExecutor, SkillRuntime
 from ...control.task_structures import ExecutionResult, ObservationPhase, PlanNode, ExecutionTurn, PlanContextEntry
 from ...perception.observer import VLMObserver
 from ...agents.planner import BehaviorPlanner, ReflectionAdvisor
@@ -207,17 +208,17 @@ class FunctionCallToolset:
                     "properties": {"item": {"type": "string", "description": "Optional item name."}},
                 },
             },
-            {
-                "name": "recover",
-                "description": "Trigger the recovery skill (typically back off).",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "mode": {"type": "string"},
-                        "distance": {"type": "number"},
-                    },
-                },
-            },
+            # {
+            #     "name": "recover",
+            #     "description": "Trigger the recovery skill (typically back off).",
+            #     "parameters": {
+            #         "type": "object",
+            #         "properties": {
+            #             "mode": {"type": "string"},
+            #             "distance": {"type": "number"},
+            #         },
+            #     },
+            # },
         ]
 
     # ------------------------------------------------------------------
@@ -761,9 +762,12 @@ class FunctionCallTaskProcessor:
             1. Always start with observe_scene(target, force_vlm=true).
             2. If the target is not visible, use rotate_scan/search_area before observing again.
             3. When the estimated range is >2m, call approach_far repeatedly until close enough.
-            4. Run finalize_target_pose → predict_grasp_point → execute_grasp → close_gripper.
-            5. To hand the item to a user: navigate as needed, then handover_item → open_gripper.
-            6. On any failure, call recover(distance≈0.3) and re-observe before retrying.
+            4. Run finalize_target_pose (this moves the robot base).
+            5. IMPORTANT: After finalize_target_pose, you MUST call observe_scene(target, force_vlm=true) again because the robot has moved and the camera view has changed.
+            6. Then run predict_grasp_point → execute_grasp → close_gripper.
+            7. To hand the item to a user: navigate as needed, then handover_item → open_gripper.
+            8. On any failure, call recover(distance≈0.3) and re-observe before retrying.
+            9. For free to execute observe_scene at any time when you think the situation has changed.
             Provide a final JSON summary {"status": "...", "summary": "..."} once goal is achieved or impossible.
             """
         ).strip()

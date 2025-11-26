@@ -434,12 +434,19 @@ class OrbbecStreamBase:
                 pass
 
     def _loop(self):
+        frame_count = 0
+        debug_count = 0
         while self.running:
             try:
+                debug_count += 1
+                if debug_count % 100 == 1:
+                    print(f"🔄 [{self.name}] loop iteration {debug_count}, pipeline={self.pipeline is not None}")
                 if self.pipeline is None:
                     time.sleep(0.05)
                     continue
                 frames = self.pipeline.wait_for_frames(100)
+                if debug_count % 100 == 1:
+                    print(f"📦 [{self.name}] wait_for_frames returned: {frames is not None}")
                 if frames is None:
                     continue
                 if self.align_filter is not None:
@@ -448,12 +455,12 @@ class OrbbecStreamBase:
                     except Exception as exc:
                         print(f"⚠️  Align filter failed: {exc}")
                         aligned = None
-                    if not aligned:
-                        continue
-                    try:
-                        frames = aligned.as_frame_set()
-                    except AttributeError:
-                        frames = aligned
+                    if aligned:
+                        try:
+                            frames = aligned.as_frame_set()
+                        except AttributeError:
+                            frames = aligned
+                    # 如果对齐失败，继续使用原始 frames（不跳过）
                 image = self._extract_frame(frames)
                 color_frame = frames.get_color_frame()
                 depth_frame = frames.get_depth_frame()
@@ -462,12 +469,17 @@ class OrbbecStreamBase:
                 if depth_frame is not None:
                     self.depth_frame = depth_frame
                 if image is None:
+                    if debug_count % 100 == 1:
+                        print(f"⏳ [{self.name}] image is None after _extract_frame")
                     continue
                 if image.shape[1] != FRONT_WIDTH or image.shape[0] != FRONT_HEIGHT:
                     image = cv2.resize(image, (FRONT_WIDTH, FRONT_HEIGHT), interpolation=cv2.INTER_AREA)
                 image = np.clip(image, 0, 255).astype(np.uint8)
                 with self.lock:
                     self.frame = image
+                frame_count += 1
+                if frame_count % 100 == 0:
+                    print(f"📹 Stream '{self.name}' updated {frame_count} frames")
             except Exception as exc:
                 print(f"⚠️  Stream '{self.name}' loop error: {exc}")
                 time.sleep(0.05)
@@ -1041,6 +1053,19 @@ def api_depth_frame():
   depth_bytes = depth_data.astype(np.uint16, copy=False).tobytes()
   depth_b64 = base64.b64encode(depth_bytes).decode("ascii")
 
+  # 同时返回 RGB 图像（对齐后的彩色帧）
+  color_b64 = None
+  color_width, color_height = None, None
+  try:
+      bgr_image = _frame_to_bgr_image(color_frame)
+      if bgr_image is not None:
+          color_height, color_width = bgr_image.shape[:2]
+          # 使用 JPEG 压缩减少传输大小
+          _, jpeg_data = cv2.imencode('.jpg', bgr_image, [cv2.IMWRITE_JPEG_QUALITY, 90])
+          color_b64 = base64.b64encode(jpeg_data.tobytes()).decode("ascii")
+  except Exception:
+      pass  # RGB 编码失败不影响主功能
+
   return {
       "width": depth_width,
       "height": depth_height,
@@ -1050,6 +1075,9 @@ def api_depth_frame():
       "extrinsic": extrinsic,
       "depth_b64": depth_b64,
       "dtype": str(depth_data.dtype),
+      "color_b64": color_b64,
+      "color_width": color_width,
+      "color_height": color_height,
   }
 
 

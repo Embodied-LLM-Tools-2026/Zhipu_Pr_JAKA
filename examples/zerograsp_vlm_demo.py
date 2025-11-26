@@ -570,6 +570,25 @@ def _call_ros2_linear_move(
         pose_list = list(tcp_position) + list(rot_vec)
         pose_str = ", ".join(f"{v:.3f}" for v in pose_list)
 
+        # 打印机器人最终末端位姿
+        print("=" * 60)
+        print("机器人最终末端位姿 (Robot End-Effector Pose)")
+        print("=" * 60)
+        print(f"  位置 (mm):")
+        print(f"    X: {tcp_position[0]:>10.3f}")
+        print(f"    Y: {tcp_position[1]:>10.3f}")
+        print(f"    Z: {tcp_position[2]:>10.3f}")
+        print(f"  轴角 (rad):")
+        print(f"    Rx: {rot_vec[0]:>10.4f}")
+        print(f"    Ry: {rot_vec[1]:>10.4f}")
+        print(f"    Rz: {rot_vec[2]:>10.4f}")
+        print(f"  欧拉角[{order.upper()}] (rad):")
+        print(f"    Roll:  {roll:>10.4f} ({math.degrees(roll):>8.2f}°)")
+        print(f"    Pitch: {pitch:>10.4f} ({math.degrees(pitch):>8.2f}°)")
+        print(f"    Yaw:   {yaw:>10.4f} ({math.degrees(yaw):>8.2f}°)")
+        print(f"  完整 TCP Pose: [{pose_str}]")
+        print("=" * 60)
+
         ros2_cmd = [
             "ros2",
             "service",

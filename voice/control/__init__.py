@@ -1,16 +1,9 @@
 """Robot control primitives: executor, APIs, world model, registry."""
 
-from .executor import SkillExecutor
-from .action_registry import ActionRegistry, ActionEntry, ActionTicket, PrimitiveEntry
-from .apis import RobotAPI
-from .world_model import WorldModel
-from .task_structures import (
-    ExecutionResult,
-    PlanNode,
-    PlanContextEntry,
-    ExecutionTurn,
-    ObservationPhase,
-)
+from __future__ import annotations
+
+from importlib import import_module
+from typing import Any, Dict
 
 __all__ = [
     "SkillExecutor",
@@ -26,3 +19,36 @@ __all__ = [
     "ExecutionTurn",
     "ObservationPhase",
 ]
+
+_LAZY_IMPORTS: Dict[str, str] = {
+    "SkillExecutor": "voice.control.executor",
+    "ActionRegistry": "voice.control.action_registry",
+    "ActionEntry": "voice.control.action_registry",
+    "ActionTicket": "voice.control.action_registry",
+    "PrimitiveEntry": "voice.control.action_registry",
+    "RobotAPI": "voice.control.apis",
+    "WorldModel": "voice.control.world_model",
+    "ExecutionResult": "voice.control.task_structures",
+    "PlanNode": "voice.control.task_structures",
+    "PlanContextEntry": "voice.control.task_structures",
+    "ExecutionTurn": "voice.control.task_structures",
+    "ObservationPhase": "voice.control.task_structures",
+}
+
+
+def __getattr__(name: str) -> Any:
+    """
+    Lazily import heavy submodules to avoid pulling in optional dependencies
+    when only lightweight structures are needed.
+    """
+    module_path = _LAZY_IMPORTS.get(name)
+    if not module_path:
+        raise AttributeError(f"module 'voice.control' has no attribute '{name}'")
+    module = import_module(module_path)
+    value = getattr(module, name)
+    globals()[name] = value
+    return value
+
+
+def __dir__() -> Any:
+    return sorted(list(__all__) + [key for key in globals() if not key.startswith("_")])

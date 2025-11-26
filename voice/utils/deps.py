@@ -151,7 +151,6 @@ class DependencyManager:
             
             # 尝试加载Silero VAD模型（离线模式）
             try:
-                import os
                 # 设置环境变量强制离线模式
                 os.environ['TORCH_HOME'] = os.path.expanduser('~/.cache/torch')
                 

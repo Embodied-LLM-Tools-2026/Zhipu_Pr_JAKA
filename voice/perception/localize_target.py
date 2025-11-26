@@ -13,9 +13,11 @@ import numpy as np
 import requests
 from PIL import Image
 from pyorbbecsdk import (
+    AlignFilter,
     Config,
     Pipeline,
     OBSensorType,
+    OBStreamType,
     OBFormat,
     OBError,
     FormatConvertFilter,
@@ -143,6 +145,192 @@ def fetch_snapshot(api_url: str = DEFAULT_DEPTH_API, *, timeout: float = 1.2) ->
     response.raise_for_status()
     data = response.json()
     return decode_snapshot(data)
+
+
+def fetch_aligned_rgbd(
+    api_url: str = DEFAULT_DEPTH_API,
+    *,
+    timeout: float = 1.5,
+) -> Tuple[Optional[np.ndarray], DepthSnapshot]:
+    """从 UI API 同时获取对齐的 RGB 图像和 Depth 数据。
+    
+    Returns:
+        (rgb_frame, depth_snapshot): BGR 格式的 RGB 图像和深度快照
+        如果 RGB 不可用，rgb_frame 为 None
+    """
+    response = requests.get(api_url, params={"align": "1"}, timeout=timeout)
+    response.raise_for_status()
+    data = response.json()
+    
+    # 解码深度数据
+    snapshot = decode_snapshot(data)
+    
+    # 解码 RGB 图像（如果可用）
+    rgb_frame = None
+    color_b64 = data.get("color_b64")
+    if color_b64:
+        try:
+            jpeg_data = base64.b64decode(color_b64)
+            nparr = np.frombuffer(jpeg_data, np.uint8)
+            rgb_frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+        except Exception:
+            pass  # RGB 解码失败，返回 None
+    
+    return rgb_frame, snapshot
+
+
+def _frame_to_bgr_image(frame) -> Optional[np.ndarray]:
+    """将 Orbbec 颜色帧转换为 BGR numpy 数组"""
+    if frame is None:
+        return None
+    width = frame.get_width()
+    height = frame.get_height()
+    color_format = frame.get_format()
+    data = np.asanyarray(frame.get_data())
+
+    if color_format == OBFormat.RGB:
+        image = np.resize(data, (height, width, 3))
+        if cv2 is not None:
+            return cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
+        return image[:, :, ::-1].copy()
+    if color_format == OBFormat.BGR:
+        return np.resize(data, (height, width, 3))
+    if color_format == OBFormat.MJPG:
+        if cv2 is not None:
+            return cv2.imdecode(data, cv2.IMREAD_COLOR)
+        return None
+    if color_format == OBFormat.YUYV:
+        image = np.resize(data, (height, width, 2))
+        if cv2 is not None:
+            return cv2.cvtColor(image, cv2.COLOR_YUV2BGR_YUYV)
+        return None
+
+    # 尝试格式转换
+    convert_format = None
+    if color_format == OBFormat.YUYV:
+        convert_format = OBConvertFormat.YUYV_TO_RGB888
+    elif color_format == OBFormat.NV12:
+        convert_format = OBConvertFormat.NV12_TO_RGB888
+    elif color_format == OBFormat.NV21:
+        convert_format = OBConvertFormat.NV21_TO_RGB888
+    elif color_format == OBFormat.I420:
+        convert_format = OBConvertFormat.I420_TO_RGB888
+    if convert_format is None:
+        return None
+    convert_filter = FormatConvertFilter()
+    convert_filter.set_format_convert_format(convert_format)
+    rgb_frame = convert_filter.process(frame)
+    if rgb_frame is None:
+        return None
+    return _frame_to_bgr_image(rgb_frame)
+
+
+def _depth_to_array(depth_frame) -> np.ndarray:
+    """将 Orbbec 深度帧转换为 numpy 数组"""
+    height = depth_frame.get_height()
+    width = depth_frame.get_width()
+    data = np.frombuffer(depth_frame.get_data(), dtype=np.uint16)
+    return data.reshape(height, width).copy()
+
+
+def capture_aligned_rgbd(
+    warmup: int = 5,
+    max_attempts: int = 100,
+    align_to_color: bool = True,
+) -> Tuple[np.ndarray, DepthSnapshot]:
+    """
+    同步获取对齐的 RGB 和 Depth 帧。
+    
+    Args:
+        warmup: 预热帧数
+        max_attempts: 最大尝试次数
+        align_to_color: 是否将深度对齐到彩色图像
+    
+    Returns:
+        (rgb_frame, depth_snapshot) 元组，rgb_frame 是 RGB 格式的 numpy 数组
+    
+    Raises:
+        RuntimeError: 无法获取同步帧
+    """
+    pipeline = Pipeline()
+    config = Config()
+    align_filter = None
+    
+    # 配置流
+    for sensor in (OBSensorType.COLOR_SENSOR, OBSensorType.DEPTH_SENSOR):
+        profile_list = pipeline.get_stream_profile_list(sensor)
+        if profile_list is None:
+            raise RuntimeError(f"无法获取 {sensor} 流配置")
+        profile = profile_list.get_default_video_stream_profile()
+        if profile is None:
+            raise RuntimeError(f"未找到 {sensor} 默认配置")
+        config.enable_stream(profile)
+    
+    if align_to_color:
+        align_filter = AlignFilter(align_to_stream=OBStreamType.COLOR_STREAM)
+    
+    pipeline.start(config)
+    
+    try:
+        # 预热
+        for _ in range(max(3, warmup)):
+            frames = pipeline.wait_for_frames(1000)
+            if frames and frames.get_depth_frame() and frames.get_color_frame():
+                break
+            time.sleep(0.03)
+        
+        # 获取同步帧
+        frames = None
+        for _ in range(max_attempts):
+            frames = pipeline.wait_for_frames(1000)
+            if frames and align_filter is not None:
+                aligned = align_filter.process(frames)
+                if not aligned:
+                    continue
+                try:
+                    frames = aligned.as_frame_set()
+                except AttributeError:
+                    frames = aligned
+            if frames and frames.get_depth_frame() and frames.get_color_frame():
+                break
+        
+        if frames is None:
+            raise RuntimeError("无法获取同步的 RGBD 帧")
+        
+        color_frame = frames.get_color_frame()
+        depth_frame = frames.get_depth_frame()
+        if color_frame is None or depth_frame is None:
+            raise RuntimeError("帧不完整，缺少颜色或深度帧")
+        
+        color_bgr = _frame_to_bgr_image(color_frame)
+        if color_bgr is None:
+            raise RuntimeError("颜色帧格式转换失败")
+        
+        # 转换为 RGB
+        if cv2 is not None:
+            rgb_frame = cv2.cvtColor(color_bgr, cv2.COLOR_BGR2RGB)
+        else:
+            rgb_frame = color_bgr[:, :, ::-1].copy()
+        
+        depth_arr = _depth_to_array(depth_frame)
+        
+        depth_profile = depth_frame.get_stream_profile().as_video_stream_profile()
+        color_profile = color_frame.get_stream_profile().as_video_stream_profile()
+        depth_intr = depth_profile.get_intrinsic()
+        extrinsic = depth_profile.get_extrinsic_to(color_profile)
+        
+        snapshot = DepthSnapshot(
+            depth=depth_arr,
+            intrinsics=depth_intr,
+            extrinsic=extrinsic,
+            dtype=str(depth_arr.dtype),
+        )
+        return rgb_frame, snapshot
+    finally:
+        try:
+            pipeline.stop()
+        except Exception:
+            pass
 
 
 class TargetLocalizer:
@@ -625,7 +813,7 @@ class TargetLocalizer:
         timings: Optional[Dict[str, float]] = None,
         events: Optional[List[Tuple[str, str]]] = None,
     ) -> Optional[Dict[str, Any]]:
-        zerograsp_url = os.getenv("ZEROGRASP_URL", "http://10.46.118.233:8000/predict")
+        zerograsp_url = os.getenv("ZEROGRASP_URL", "http://10.46.147.25:8000/predict")
         if not zerograsp_url:
             return None
 
@@ -707,7 +895,7 @@ class TargetLocalizer:
                 "object_id": 0,
                 "grasp_limit": 1,
             }
-            sam2_url = os.getenv("SAM2_URL", "http://10.46.118.233:5000")
+            sam2_url = os.getenv("SAM2_URL", "http://10.46.147.25:5000")
             if sam2_url:
                 payload["sam2_url"] = sam2_url
 
@@ -778,7 +966,9 @@ class TargetLocalizer:
 __all__ = [
     "Any",
     "DepthSnapshot",
+    "capture_aligned_rgbd",
     "decode_snapshot",
     "fetch_snapshot",
+    "fetch_aligned_rgbd",
     "TargetLocalizer",
 ]

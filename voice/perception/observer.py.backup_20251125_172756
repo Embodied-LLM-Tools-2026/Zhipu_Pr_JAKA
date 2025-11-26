@@ -12,7 +12,7 @@ import json
 import os
 import time
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, Set
 import threading
 
 import dashscope  # type: ignore
@@ -132,16 +132,13 @@ class TrackerManager:
             return xyxy
 
     def is_active(self) -> bool:
-        # 🚫 临时禁用 CSRT 追踪器，强制使用 VLM
-        return False
-        # === 原始代码（已禁用）===
-        # with self._lock:
-        #     if self._tracker is None:
-        #         return False
-        #     if (time.time() - self._last_update) > self.max_age:
-        #         self.invalidate()
-        #         return False
-        #     return True
+        with self._lock:
+            if self._tracker is None:
+                return False
+            if (time.time() - self._last_update) > self.max_age:
+                self.invalidate()
+                return False
+            return True
 
     def invalidate(self) -> None:
         with self._lock:
@@ -173,6 +170,11 @@ class VLMObserver:
         self._frame_thread: Optional[threading.Thread] = None
         self._frame_stop = threading.Event()
         self._frame_interval = float(os.getenv("TRACKER_FRAME_INTERVAL", "0.25"))
+        self._temp_dirs: Set[str] = set()
+        self._last_cleanup: float = 0.0
+        self._cleanup_interval = float(os.getenv("VLM_FILE_CLEANUP_INTERVAL_SEC", "120"))
+        self._cleanup_retention = float(os.getenv("VLM_FILE_RETENTION_SEC", "900"))
+        self._cleanup_prefixes = ("annotated_", "vlm_")
 
     def _start_frame_loop(self) -> None:
         if self._frame_thread and self._frame_thread.is_alive():
@@ -287,6 +289,8 @@ class VLMObserver:
             self._push_detection_to_frontend(payload)
         observation.depth_snapshot = depth_snapshot
         observation.robot_pose = navigator.get_current_pose()
+        # Periodically clean up temporary annotated/resized images to prevent buildup.
+        self._maybe_cleanup_temp_dirs()
         return observation, payload
 
     # ------------------------------------------------------------------
@@ -388,6 +392,7 @@ class VLMObserver:
                     new_name = f"vlm_{ts}_{target[0]}x{target[1]}.jpg"
                     processed_path = os.path.join(base_dir, new_name)
                     resized_img.save(processed_path, format="JPEG", quality=90)
+                    self._register_cleanup_dir(processed_path)
                     info.update(
                         {
                             "path": processed_path,
@@ -685,6 +690,7 @@ class VLMObserver:
             annotated_name = f"annotated_{ts}.jpg"
             annotated_path = os.path.join(base_dir, annotated_name)
             img.save(annotated_path, format="JPEG", quality=90)
+        self._register_cleanup_dir(annotated_path)
         return {
             "path": annotated_path,
             "url": self._path_to_static_url(annotated_path),
@@ -695,3 +701,43 @@ class VLMObserver:
         normalized = abs_path.replace("\\", "/")
         idx = normalized.find("/static/")
         return normalized[idx:] if idx != -1 else normalized
+
+    # ------------------------------------------------------------------
+    # Temp file cleanup
+    # ------------------------------------------------------------------
+    def _register_cleanup_dir(self, path: str) -> None:
+        if not path:
+            return
+        directory = os.path.dirname(path)
+        if directory:
+            self._temp_dirs.add(directory)
+
+    def _maybe_cleanup_temp_dirs(self) -> None:
+        if self._cleanup_retention <= 0:
+            return
+        now = time.time()
+        if self._cleanup_interval > 0 and (now - self._last_cleanup) < self._cleanup_interval:
+            return
+        self._last_cleanup = now
+        cutoff = now - self._cleanup_retention
+        for base_dir in list(self._temp_dirs):
+            self._cleanup_temp_files(base_dir, cutoff)
+
+    def _cleanup_temp_files(self, base_dir: str, cutoff_ts: float) -> None:
+        if not base_dir or not os.path.isdir(base_dir):
+            return
+        try:
+            for name in os.listdir(base_dir):
+                if not any(name.startswith(prefix) for prefix in self._cleanup_prefixes):
+                    continue
+                path = os.path.join(base_dir, name)
+                try:
+                    if not os.path.isfile(path):
+                        continue
+                    mtime = os.path.getmtime(path)
+                    if mtime < cutoff_ts:
+                        os.remove(path)
+                except Exception:
+                    continue
+        except Exception:
+            return

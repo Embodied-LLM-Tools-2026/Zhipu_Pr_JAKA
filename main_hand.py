@@ -1178,7 +1178,19 @@ def main():
     print("3. 自动检测 (有音频设备时使用语音输入)")
 
     use_voice_input = None
-    while True:
+    # 环境变量强制输入模式，便于无麦克风/无人值守运行
+    forced_mode = os.getenv("USE_VOICE_INPUT", "").lower()
+    if forced_mode in {"0", "false", "text"}:
+        use_voice_input = False
+        print("🔧 检测到 USE_VOICE_INPUT 环境变量，强制使用文本输入")
+    elif forced_mode in {"1", "true", "voice"}:
+        use_voice_input = True
+        print("🔧 检测到 USE_VOICE_INPUT 环境变量，强制使用语音输入")
+    elif forced_mode == "auto":
+        use_voice_input = None
+        print("🔧 检测到 USE_VOICE_INPUT=auto，使用自动检测")
+
+    while use_voice_input is None and forced_mode == "":
         choice = input("请选择 (1/2/3，默认为1): ").strip()
         if choice == "1" or choice == "":
             use_voice_input = True
@@ -1278,3 +1290,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+# export TASK_PROCESSOR_MODE=function_call && python3 ./main_hand.py

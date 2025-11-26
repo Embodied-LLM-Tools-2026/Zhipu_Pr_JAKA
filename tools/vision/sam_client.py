@@ -32,7 +32,7 @@ import requests
 from PIL import Image
 
 
-_DEFAULT_SAM_ENDPOINT = "http://10.46.118.233:5000/predict"
+_DEFAULT_SAM_ENDPOINT = "http://10.46.147.25:5000/predict"
 SAM_API_URL = os.getenv("SAM_API_URL") or _DEFAULT_SAM_ENDPOINT
 SAM_API_TIMEOUT = float(os.getenv("SAM_API_TIMEOUT", "8.0"))
 

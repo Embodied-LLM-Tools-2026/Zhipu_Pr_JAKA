@@ -10,12 +10,11 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple, TYPE_CHECKING
 
 from tools.logging.task_logger import log_info, log_warning  # type: ignore
 
 from action_sequence.navigate import Navigate
-from ..perception.observer import VLMObserver, ObservationContext
 from .executor import SkillExecutor, SkillRuntime
 from .world_model import WorldModel
 from .task_structures import (
@@ -24,6 +23,10 @@ from .task_structures import (
     PlanNode,
     ExecutionTurn,
 )
+
+if TYPE_CHECKING:
+    # Only import for type checking to avoid circular imports at runtime.
+    from ..perception.observer import VLMObserver, ObservationContext
 
 try:  # pragma: no cover - optional hardware dependency
     from action_sequence.gripper_controller import GripperController
@@ -93,6 +96,9 @@ class PerceptionAPI:
         max_steps: int = 1,
         analysis_request: Optional[str] = None,
     ) -> Tuple[Any, Dict[str, Any]]:
+        # Lazy import to avoid circular dependency during module import.
+        from ..perception.observer import ObservationContext
+
         if self._navigator is None:
             raise RuntimeError("Navigator 未设置，无法执行观察")
         self._step_counter += 1

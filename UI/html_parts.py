@@ -28,8 +28,9 @@ INDEX_HTML = """
       font-family: 'Inter', sans-serif;
       background-color: var(--bg-color);
       color: var(--text-primary);
-      height: 100vh;
-      overflow: hidden;
+      min-height: 100vh;
+      overflow-x: hidden;
+      overflow-y: auto;
       background-image: 
         linear-gradient(var(--grid-color) 1px, transparent 1px),
         linear-gradient(90deg, var(--grid-color) 1px, transparent 1px),
@@ -63,30 +64,32 @@ INDEX_HTML = """
     /* Layout */
     .app {
       display: grid;
-      grid-template-columns: 1fr 420px;
+      grid-template-columns: 3fr 2fr;
       grid-template-rows: 64px 1fr;
-      height: 100vh;
+      min-height: 100vh;
       gap: 20px;
       padding: 20px;
     }
 
     /* Common Card Style */
     .hud-panel {
+      position: relative;
       background: var(--card-bg);
       border: 1px solid var(--border-color);
-      position: relative;
-      backdrop-filter: blur(12px);
+      backdrop-filter: blur(10px);
+      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
     }
     
     /* Tech Corners */
     .hud-panel::before, .hud-panel::after {
-      content: "";
+      content: '';
       position: absolute;
-      width: 8px;
-      height: 8px;
+      width: 20px;
+      height: 20px;
       border: 1px solid var(--accent-color);
       transition: all 0.3s ease;
       opacity: 0.5;
+      pointer-events: none; /* 防止阻挡点击 */
     }
     .hud-panel::before { top: -1px; left: -1px; border-right: none; border-bottom: none; }
     .hud-panel::after { bottom: -1px; right: -1px; border-left: none; border-top: none; }
@@ -150,21 +153,62 @@ INDEX_HTML = """
       box-shadow: 0 0 8px var(--success-color);
     }
 
-    /* Main Content (Left) */
+    /* Main Content - 左侧摄像头+视觉分析区域 */
     .main-view {
-      display: grid;
-      grid-template-rows: 1fr auto;
-      gap: 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;  /* 紧凑间距 */
       min-height: 0;
+      overflow-y: auto;
       animation: fade-in 0.6s ease-out;
     }
+    
+    /* 主摄像头容器 */
+    .main-view .primary-cam-container {
+      flex-shrink: 0;
+    }
+    
+    /* 副摄像头横向排列 */
+    .main-view .secondary-cams-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 6px;
+      flex-shrink: 0;
+    }
+    
+    .main-view .secondary-cams-row .sub-cam {
+      min-height: 120px;
+      max-height: 160px;
+    }
+    
+    /* VLM和SAM横向排列 */
+    .main-view .vision-analysis-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 6px;
+      flex-shrink: 0;
+    }
+    
+    .main-view .vision-analysis-row .card {
+      padding: 10px;
+    }
+    
+    .main-view .vision-analysis-row .vlm-preview {
+      min-height: 120px;
+    }
+    
+    /* 底部：Telemetry */
+    .main-view .telemetry-bar {
+      flex-shrink: 0;
+    }
 
-    .camera-stage {
+    .camera-stage, .primary-cam-container {
       display: flex;
       flex-direction: column;
       border: 1px solid var(--border-color);
       background: #000;
       position: relative;
+      height: fit-content;
     }
     
     /* Scanline Effect */
@@ -182,13 +226,14 @@ INDEX_HTML = """
     }
 
     .primary-cam {
-      flex: 1;
       position: relative;
       background: #020202;
       display: flex;
       align-items: center;
       justify-content: center;
       overflow: hidden;
+      aspect-ratio: 4 / 3;  /* 摄像头比例 */
+      max-height: 480px;
     }
     
     .primary-cam img {
@@ -208,12 +253,24 @@ INDEX_HTML = """
     }
 
     .secondary-cams {
-      height: 240px; /* Increased height */
+      height: 160px;
       display: grid;
       grid-template-columns: 1fr 1fr;
       gap: 2px;
       background: var(--border-color);
       border-top: 2px solid var(--border-color);
+    }
+    
+    .secondary-cams-row .sub-cam {
+      border: 1px solid var(--border-color);
+      background: #050505;
+      height: 100%;
+    }
+    
+    .secondary-cams-row .sub-cam {
+      border: 1px solid var(--border-color);
+      background: #050505;
+      height: 100%;
     }
 
     .sub-cam {
@@ -457,7 +514,9 @@ INDEX_HTML = """
 
     /* Logs & Lists */
     .log-container {
-      height: 200px;
+      height: 100%;
+      min-height: 300px;
+      flex: 1;
       overflow-y: auto;
       font-family: 'JetBrains Mono', monospace;
       font-size: 11px;
@@ -499,14 +558,26 @@ INDEX_HTML = """
       text-transform: uppercase;
       letter-spacing: 1px;
       clip-path: polygon(10px 0, 100% 0, 100% calc(100% - 10px), calc(100% - 10px) 100%, 0 100%, 0 10px);
+      position: relative;
+      z-index: 10; /* 确保按钮在最上层 */
+      pointer-events: auto; /* 明确允许点击 */
     }
     
     button:hover {
       background: var(--accent-color);
       color: #000;
       box-shadow: 0 0 15px var(--accent-color);
+      transform: translateY(-1px);
     }
-    button:active { transform: scale(0.98); }
+    button:active { 
+      transform: scale(0.98) translateY(0); 
+      box-shadow: 0 0 8px var(--accent-color);
+    }
+    button:disabled {
+      opacity: 0.3;
+      cursor: not-allowed;
+      pointer-events: none;
+    }
 
     /* Toast Notification */
     .toast-container {
@@ -540,9 +611,44 @@ INDEX_HTML = """
     ::-webkit-scrollbar-thumb:hover { background: var(--accent-color); }
 
     /* Utility */
-    .row { display: flex; gap: 12px; align-items: center; }
+    .row { display: flex; gap: 12px; align-items: center; position: relative; z-index: 1; }
     .flex-1 { flex: 1; }
     .text-small { font-size: 10px; color: var(--text-secondary); font-family: 'JetBrains Mono', monospace; }
+    
+    /* Checkbox 样式改进 */
+    input[type="checkbox"] {
+      appearance: none;
+      width: 14px;
+      height: 14px;
+      border: 1px solid var(--accent-color);
+      background: rgba(0, 243, 255, 0.05);
+      cursor: pointer;
+      position: relative;
+      transition: all 0.2s;
+      z-index: 10;
+    }
+    input[type="checkbox"]:hover {
+      background: rgba(0, 243, 255, 0.15);
+      box-shadow: 0 0 8px rgba(0, 243, 255, 0.3);
+    }
+    input[type="checkbox"]:checked {
+      background: var(--accent-color);
+    }
+    input[type="checkbox"]:checked::after {
+      content: '✓';
+      position: absolute;
+      top: -2px;
+      left: 1px;
+      font-size: 12px;
+      color: #000;
+      font-weight: bold;
+    }
+    label {
+      cursor: pointer;
+      user-select: none;
+      position: relative;
+      z-index: 10;
+    }
     
     /* Plan Steps */
     .plan-node {
@@ -589,10 +695,10 @@ INDEX_HTML = """
       </div>
     </header>
 
-    <!-- Left Column: Vision & Telemetry -->
+    <!-- Main Content Area - 左侧：摄像头区域 -->
     <div class="main-view">
-      <div class="camera-stage">
-        <!-- Primary Camera (Front) -->
+      <!-- 主摄像头 (最上方) -->
+      <div class="primary-cam-container hud-panel">
         <div class="primary-cam">
           <div class="cam-label">FRONT_CAM_01</div>
           <img id="cam-front" src="/api/cam/front?ts=0" alt="front feed" />
@@ -601,42 +707,73 @@ INDEX_HTML = """
             <button onclick="capture('front')">CAPTURE FRAME</button>
           </div>
         </div>
-        
-        <!-- Secondary Cameras -->
-        <div class="secondary-cams">
-          <div class="sub-cam">
-            <div class="cam-label">LEFT_CAM</div>
-            <img id="cam-left" src="/api/cam/left?ts=0" alt="left feed" />
-            <div class="cam-actions">
-              <button onclick="capture('left')">CAP</button>
-            </div>
+      </div>
+
+      <!-- 副摄像头 (紧贴主摄像头下方，左右并排) -->
+      <div class="secondary-cams-row">
+        <div class="sub-cam hud-panel">
+          <div class="cam-label">LEFT_CAM</div>
+          <img id="cam-left" src="/api/cam/left?ts=0" alt="left feed" />
+          <div class="cam-actions">
+            <button onclick="capture('left')">CAP</button>
           </div>
-          <div class="sub-cam">
-            <div class="cam-label">RIGHT_CAM</div>
-            <img id="cam-right" src="/api/cam/right?ts=0" alt="right feed" />
-            <div class="cam-actions">
-              <button onclick="capture('right')">CAP</button>
-            </div>
+        </div>
+        <div class="sub-cam hud-panel">
+          <div class="cam-label">RIGHT_CAM</div>
+          <img id="cam-right" src="/api/cam/right?ts=0" alt="right feed" />
+          <div class="cam-actions">
+            <button onclick="capture('right')">CAP</button>
           </div>
         </div>
       </div>
 
-      <!-- Telemetry Data -->
+      <!-- VLM 和 SAM 横向排列 -->
+      <div class="vision-analysis-row">
+        <!-- VLM Analysis -->
+        <div class="card hud-panel">
+          <h3>VLM</h3>
+          <div class="vlm-preview">
+            <div id="vlm-loader" class="loading-overlay"><div class="spinner"></div></div>
+            <img id="vlm-img" src="" alt="Waiting for capture..." onload="syncCanvasSize()" />
+            <canvas id="overlay" class="overlay"></canvas>
+          </div>
+          <div id="bbox-json" class="json-box" style="max-height:60px;">Waiting...</div>
+        </div>
+
+        <!-- SAM Mask -->
+        <div class="card hud-panel">
+          <h3>SAM</h3>
+          <div class="vlm-preview">
+            <img id="sam-mask-img" src="" style="display:none;" />
+            <div id="sam-mask-placeholder" style="padding:15px; text-align:center; color:#666; font-size:11px;">
+              NO MASK
+            </div>
+          </div>
+          <div class="row" style="justify-content: space-between; margin-top:2px;">
+              <div id="sam-mask-meta" class="text-small"></div>
+              <div class="conf-bar-container" style="width: 50px;">
+                  <div id="mask-conf-bar" class="conf-bar-fill"></div>
+              </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Bottom: Telemetry Data -->
       <div class="telemetry-bar hud-panel">
         <div class="stat-item">
-          <span class="stat-label">AGV POS X</span>
+          <span class="stat-label">AGV X</span>
           <span class="stat-value"><span id="agv-x">0.00</span> m</span>
         </div>
         <div class="stat-item">
-          <span class="stat-label">AGV POS Y</span>
+          <span class="stat-label">AGV Y</span>
           <span class="stat-value"><span id="agv-y">0.00</span> m</span>
         </div>
         <div class="stat-item">
-          <span class="stat-label">HEADING (θ)</span>
+          <span class="stat-label">θ</span>
           <span class="stat-value"><span id="theta">0.00</span> rad</span>
         </div>
         <div class="stat-item">
-          <span class="stat-label">ORIENTATION</span>
+          <span class="stat-label">ORIENT</span>
           <div class="gauge-container">
             <div class="mini-gauge" title="Yaw">
               <div class="gauge-bar-bg"><div id="gauge-yaw" class="gauge-bar-fill" style="height:50%"></div></div>
@@ -655,35 +792,21 @@ INDEX_HTML = """
       </div>
     </div>
 
-    <!-- Right Column: Intelligence & Logs -->
+    <!-- Right Column: System Logs + Status -->
     <div class="sidebar">
       
-      <!-- VLM Analysis -->
-      <div class="card hud-panel">
-        <h3>Visual Intelligence (VLM)</h3>
-        <div class="vlm-preview">
-          <div id="vlm-loader" class="loading-overlay"><div class="spinner"></div></div>
-          <img id="vlm-img" src="" alt="Waiting for capture..." onload="syncCanvasSize()" />
-          <canvas id="overlay" class="overlay"></canvas>
+      <!-- System Logs (最上方) -->
+      <div class="card hud-panel system-log-panel" style="height: 500px; flex-shrink: 0;">
+        <h3>System Logs</h3>
+        <div class="row">
+            <span id="log-count-main" class="text-small flex-1">0 entries</span>
+            <label style="display:flex; align-items:center; gap:4px; font-size:10px; color:var(--text-secondary); cursor:pointer;">
+              <input type="checkbox" id="auto-scroll-logs-main" checked style="cursor:pointer;">
+              Auto
+            </label>
+            <button onclick="clearTaskLogs()" style="padding:2px 6px; font-size:10px;">CLEAR</button>
         </div>
-        <div id="bbox-json" class="json-box">Waiting for analysis...</div>
-      </div>
-
-      <!-- SAM Mask -->
-      <div class="card hud-panel">
-        <h3>Segmentation (SAM)</h3>
-        <div class="vlm-preview" style="min-height: 150px;">
-          <img id="sam-mask-img" src="" style="display:none;" />
-          <div id="sam-mask-placeholder" style="padding:20px; text-align:center; color:#666; font-size:12px;">
-            NO MASK DATA
-          </div>
-        </div>
-        <div class="row" style="justify-content: space-between; margin-top:4px;">
-            <div id="sam-mask-meta" class="text-small"></div>
-            <div class="conf-bar-container" style="width: 60px;">
-                <div id="mask-conf-bar" class="conf-bar-fill"></div>
-            </div>
-        </div>
+        <div id="task-logs-main" class="log-container" style="height: 100%; overflow-y: auto;"></div>
       </div>
 
       <!-- World Model -->
@@ -716,16 +839,6 @@ INDEX_HTML = """
             <button onclick="clearSuggestions()" style="padding:2px 6px; font-size:10px;">CLEAR</button>
         </div>
         <div id="suggestion-list" class="log-container" style="height: 100px;"></div>
-      </div>
-
-      <!-- System Logs -->
-      <div class="card hud-panel">
-        <h3>System Logs</h3>
-        <div class="row">
-            <span id="log-count" class="text-small flex-1">0 entries</span>
-            <button onclick="clearTaskLogs()" style="padding:2px 6px; font-size:10px;">CLEAR</button>
-        </div>
-        <div id="task-logs" class="log-container"></div>
       </div>
 
     </div>
@@ -922,8 +1035,9 @@ INDEX_HTML = """
   }
   
   function renderTaskLogs(logs) {
-    const container = document.getElementById('task-logs');
-    const countEl = document.getElementById('log-count');
+    const container = document.getElementById('task-logs-main');
+    const countEl = document.getElementById('log-count-main');
+    const autoScrollCheckbox = document.getElementById('auto-scroll-logs-main');
     if(!container) return;
     
     if(countEl) countEl.textContent = logs.length + ' entries';
@@ -940,7 +1054,8 @@ INDEX_HTML = """
         `;
         container.appendChild(entry);
       }
-      if (container.scrollHeight - container.scrollTop - container.clientHeight < 50) {
+      // Auto-scroll to bottom if checkbox is checked
+      if (autoScrollCheckbox && autoScrollCheckbox.checked) {
         container.scrollTop = container.scrollHeight;
       }
       lastLogCount = logs.length;
@@ -952,7 +1067,7 @@ INDEX_HTML = """
   
   async function clearTaskLogs() {
     await fetch('/api/task/logs', { method: 'DELETE' });
-    document.getElementById('task-logs').innerHTML = '';
+    document.getElementById('task-logs-main').innerHTML = '';
     lastLogCount = 0;
     showToast('Logs cleared');
   }
