@@ -170,7 +170,7 @@ ros2 service call /jaka_driver/linear_move jaka_msgs/srv/Move "{
 }"
 
 ros2 service call /jaka_driver/linear_move jaka_msgs/srv/Move "{
-  pose: [200, -227.0, 363.0,0.0, 0.0, -0.785],
+  pose: [-200,-227.0,250.0,0.0,0.0,-0.785],
   mvvelo: 50.0,
   mvacc: 50.0,
   has_ref: false,

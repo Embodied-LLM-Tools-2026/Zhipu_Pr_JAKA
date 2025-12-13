@@ -128,9 +128,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         type=float,
         help="Optional joint reference (rad). If omitted the script samples /jaka_driver/joint_position once.",
     )
-    parser.add_argument("--speed", type=float, default=5.0, help="Joint move velocity (rad/s).")
-    parser.add_argument("--acc", type=float, default=5.0, help="Joint move acceleration (rad/s^2).")
-    parser.add_argument("--joint-state-timeout", type=float, default=3.0, help="Seconds to wait for joint_state.")
+    parser.add_argument("--speed", type=float, default=1.0, help="Joint move velocity (rad/s).")
+    parser.add_argument("--acc", type=float, default=1.0, help="Joint move acceleration (rad/s^2).")
+    parser.add_argument("--joint-state-timeout", type=float, default=5.0, help="Seconds to wait for joint_state.")
     parser.add_argument("--service-timeout", type=float, default=10.0, help="Seconds to wait for service responses.")
     args = parser.parse_args(argv)
     args.pose = _parse_pose(args.pose)

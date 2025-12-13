@@ -20,6 +20,17 @@ import requests
 import base64
 from zhipuai import ZhipuAI
 
+try:
+    import dashscope
+    from dashscope import MultiModalConversation
+    DASHSCOPE_AVAILABLE = True
+except ImportError:
+    DASHSCOPE_AVAILABLE = False
+    dashscope = None
+    MultiModalConversation = None
+
+from tools.vision.upload_image import upload_file_and_get_url
+
 from tools.logging.task_logger import log_error, log_info, log_success, log_warning  # type: ignore
 from tools.ui.ui_state_bridge import UIStateBridge  # type: ignore
 
@@ -285,11 +296,15 @@ class FunctionCallToolset:
         return {"ok": bool(state), "state": state}
 
     def _fn_navigate_to_pose(self, x: float, y: float, theta: float) -> Dict[str, Any]:
+        obs_result = self._ensure_target_observation()
         success = self.api.navigation.goto_pose(x, y, theta)
-        return {
+        response = {
             "ok": success,
             "pose": {"x": x, "y": y, "theta": theta},
         }
+        if obs_result and "observation" in obs_result:
+            response["observation"] = obs_result["observation"]
+        return response
 
     def _fn_move_tcp_linear(
         self,
@@ -297,14 +312,24 @@ class FunctionCallToolset:
         speed: Optional[float] = None,
         acc: Optional[float] = None,
     ) -> Dict[str, Any]:
-        return self.api.manipulation.move_tcp_linear(pose, speed=speed, acc=acc)
+        obs_result = self._ensure_target_observation(phase=ObservationPhase.APPROACH)
+        result = self.api.manipulation.move_tcp_linear(pose, speed=speed, acc=acc)
+        if obs_result and "observation" in obs_result and isinstance(result, dict):
+            result = dict(result)
+            result["observation"] = obs_result["observation"]
+        return result
 
     def _fn_set_gripper(
         self,
         position: Optional[float] = None,
         force: Optional[float] = None,
     ) -> Dict[str, Any]:
-        return self.api.manipulation.set_gripper(position=position, force=force)
+        obs_result = self._ensure_target_observation()
+        result = self.api.manipulation.set_gripper(position=position, force=force)
+        if obs_result and "observation" in obs_result and isinstance(result, dict):
+            result = dict(result)
+            result["observation"] = obs_result["observation"]
+        return result
 
     def _fn_execute_skill(self, name: str, args: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         return self._call_skill(name, args or {})
@@ -357,13 +382,38 @@ class FunctionCallToolset:
         }
 
     def _call_skill(self, name: str, args: Dict[str, Any]) -> Dict[str, Any]:
+        # Always refresh observation before executing a skill to keep state current.
+        obs_result = self._ensure_target_observation()
         result = self.processor.invoke_skill(name, args)
-        return {
+        response = {
             "ok": result.status == "success",
             "status": result.status,
             "reason": result.reason,
             "evidence": result.evidence,
         }
+        if obs_result and "observation" in obs_result:
+            response["observation"] = obs_result["observation"]
+        return response
+
+    def _ensure_target_observation(
+        self, phase: ObservationPhase = ObservationPhase.SEARCH
+    ) -> Optional[Dict[str, Any]]:
+        """Refresh VLM observation for the current goal, if available."""
+        target = self.processor.world.goal
+        if not target:
+            return None
+        try:
+            observation, payload = self.api.perception.observe(
+                target, phase=phase, force_vlm=False, max_steps=1
+            )
+            self.processor.update_observation(observation, reset_extra=False)
+            return {
+                "observation": self._serialize_observation(observation),
+                "vlm_payload": payload,
+            }
+        except Exception as exc:
+            log_warning(f"[FunctionCall] 自动观测目标 {target} 失败: {exc}")
+            return None
 
 
 class FunctionCallTaskProcessor:
@@ -399,23 +449,51 @@ class FunctionCallTaskProcessor:
         self.tools = FunctionCallToolset(self.api, self)
         self.max_rounds = int(os.getenv("FUNCTION_CALL_MAX_ROUNDS", "16"))
         self.temperature = float(os.getenv("FUNCTION_CALL_TEMPERATURE", "0.1"))
-        self.model = os.getenv("FUNCTION_CALL_MODEL", "glm-4.5v")
-        self.api_key = (
-            os.getenv("FUNCTION_CALL_API_KEY")
-            or os.getenv("ZHIPUAI_API_KEY")
-            or getattr(self.planner, "llm_api_key", None)
-        )
-        if not self.api_key:
-            raise RuntimeError("FunctionCallTaskProcessor 需要配置 FUNCTION_CALL_API_KEY 或 ZHIPUAI_API_KEY")
+        self._finalize_calls = 0
         
-        self.client = ZhipuAI(api_key=self.api_key)
+        # 模型提供商选择: "zhipu" (GLM-4.5v) 或 "dashscope" (Qwen3-VL)
+        self.provider = os.getenv("FUNCTION_CALL_PROVIDER", "zhipu").lower()
+        
+        if self.provider == "dashscope":
+            # Qwen3-VL via DashScope
+            self.model = os.getenv("FUNCTION_CALL_MODEL", "qwen-vl-max")
+            self.api_key = (
+                os.getenv("FUNCTION_CALL_API_KEY")
+                or os.getenv("DASHSCOPE_API_KEY")
+                or os.getenv("Zhipu_real_demo_API_KEY")  # 复用 VLM 的 key
+            )
+            if not self.api_key:
+                raise RuntimeError("FunctionCallTaskProcessor (dashscope) 需要配置 DASHSCOPE_API_KEY")
+            if not DASHSCOPE_AVAILABLE:
+                raise RuntimeError("dashscope 库未安装，请运行: pip install dashscope")
+            dashscope.api_key = self.api_key
+            self.client = None  # dashscope 不需要 client 对象
+            log_info(f"[FunctionCall] 使用 DashScope 模型: {self.model}")
+        else:
+            # GLM-4.5v via ZhipuAI (default)
+            self.provider = "zhipu"
+            self.model = os.getenv("FUNCTION_CALL_MODEL", "glm-4.5v")
+            self.api_key = (
+                os.getenv("FUNCTION_CALL_API_KEY")
+                or os.getenv("ZHIPUAI_API_KEY")
+                or getattr(self.planner, "llm_api_key", None)
+            )
+            if not self.api_key:
+                raise RuntimeError("FunctionCallTaskProcessor (zhipu) 需要配置 ZHIPUAI_API_KEY")
+            self.client = ZhipuAI(api_key=self.api_key)
+            log_info(f"[FunctionCall] 使用 ZhipuAI 模型: {self.model}")
         
         self.system_prompt = os.getenv(
             "FUNCTION_CALL_SYSTEM_PROMPT",
             (
-                "You are a robotics planner. Always use the provided tools to gather observations "
-                "or actuate the robot. Never fabricate execution results. Once the goal is achieved "
-                "or impossible, respond with a JSON object describing status, summary and next steps."
+                "You are a robotics planner controlling a real robot. "
+                "CRITICAL RULES:\n"
+                "1. You MUST use tool_calls (function calls) to execute any action. NEVER describe actions in text.\n"
+                "2. Do NOT say 'I will call predict_grasp_point' - instead, actually call the function.\n"
+                "3. Do NOT include function names in your text response. Use the tools directly.\n"
+                "4. Only respond with a final JSON summary AFTER the grasp is complete or truly impossible.\n"
+                "5. Never fabricate execution results - always call the actual function and wait for results.\n"
+                "If you need to predict a grasp point, call predict_grasp_point(). If you need to execute grasp, call execute_grasp()."
             ),
         )
         self._latest_observation: Optional[Any] = None
@@ -435,6 +513,7 @@ class FunctionCallTaskProcessor:
         self._failure_count = 0
 
     def _get_current_image_base64(self, cam_name: str = "front") -> Optional[str]:
+        """获取当前相机图像，根据 provider 返回不同格式"""
         try:
             # Capture image from local API
             resp = requests.get(
@@ -450,10 +529,26 @@ class FunctionCallTaskProcessor:
             if not image_path or not os.path.exists(image_path):
                 log_warning(f"Image path invalid: {image_path}")
                 return None
-                
-            with open(image_path, "rb") as img_file:
-                img_base = base64.b64encode(img_file.read()).decode("utf-8")
-            return img_base
+            
+            # 根据 provider 返回不同格式
+            if self.provider == "dashscope":
+                # DashScope 需要上传图像到 OSS 获取 oss:// URL
+                try:
+                    oss_url = upload_file_and_get_url(
+                        api_key=self.api_key,
+                        model_name=self.model,
+                        file_path=image_path,
+                    )
+                    log_info(f"[FunctionCall] 图像已上传到 OSS: {oss_url[:50]}...")
+                    return oss_url
+                except Exception as e:
+                    log_error(f"上传图像到 OSS 失败: {e}")
+                    return None
+            else:
+                # ZhipuAI 使用 base64 格式
+                with open(image_path, "rb") as img_file:
+                    img_base = base64.b64encode(img_file.read()).decode("utf-8")
+                return f"data:image/jpeg;base64,{img_base}"
         except Exception as e:
             log_error(f"Error getting camera image: {e}")
             return None
@@ -548,6 +643,13 @@ class FunctionCallTaskProcessor:
 
     # ------------------------------------------------------------------
     def _call_llm(self, messages: List[Dict[str, Any]]) -> Dict[str, Any]:
+        if self.provider == "dashscope":
+            return self._call_llm_dashscope(messages)
+        else:
+            return self._call_llm_zhipu(messages)
+    
+    def _call_llm_zhipu(self, messages: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """调用 ZhipuAI GLM-4.5v"""
         try:
             response = self.client.chat.completions.create(
                 model=self.model,
@@ -558,8 +660,117 @@ class FunctionCallTaskProcessor:
             )
             return response.choices[0].message.model_dump()
         except Exception as e:
-            log_error(f"LLM call failed: {e}")
+            log_error(f"ZhipuAI LLM call failed: {e}")
             raise RuntimeError(f"function_call_llm_failed: {e}")
+    
+    def _call_llm_dashscope(self, messages: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """调用 DashScope Qwen3-VL (支持 function call)"""
+        try:
+            if not MultiModalConversation:
+                raise RuntimeError("dashscope.MultiModalConversation 未安装")
+            # 转换消息格式为 DashScope 格式
+            ds_messages = self._convert_messages_for_dashscope(messages)
+            
+            # 构建 tools 参数
+            tools = [{"type": "function", "function": spec} for spec in self.tools.specs()]
+            
+            response = MultiModalConversation.call(
+                model=self.model,
+                messages=ds_messages,
+                tools=tools,
+                result_format="message",
+                temperature=self.temperature,
+            )
+            
+            if response.status_code != 200:
+                raise RuntimeError(f"DashScope API error: {response.code} - {response.message}")
+            
+            # 解析响应
+            output = response.output
+            choice = output.choices[0] if output.choices else None
+            if not choice:
+                raise RuntimeError("DashScope 返回空响应")
+            
+            message = choice.message
+            result = {
+                "role": message.role,
+                "content": message.content or "",
+            }
+            
+            # 处理 tool_calls
+            if hasattr(message, "tool_calls") and message.tool_calls:
+                result["tool_calls"] = []
+                for tc in message.tool_calls:
+                    result["tool_calls"].append({
+                        "id": tc.get("id") or tc.get("function", {}).get("name", "call_0"),
+                        "type": "function",
+                        "function": {
+                            "name": tc.get("function", {}).get("name"),
+                            "arguments": tc.get("function", {}).get("arguments", "{}"),
+                        }
+                    })
+            
+            return result
+        except Exception as e:
+            log_error(f"DashScope LLM call failed: {e}")
+            raise RuntimeError(f"function_call_llm_failed: {e}")
+    
+    def _convert_messages_for_dashscope(self, messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """将消息格式转换为 DashScope 兼容格式"""
+        ds_messages = []
+        for msg in messages:
+            role = msg.get("role", "user")
+            content = msg.get("content")
+            
+            # 处理 tool 消息
+            if role == "tool":
+                ds_messages.append({
+                    "role": "tool",
+                    "content": content if isinstance(content, str) else json.dumps(content, ensure_ascii=False),
+                    "tool_call_id": msg.get("tool_call_id", ""),
+                })
+                continue
+            
+            # 处理 assistant 消息 (可能包含 tool_calls)
+            if role == "assistant":
+                ds_msg = {"role": "assistant", "content": msg.get("content") or ""}
+                if "tool_calls" in msg and msg["tool_calls"]:
+                    ds_msg["tool_calls"] = msg["tool_calls"]
+                ds_messages.append(ds_msg)
+                continue
+            
+            # 处理 user/system 消息 (可能包含图像)
+            if isinstance(content, list):
+                # 多模态内容: DashScope 需要 {"image": "..."} / {"text": "..."} 形式
+                ds_content = []
+                for part in content:
+                    if not isinstance(part, dict):
+                        continue
+                    part_type = part.get("type")
+                    if part_type == "text" or ("text" in part and part_type is None):
+                        ds_content.append({"text": part.get("text", "")})
+                        continue
+                    # 兼容 OpenAI 风格的 image_url 结构
+                    if part_type == "image_url" or "image_url" in part or "image" in part:
+                        image_url = ""
+                        if part_type == "image_url" or "image_url" in part:
+                            image_field = part.get("image_url", "")
+                            if isinstance(image_field, dict):
+                                image_url = image_field.get("url", "")
+                            elif isinstance(image_field, str):
+                                image_url = image_field
+                        else:
+                            image_url = part.get("image", "")
+                        # DashScope 仅接受 oss:// 或 http(s)://
+                        if image_url.startswith(("oss://", "http://", "https://")):
+                            ds_content.append({"image": image_url})
+                        else:
+                            log_warning(f"[FunctionCall] DashScope 不支持此图像格式，跳过")
+                ds_messages.append({"role": role, "content": ds_content or [{"text": ""}]})
+            else:
+                ds_messages.append({"role": role, "content": content or ""})
+        
+        return ds_messages
 
     def _initial_messages(self, goal: str) -> List[Dict[str, Any]]:
         snapshot = self.world.snapshot()
@@ -620,6 +831,7 @@ class FunctionCallTaskProcessor:
         self.update_observation(None)
         self._publish_world_snapshot()
         self._failure_count = 0
+        self._finalize_calls = 0
 
         messages = self._initial_messages(target_name)
         trace: List[Dict[str, Any]] = []
@@ -639,7 +851,12 @@ class FunctionCallTaskProcessor:
                     
                     args = self._parse_arguments(raw_args)
                     start_ts = time.time()
+                    if fn_name == "finalize_target_pose":
+                        self._finalize_calls += 1
                     result = self.tools.dispatch(fn_name, args)
+                    if fn_name == "finalize_target_pose" and isinstance(result, dict):
+                        result = dict(result)
+                        result["finalize_attempt"] = self._finalize_calls
                     elapsed = time.time() - start_ts
                     
                     trace.append(
@@ -687,6 +904,16 @@ class FunctionCallTaskProcessor:
                         }
                     )
                     
+                    # If finalize_target_pose has been called many times, inject a steering hint.
+                    if fn_name == "finalize_target_pose" and self._finalize_calls >= 3:
+                        messages.append({
+                            "role": "user",
+                            "content": (
+                                "You have already aligned (finalize_target_pose) 3+ times. "
+                                "Stop repeating finalize_target_pose; proceed to predict_grasp_point then execute_grasp."
+                            ),
+                        })
+                    
                     if result.get("terminate"):
                         final_result = result
                         break
@@ -715,12 +942,49 @@ class FunctionCallTaskProcessor:
                 
                 continue
 
-            # No tool call -> final response
+            # No tool call -> check if this is a valid final response or model hallucination
             content = message.get("content") or ""
+            
+            # Detect invalid/hallucinated responses (model outputting garbage instead of function calls)
+            invalid_patterns = [
+                "<|begin_of_box|>",
+                "<|end_of_box|>",
+                "```html",
+                "```json",  # code block instead of function call
+                "observe_scene\n",  # function name in text instead of call
+                "predict_grasp_point\n",
+                "execute_grasp\n",
+                "finalize_target_pose\n",
+            ]
+            is_invalid_response = any(pat in content for pat in invalid_patterns)
+            
+            # Also check: if we haven't done key steps yet, this shouldn't be a final response
+            has_grasp_result = any(
+                t.get("function") in ("execute_grasp", "close_gripper") and t.get("result", {}).get("ok")
+                for t in trace
+            )
+            
+            # If response looks invalid or task isn't done, prompt model to retry with function call
+            if is_invalid_response or (not has_grasp_result and "status" not in content.lower()):
+                log_warning(f"[FunctionCall] 模型返回了无效响应，要求重试: {content[:100]}...")
+                messages.append({
+                    "role": "user",
+                    "content": (
+                        "ERROR: Your response was invalid. You MUST use function calls (tool_calls) to execute actions. "
+                        "Do NOT output text descriptions of actions. "
+                        "Please call the appropriate function now. What is the next function you need to call?"
+                    )
+                })
+                continue
+            
             try:
                 final_result = json.loads(content)
             except Exception:
-                final_result = {"status": "success", "summary": content}
+                # If can't parse as JSON and no grasp completed, treat as failure
+                if not has_grasp_result:
+                    final_result = {"status": "failure", "summary": f"Invalid model response: {content[:200]}"}
+                else:
+                    final_result = {"status": "success", "summary": content}
             self._record_timeline_event(
                 stage="llm_response",
                 node="final_response",
@@ -759,16 +1023,40 @@ class FunctionCallTaskProcessor:
         text = textwrap.dedent(
             """
             Workflow guidance:
-            1. Always start with observe_scene(target, force_vlm=true).
-            2. If the target is not visible, use rotate_scan/search_area before observing again.
-            3. When the estimated range is >2m, call approach_far repeatedly until close enough.
-            4. Run finalize_target_pose (this moves the robot base).
-            5. IMPORTANT: After finalize_target_pose, you MUST call observe_scene(target, force_vlm=true) again because the robot has moved and the camera view has changed.
-            6. Then run predict_grasp_point → execute_grasp → close_gripper.
-            7. To hand the item to a user: navigate as needed, then handover_item → open_gripper.
-            8. On any failure, call recover(distance≈0.3) and re-observe before retrying.
-            9. For free to execute observe_scene at any time when you think the situation has changed.
-            Provide a final JSON summary {"status": "...", "summary": "..."} once goal is achieved or impossible.
+
+            General grounding rules:
+            1) Always start with observe_scene(target, force_vlm=true).
+            2) Any time the robot base moves (approach_far / finalize_target_pose / recover / navigation), you MUST call
+            observe_scene(target, force_vlm=true) again before planning the next grasp.
+
+            Locate:
+            3) If the target is not visible, use rotate_scan and/or search_area, then observe_scene again. Repeat until visible
+            or until scan attempts exceed a reasonable limit.
+
+            Approach:
+            4) When estimated_range > 2m, call approach_far, then observe_scene again; repeat until within range or limit reached.
+
+            Align + Grasp (default: finalize once, then try grasp):
+            5) Run finalize_target_pose ONCE (default behavior).
+            6) After finalize_target_pose, MUST call observe_scene(target, force_vlm=true) again (camera view changed).
+            7) Then run predict_grasp_point → execute_grasp → close_gripper.
+
+            Failure handling (only on grasp execution failure):
+            8) If execute_grasp OR close_gripper fails:
+            - call recover(distance≈0.3)
+            - observe_scene(target, force_vlm=true)
+            - run finalize_target_pose ONCE as correction
+            - observe_scene(target, force_vlm=true)
+            - retry predict_grasp_point → execute_grasp → close_gripper
+            - repeat this failure-retry loop up to grasp_attempts_max times (e.g., 3 total grasp attempts).
+            If still failing after grasp_attempts_max, stop and return impossible.
+
+            Handover:
+            9) To hand the item to a user: navigate as needed, then handover_item → open_gripper.
+            If navigation moved the base, re-observe before the handover step when appropriate.
+
+            You may call observe_scene at any time when you think the situation has changed.
+            Provide a final JSON summary {"status": "success|impossible", "summary": "..."} once done.
             """
         ).strip()
         return text
@@ -784,10 +1072,8 @@ class FunctionCallTaskProcessor:
             - finalize_target_pose(): align the base using depth localization before grasping.
             - predict_grasp_point(): run ZeroGrasp; stores grasp pose inside runtime state.
             - execute_grasp(): execute the grasp pose computed previously.
-            - move_tcp_linear([x_mm,y_mm,z_mm,rx,ry,rz], speed, acc): direct TCP motion in robot base frame.
-            - set_gripper(position 1-100, force 20-320) / open_gripper() / close_gripper().
+            - open_gripper() / close_gripper().
             - handover_item(item): extend the item to a human after grasping.
-            - recover(mode='backoff', distance=0.3): back off the base.
             - get_object_state(object_id): returns the last known world model entry for that object.
             Always re-run observe_scene whenever the situation changes or after a recover.
             """

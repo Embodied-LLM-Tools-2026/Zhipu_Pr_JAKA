@@ -611,19 +611,19 @@ def _call_ros2_linear_move(
         print(f"rot_vec: [{rot_vec[0]:.3f}, {rot_vec[1]:.3f}, {rot_vec[2]:.3f}]")
         print(f"euler[{order.upper()}] (rad): roll={roll:.3f}, pitch={pitch:.3f}, yaw={yaw:.3f}")
 
-        # result = subprocess.run(
-        #     ros2_cmd,
-        #     capture_output=True,
-        #     text=True,
-        #     timeout=10,
-        # )
+        result = subprocess.run(
+            ros2_cmd,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
 
-        # if result.returncode == 0:
-        #     print("[ROS2] ✓ 服务调用成功")
-        #     if result.stdout:
-        #         print(f"  输出: {result.stdout[:200]}")
-        #     return True
-        # print(f"[ROS2] ✗ 服务调用失败 (返回码: {result.returncode})")
+        if result.returncode == 0:
+            print("[ROS2] ✓ 服务调用成功")
+            if result.stdout:
+                print(f"  输出: {result.stdout[:200]}")
+            return True
+        print(f"[ROS2] ✗ 服务调用失败 (返回码: {result.returncode})")
         if result.stderr:
             print(f"  错误: {result.stderr[:200]}")
         return False

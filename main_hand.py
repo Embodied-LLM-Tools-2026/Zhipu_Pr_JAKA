@@ -1290,4 +1290,4 @@ def main():
 
 if __name__ == "__main__":
     main()
-# export TASK_PROCESSOR_MODE=function_call && python3 ./main_hand.py
+# export FUNCTION_CALL_PROVIDER=dashscope && export FUNCTION_CALL_MODEL=qwen-vl-max && export TASK_PROCESSOR_MODE=function_call && python3 ./main_hand.py

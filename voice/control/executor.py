@@ -275,7 +275,7 @@ class SkillExecutor:
         self._gripper = gripper_controller
         self._gripper_port = os.getenv("GRIPPER_SERIAL_PORT") or None
         self.depth_localizer = TargetLocalizer()
-        self.target_distance = 0.25
+        self.target_distance = 0.3
         self.moved_to_center = False
         self._finalize_pose_ready = False
 
@@ -291,6 +291,8 @@ class SkillExecutor:
         )
         self.tool_rotation_mode = os.getenv("ZEROGRASP_TOOL_ROT_MODE", "local")
         self.tcp_backoff_mm = float(os.getenv("ZEROGRASP_TCP_BACKOFF_MM", f"{DEFAULT_TCP_BACKOFF_MM}"))
+        # Optional x-axis shrink towards 0 to bias end-effector 5cm closer to origin
+        self.tcp_shrink_x_mm = float(os.getenv("ZEROGRASP_TCP_X_SHRINK_MM", "50.0"))
         self._arm_client: Optional[_ArmIKClient] = None
         self._joint_state_timeout = float(os.getenv("JAKA_JOINT_STATE_TIMEOUT", "3.0"))
         self._arm_service_timeout = float(os.getenv("JAKA_SERVICE_TIMEOUT", "10.0"))
@@ -697,6 +699,15 @@ class SkillExecutor:
             f"🔧 [_prepare_robot_pose_from_grasp] 后退后TCP位置: "
             f"x={tcp_position[0]:.1f}, y={tcp_position[1]:.1f}, z={tcp_position[2]:.1f} mm"
         )
+        if self.tcp_shrink_x_mm > 0:
+            x_before = float(tcp_position[0])
+            if abs(x_before) > 1e-6:
+                delta = min(abs(x_before), self.tcp_shrink_x_mm)
+                tcp_position[0] = x_before - math.copysign(delta, x_before)
+                log_info(
+                    f"🔧 [_prepare_robot_pose_from_grasp] TCP x轴向0收缩 {delta:.1f}mm: "
+                    f"{x_before:.1f} -> {tcp_position[0]:.1f}"
+                )
         rotation_matrix = _axes_to_rotation_matrix(axes_robot)
         rotation_matrix_cmd = _apply_tool_rotation_offset(
             rotation_matrix,
