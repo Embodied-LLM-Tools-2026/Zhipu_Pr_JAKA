@@ -31,6 +31,10 @@ torch
 torchvision
 torchaudio
 
+# 硬件控制依赖
+pymodbus==2.5.3
+pyserial
+
 # 科学计算依赖
 scipy==1.11.4
 matplotlib==3.8.4
@@ -91,4 +95,4 @@ ultralytics==8.3.170
 ultralytics-thop==2.0.14
 urllib3
 zipp
-websockets
+websockets>=11.0
