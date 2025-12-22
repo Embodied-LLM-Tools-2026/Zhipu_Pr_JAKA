@@ -18,6 +18,9 @@ __all__ = [
     "PlanContextEntry",
     "ExecutionTurn",
     "ObservationPhase",
+    "RecoveryManager",
+    "RecoveryContext",
+    "RecoveryDecision",
 ]
 
 _LAZY_IMPORTS: Dict[str, str] = {
@@ -33,6 +36,9 @@ _LAZY_IMPORTS: Dict[str, str] = {
     "PlanContextEntry": "voice.control.task_structures",
     "ExecutionTurn": "voice.control.task_structures",
     "ObservationPhase": "voice.control.task_structures",
+    "RecoveryManager": "voice.control.recovery_manager",
+    "RecoveryContext": "voice.control.recovery_manager",
+    "RecoveryDecision": "voice.control.recovery_manager",
 }
 
 

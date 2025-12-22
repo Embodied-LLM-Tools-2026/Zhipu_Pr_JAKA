@@ -1,0 +1,18 @@
+\begin{tabular}{llllll}
+\textbf{Skill} & \textbf{Preconditions} & \textbf{Constraints} & \textbf{Post-Verifier} & \textbf{Failure Codes} & \textbf{Recovery} \\ \hline
+approach\_far & TODO & TODO & verify\_target\_visible & infra.navigator\_unavailable, perception.no\_observation & L2, — \\
+close\_gripper & TODO & TODO & — & infra.gripper\_unavailable & L3 \\
+execute\_grasp & TODO & TODO & verify\_grasp\_success & manip.ik\_fail, manip.grasp\_fail, contract.verification\_failed & L1, L2, — \\
+finalize\_target\_pose & TODO & TODO & verify\_pose\_ready & perception.depth\_localization\_failed, nav.nav\_blocked & L1, — \\
+handover\_item & TODO & TODO & — & TODO & — \\
+navigate\_area & TODO & TODO & — & nav.nav\_blocked, nav.missing\_target & L1, — \\
+open\_gripper & TODO & TODO & — & infra.gripper\_unavailable & L3 \\
+pick & TODO & TODO & — & TODO & — \\
+place & TODO & TODO & — & TODO & — \\
+predict\_grasp\_point & TODO & TODO & — & manip.zerograsp\_failed, manip.ik\_fail & L1, — \\
+recover & TODO & TODO & — & unknown & — \\
+return\_home & TODO & TODO & — & TODO & — \\
+rotate\_scan & TODO & TODO & — & nav.rotate\_failed & L1 \\
+search\_area & TODO & TODO & verify\_target\_visible & perception.no\_observation, nav.rotate\_failed & L1, L2 \\
+vla\_grasp\_finish & TODO & TODO & verify\_grasp\_success & contract.vla\_no\_effect, contract.vla\_policy\_oob, contract.verification\_failed & L2, — \\
+\end{tabular}

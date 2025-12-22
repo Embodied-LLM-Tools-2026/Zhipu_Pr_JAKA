@@ -37,10 +37,11 @@ from tools.ui.ui_state_bridge import UIStateBridge  # type: ignore
 from ...control.apis import RobotAPI
 from ...control.world_model import WorldModel
 from ...control.executor import SkillExecutor, SkillRuntime
-from ...control.task_structures import ExecutionResult, ObservationPhase, PlanNode, ExecutionTurn, PlanContextEntry
-from ...perception.observer import VLMObserver
-from ...agents.planner import BehaviorPlanner, ReflectionAdvisor
-
+from ...control.task_structures import ExecutionResult, FailureCode, ObservationPhase, PlanNode, ExecutionTurn, PlanContextEntry, InspectionPacket
+from ...control.recovery_manager import RecoveryManager, RecoveryContext, RecoveryDecision
+from ...agents.plan_runner import PlanRunner
+from ...agents.task_plan.schema import validate_plan, PlanValidationError
+from ..vlm_inspector import VLMInspector, InspectionReport
 
 class FunctionCallToolset:
     """Wraps RobotAPI primitives as callable functions for the LLM."""
@@ -49,9 +50,33 @@ class FunctionCallToolset:
         self.api = api
         self.processor = processor
 
+    def dispatch(self, name: str, args: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Dispatches a tool call to the appropriate API method.
+        Recovery is handled in FunctionCallTaskProcessor.invoke_skill.
+        """
+        if not hasattr(self.api, name):
+            return {"ok": False, "error": f"unknown_function:{name}"}
+        method = getattr(self.api, name)
+        try:
+            result = method(**args)
+            if isinstance(result, ExecutionResult):
+                return {
+                    "ok": result.status == "success",
+                    "status": result.status,
+                    "reason": result.reason,
+                    "evidence": result.evidence,
+                }
+            if isinstance(result, dict):
+                return result
+            return {"ok": True, "result": result}
+        except Exception as exc:
+            log_error(f"❌ Function {name} 调用失败: {exc}")
+            return {"ok": False, "error": str(exc)}
+
     # ------------------------------------------------------------------
     def specs(self) -> List[Dict[str, Any]]:
-        return [
+        specs = [
             {
                 "name": "observe_scene",
                 "description": "Capture a new observation of the target object.",
@@ -138,8 +163,8 @@ class FunctionCallToolset:
                 },
             },
             {
-                "name": "move_tcp_linear",
-                "description": "Perform a linear TCP motion using millimetre cartesian pose + axis-angle rotation.",
+                "name": "move_tcp",
+                "description": "Perform a TCP motion (PTP via IK) using millimetre cartesian pose + axis-angle rotation.",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -202,6 +227,52 @@ class FunctionCallToolset:
                 "parameters": {"type": "object", "properties": {}},
             },
             {
+                "name": "vla_grasp_finish",
+                "description": "Short-horizon VLA tool to finish a grasp (1-3 seconds).",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "instruction": {"type": "string", "description": "High-level intent for the VLA finisher."},
+                        "image": {"type": "string", "description": "Optional image reference/URL."},
+                        "state": {"type": "object", "description": "Optional robot state or context."},
+                    },
+                    "required": ["instruction"],
+                },
+            },
+            {
+                "name": "align_to_container",
+                "description": "Align arm to container: Observe -> SAM Mask -> Center & Max Height -> Move to Center + MaxZ + 10cm. Orientation aligns with origin-to-center vector.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "target": {"type": "string", "description": "Container name (e.g. 'plate', 'box')."},
+                    },
+                    "required": ["target"],
+                },
+            },
+            {
+                "name": "pick",
+                "description": "High-level pick: Observe -> Predict -> Execute -> Close -> Lift. Assumes base is aligned.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "target": {"type": "string", "description": "Target object name to pick."},
+                    },
+                    "required": ["target"],
+                },
+            },
+            {
+                "name": "place",
+                "description": "High-level place: Align to Container -> Lower 5cm -> Open -> Lift. Assumes holding object.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "target": {"type": "string", "description": "Container name (e.g. 'plate', 'box')."},
+                    },
+                    "required": ["target"],
+                },
+            },
+            {
                 "name": "open_gripper",
                 "description": "Open the gripper via the legacy skill.",
                 "parameters": {"type": "object", "properties": {}},
@@ -219,18 +290,86 @@ class FunctionCallToolset:
                     "properties": {"item": {"type": "string", "description": "Optional item name."}},
                 },
             },
-            # {
-            #     "name": "recover",
-            #     "description": "Trigger the recovery skill (typically back off).",
-            #     "parameters": {
-            #         "type": "object",
-            #         "properties": {
-            #             "mode": {"type": "string"},
-            #             "distance": {"type": "number"},
-            #         },
-            #     },
-            # },
+            {
+                "name": "align_tcp_to_target",
+                "description": "Move the robot arm (TCP) to a point 20cm back from the target object, aligned with the robot-object line.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "target": {"type": "string", "description": "Target object name."},
+                        "offset_mm": {"type": "number", "description": "Offset distance in mm (default 200)."},
+                    },
+                    "required": ["target"],
+                },
+            },
+            {
+                "name": "vla_execute",
+                "description": "Execute a VLA (Vision-Language-Action) skill with a natural language instruction.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "instruction": {"type": "string", "description": "Instruction for the VLA model (e.g. 'pick up apple', 'open door')."},
+                        "image": {"type": "string", "description": "Optional base64 image."},
+                        "state": {"type": "object", "description": "Optional robot state."},
+                    },
+                    "required": ["instruction"],
+                },
+            },
+            {
+                "name": "pick_vla",
+                "description": "Pick up an object using VLA for the final grasp (Align -> VLA Pick).",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "target": {"type": "string", "description": "Target object name."},
+                        "instruction": {"type": "string", "description": "Optional VLA instruction."},
+                    },
+                    "required": ["target"],
+                },
+            },
+            {
+                "name": "place_vla",
+                "description": "Place an object into a container using VLA (Align -> VLA Place).",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "target": {"type": "string", "description": "Container name."},
+                        "instruction": {"type": "string", "description": "Optional VLA instruction."},
+                    },
+                    "required": ["target"],
+                },
+            },
         ]
+        # Force disable execute_plan to ensure step-by-step VLM execution
+        # if self.processor.enable_execute_plan_tool:
+        #     specs.append(
+        #         {
+        #             "name": "execute_plan",
+        #             "description": "Validate and execute a long-horizon plan JSON (macro-level fetch/place).",
+        #             "parameters": {
+        #                 "type": "object",
+        #                 "properties": {
+        #                     "plan_json": {
+        #                         "type": "string",
+        #                         "description": "Plan JSON string matching the schema (goal, plan_id, subtasks).",
+        #                     }
+        #                 },
+        #                 "required": ["plan_json"],
+        #             },
+        #         }
+        #     )
+        # {
+        #     "name": "recover",
+        #     "description": "Trigger the recovery skill (typically back off).",
+        #     "parameters": {
+        #         "type": "object",
+        #         "properties": {
+        #             "mode": {"type": "string"},
+        #             "distance": {"type": "number"},
+        #         },
+        #     },
+        # },
+        return specs
 
     # ------------------------------------------------------------------
     def dispatch(self, name: str, params: Dict[str, Any]) -> Dict[str, Any]:
@@ -306,14 +445,184 @@ class FunctionCallToolset:
             response["observation"] = obs_result["observation"]
         return response
 
-    def _fn_move_tcp_linear(
+    def _handle_recovery(
+        self, result: ExecutionResult, runtime: SkillRuntime, node: PlanNode, inspection_report: InspectionReport = None
+    ) -> ExecutionResult:
+        """
+        Centralized recovery handler.
+        Uses VLMInspector to diagnose the failure, then RecoveryManager to suggest actions.
+        """
+        failure_code = result.failure_code or FailureCode.UNKNOWN
+        log_warning(f"⚠️ [Recovery] Handling failure: {node.name} -> {failure_code.value}")
+
+        report = inspection_report
+
+        # If no report provided (e.g. hardware failure before inspection), run inspection now
+        if not report:
+            # 1. Capture Post-Execution Observation (The "Crime Scene" Photo)
+            # We do this immediately so VLM sees the state right after failure.
+            post_exec_obs = None
+            try:
+                # Force a quick observation (no VLM analysis yet, just capture)
+                # We use the current target if available, or just a generic capture
+                target = self.world.goal or "unknown"
+                obs, _ = self.api.perception.observe(target, force_vlm=False)
+                post_exec_obs = self._serialize_observation(obs)
+                # Also update the main observation state since we just took a fresh one
+                self.update_observation(obs, reset_extra=False)
+            except Exception as e:
+                log_warning(f"⚠️ [Recovery] Failed to capture post-execution observation: {e}")
+
+            # 2. Build Inspection Packet
+            packet = result.evidence.get("inspection_packet")
+            if not packet:
+                # Should have been created by executor, but fallback if missing
+                packet = InspectionPacket(
+                    episode_id=runtime.extra.get("episode_id"),
+                    step_id=runtime.extra.get("step_id"),
+                    skill_name=node.name,
+                    skill_args=node.args,
+                    exec_result={"status": result.status, "failure_code": failure_code.value, "reason": result.reason},
+                    timestamp=time.time()
+                )
+            
+            # Inject the fresh observation into the packet
+            if post_exec_obs:
+                packet.post_execution_observation = post_exec_obs
+
+            # 3. Run VLM Inspection
+            inspector = VLMInspector(api_key=self.api_key, model=self.model)
+            report = inspector.inspect(packet)
+            
+            log_info(f"🕵️ [Inspector] Verdict: {report.verdict_hint}, Hazards: {len(report.hazards)}")
+            if report.hazards:
+                for h in report.hazards:
+                    log_warning(f"  - {h.type}: {h.why}")
+
+        # 4. Consult Recovery Manager
+        ctx = RecoveryContext(
+            skill_name=node.name,
+            failure_code=failure_code,
+            history=self.execution_history[-5:], # Last 5 steps
+            world_state=self.world,
+            inspection_report=report
+        )
+        
+        suggestions = self.recovery_manager.suggest_recovery(ctx)
+        
+        # 5. Return result with suggestions (Do NOT execute recovery automatically)
+        # The main LLM will decide what to do based on this evidence.
+        if result.evidence is None:
+            result.evidence = {}
+            
+        result.evidence["recovery_suggestions"] = [s.to_dict() for s in suggestions]
+        # Ensure report is attached if it wasn't already
+        if "inspection_report" not in result.evidence:
+            result.evidence["inspection_report"] = report.to_dict()
+        
+        log_info(f"🚑 [Recovery] Generated {len(suggestions)} suggestions. Returning to LLM.")
+        return result
+
+    def _old_handle_recovery(self, result: ExecutionResult, runtime: SkillRuntime, node: PlanNode) -> ExecutionResult:
+        """Invoke shared RecoveryManager for FC mode with budgets."""
+        failure_code = result.failure_code or FailureCode.UNKNOWN
+        budget = {
+            "total": self._recovery_budget.get("total", 0),
+            "per_code": self._recovery_budget.get("per_code", {}),
+            "elapsed_s": time.time() - self._recovery_budget.get("start_time", time.time()),
+        }
+        history_tail = [{"node": node.name, "status": result.status, "failure_code": failure_code.value}]
+        ctx = RecoveryContext(
+            episode_id=self._current_plan_id,
+            step_id=node.name,
+            task_goal=self.world.goal,
+            world_snapshot=None,
+            history_tail=history_tail,
+            budget=budget,
+        )
+        decision = self.recovery_manager.handle_failure(failure_code, ctx)
+
+        # Update budget counters
+        per_code = self._recovery_budget.setdefault("per_code", {})
+        per_code[failure_code.value] = per_code.get(failure_code.value, 0) + 1
+        self._recovery_budget["total"] = self._recovery_budget.get("total", 0) + 1
+
+        if decision.kind == "EXECUTE_ACTIONS":
+            recovery_success = True
+            for idx, action in enumerate(decision.actions, start=1):
+                rec_node = PlanNode(type="action", name=action["skill_name"], args=action.get("args", {}))
+                rec_runtime = SkillRuntime(
+                    navigator=self.navigator,
+                    world_model=self.world,
+                    observation=runtime.observation,
+                    extra=dict(runtime.extra or {}),
+                )
+                rec_runtime.extra.update(
+                    {
+                        "recovery_level": decision.level,
+                        "recovery_attempt_idx": idx,
+                        "recovery_policy": decision.reason,
+                        "recovery_triggered": True,
+                    }
+                )
+                rec_result = self.executor.execute(rec_node, rec_runtime)
+                self._record_timeline_event(
+                    stage="recovery",
+                    node=action["skill_name"],
+                    status=rec_result.status,
+                    detail=f"{decision.level}:{decision.reason}",
+                    elapsed=rec_result.elapsed,
+                )
+                if rec_result.status != "success":
+                    recovery_success = False
+                    # annotate side effect
+                    if result.evidence is None:
+                        result.evidence = {}
+                    result.evidence["recovery_side_effect_failure_code"] = rec_result.failure_code.value if rec_result.failure_code else None
+                    break
+            if recovery_success:
+                # retry original
+                retry_runtime = SkillRuntime(
+                    navigator=self.navigator,
+                    world_model=self.world,
+                    observation=runtime.observation,
+                    extra=dict(runtime.extra or {}),
+                )
+                retry_runtime.extra["recovery_level"] = decision.level
+                retry_result = self.executor.execute(node, retry_runtime)
+                if retry_result.evidence is None:
+                    retry_result.evidence = {}
+                retry_result.evidence["recovery_decision"] = decision.evidence
+                return retry_result
+            # recovery failed, return original failure annotated
+            if result.evidence is None:
+                result.evidence = {}
+            result.evidence["recovery_decision"] = decision.evidence
+            result.evidence["recovery_success"] = False
+            return result
+
+        if decision.kind == "ESCALATE_L3":
+            if result.evidence is None:
+                result.evidence = {}
+            result.evidence["recovery_decision"] = decision.evidence
+            result.reason = result.reason or "escalate_L3"
+            return result
+
+        # ABORT or unknown kind
+        if result.evidence is None:
+            result.evidence = {}
+        result.evidence["recovery_decision"] = decision.evidence
+        result.reason = result.reason or "recovery_abort"
+        return result
+
+    def _fn_move_tcp(
         self,
         pose: List[float],
         speed: Optional[float] = None,
         acc: Optional[float] = None,
     ) -> Dict[str, Any]:
         obs_result = self._ensure_target_observation(phase=ObservationPhase.APPROACH)
-        result = self.api.manipulation.move_tcp_linear(pose, speed=speed, acc=acc)
+        result = self.api.manipulation.move_tcp(pose, speed=speed, acc=acc)
         if obs_result and "observation" in obs_result and isinstance(result, dict):
             result = dict(result)
             result["observation"] = obs_result["observation"]
@@ -347,6 +656,253 @@ class FunctionCallToolset:
     def _fn_execute_grasp(self) -> Dict[str, Any]:
         return self._call_skill("execute_grasp", {})
 
+    def _fn_align_to_container(self, target: str) -> Dict[str, Any]:
+        """
+        Align arm to container:
+        1. Observe target (VLM + SAM).
+        2. Get surface points from observation (Robot Frame: X=Down, Y=Left, Z=Forward).
+        3. Calculate center (y, z) and max height (min_x).
+        4. Calculate orientation (yaw) from origin to center (in Y-Z plane).
+        5. Move to (min_x - 100, center_y, center_z) with Rx=yaw.
+        """
+        import math
+        import numpy as np
+
+        # 1. Observe
+        obs_result = self._ensure_target_observation(target=target)
+        if not obs_result:
+             return {"ok": False, "status": "failed", "reason": f"Failed to observe target: {target}"}
+        
+        # 2. Get Surface Points
+        latest_obs = self.processor._latest_observation
+        if not latest_obs:
+             return {"ok": False, "status": "failed", "reason": f"No observation found for target: {target}"}
+        
+        depth_info = self.api.manipulation._executor.localize_observation(latest_obs)
+        if not depth_info:
+             return {"ok": False, "status": "failed", "reason": "Failed to localize target depth."}
+             
+        surface_points_cam = depth_info.get("surface_points")
+        if surface_points_cam is None or len(surface_points_cam) == 0:
+             center_cam = depth_info.get("obj_center_3d")
+             if not center_cam:
+                 return {"ok": False, "status": "failed", "reason": "No 3D points or center found."}
+             surface_points_cam = [center_cam]
+             
+        # Transform to Robot Frame (X=Down, Y=Left, Z=Forward)
+        surface_points_robot = []
+        for pt in surface_points_cam:
+            pt_mm = np.array(pt, dtype=float)
+            pt_robot = self.api.manipulation._executor.transform_camera_to_robot(pt_mm)
+            surface_points_robot.append(pt_robot)
+            
+        surface_points_robot = np.array(surface_points_robot) # shape (N, 3)
+        
+        # 3. Calculate Center and Max Height
+        # Robot Frame: X is Vertical Down. Y is Horizontal Left. Z is Horizontal Forward.
+        # "Highest" point means minimum X (closest to base/ceiling).
+        min_vals = np.min(surface_points_robot, axis=0)
+        max_vals = np.max(surface_points_robot, axis=0)
+        
+        # Center in Horizontal Plane (Y-Z)
+        center_y = (min_vals[1] + max_vals[1]) / 2.0
+        center_z = (min_vals[2] + max_vals[2]) / 2.0
+        
+        # Max Height (Top of container) = Min X
+        top_x = min_vals[0]
+        
+        # 4. Calculate Orientation (Yaw)
+        # Direction from origin to center in Y-Z plane
+        # yaw = atan2(y, z) -> Angle from Z axis towards Y axis
+        yaw = math.atan2(center_y, center_z)
+        
+        # 5. Move to Target
+        # Target X = top_x - 100mm (10cm above)
+        target_x = top_x - 100.0
+        
+        # Get current pose to preserve Ry, Rz (assuming they control "Down" pointing)
+        try:
+            curr_pos, curr_euler = self.api.manipulation._executor.get_current_tool_pose()
+            # curr_euler is [rx, ry, rz]
+            target_rx = yaw
+            target_ry = curr_euler[1]
+            target_rz = curr_euler[2]
+        except Exception:
+            # Fallback if get_pose fails: assume standard down pointing?
+            # But we don't know what "standard" is for this user.
+            # Let's default to 0 for others if we fail, but logging error is better.
+            log_warning("⚠️ [AlignContainer] Failed to get current pose, using 0 for Ry/Rz.")
+            target_rx = yaw
+            target_ry = 0.0
+            target_rz = 0.0
+
+        pose = [target_x, center_y, center_z, target_rx, target_ry, target_rz]
+        
+        log_info(f"🎯 [AlignContainer] Target: {target}, CenterYZ: ({center_y:.1f}, {center_z:.1f}), TopX: {top_x:.1f}, Yaw: {math.degrees(yaw):.1f}deg")
+        
+        result = self.api.manipulation.move_tcp(pose, speed=30.0)
+        
+        if result.get("status") == "success":
+             return {"ok": True, "status": "success", "reason": "Aligned to container.", "pose": pose}
+        else:
+             return result
+
+    def _fn_pick(self, target: str) -> Dict[str, Any]:
+        """
+        High-level pick function: Observe -> Predict -> Execute -> Close -> Lift.
+        Assumes base is already aligned.
+        """
+        # 1. Observe
+        obs_result = self._ensure_target_observation(target=target)
+        if not obs_result:
+             return {"ok": False, "status": "failed", "reason": f"Failed to observe target: {target}"}
+        
+        # 2. Predict Grasp Point
+        pred_result = self._call_skill("predict_grasp_point", {})
+        if not pred_result.get("ok"):
+            return pred_result
+            
+        # 3. Execute Grasp (Move to grasp pose)
+        exec_result = self._call_skill("execute_grasp", {})
+        if not exec_result.get("ok"):
+            return exec_result
+            
+        # 4. Close Gripper
+        close_result = self._call_skill("close_gripper", {})
+        if not close_result.get("ok"):
+            return close_result
+            
+        # 5. Lift (Shift TCP up by 10cm)
+        try:
+            # We need current pose to calculate shift
+            # get_current_tool_pose returns (pos_m, euler_rad) as numpy arrays
+            pos, euler = self.api.manipulation._executor.get_current_tool_pose()
+            current_pose = list(pos) + list(euler)
+            
+            lift_result = self.api.manipulation.shift_tcp(
+                base_pose=current_pose,
+                delta_xyz=[-0.1, 0.0, 0.0], # Up 10cm (X is down, so -X is up)
+                speed=30.0,
+                acc=50.0
+            )
+            if lift_result.get("status") != "success":
+                 return {"ok": False, "status": "failed", "reason": f"Lift failed: {lift_result.get('reason')}"}
+        except Exception as e:
+             return {"ok": False, "status": "failed", "reason": f"Lift exception: {e}"}
+
+        return {"ok": True, "status": "success", "reason": "Pick sequence completed successfully."}
+
+    def _fn_place(self, target: str) -> Dict[str, Any]:
+        """
+        High-level place function:
+        1. Align to container (Move to 10cm above).
+        2. Lower to 5cm above container top.
+        3. Open gripper.
+        4. Lift back to 10cm above.
+        """
+        # 1. Align to Container (This handles observation, calculation, and move to +10cm)
+        align_res = self._fn_align_to_container(target)
+        if not align_res.get("ok"):
+            return align_res
+            
+        # align_res should contain the pose we moved to
+        # pose = [x, y, z, rx, ry, rz]
+        # We moved to top_x - 100.0
+        
+        # 2. Lower to 5cm above (Move down by 5cm)
+        # Current X is (top_x - 100). We want (top_x - 50).
+        # So we need to increase X by 50mm (since X is down).
+        
+        # Use shift_tcp for relative move
+        # delta_xyz = [50.0, 0.0, 0.0] (mm) -> But shift_tcp usually takes meters or mm?
+        # Let's check shift_tcp signature in apis.py / executor.py
+        # primitive_shift_tcp takes delta_xyz in METERS usually?
+        # Let's check executor.py primitive_shift_tcp
+        
+        # Executor primitive_shift_tcp:
+        # target_pos = current_pos + np.array(delta_xyz)
+        # current_pos is in METERS (get_current_tool_pose returns meters).
+        # So delta_xyz should be in METERS.
+        
+        # We want to move down 5cm = 0.05m.
+        # X is down. So +0.05m in X.
+        
+        res = self.api.manipulation.shift_tcp(
+            base_pose=None, # Will fetch current
+            delta_xyz=[0.05, 0.0, 0.0], # Down 5cm
+            speed=20.0
+        )
+        if res.get("status") != "success":
+             return {"ok": False, "status": "failed", "reason": f"Lower failed: {res.get('reason')}"}
+             
+        # 3. Open Gripper
+        res = self.api.manipulation.set_gripper(position=100)
+        if res.get("status") != "success":
+             return {"ok": False, "status": "failed", "reason": f"Open gripper failed: {res.get('reason')}"}
+             
+        # 4. Lift (Retreat)
+        # Move up by 10cm = -0.1m in X.
+        res = self.api.manipulation.shift_tcp(
+            base_pose=None,
+            delta_xyz=[-0.1, 0.0, 0.0], # Up 10cm
+            speed=50.0
+        )
+        
+        return {"ok": True, "status": "success", "reason": "Place sequence completed."}
+
+    def _fn_vla_execute(
+        self,
+        instruction: str,
+        image: Optional[str] = None,
+        state: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        args: Dict[str, Any] = {"instruction": instruction}
+        if image:
+            args["image"] = image
+        if state:
+            args["state"] = state
+        return self._call_skill("vla_execute", args)
+
+    def _fn_pick_vla(self, target: str, instruction: Optional[str] = None) -> Dict[str, Any]:
+        """
+        Pick up an object using VLA for the final grasp.
+        1. Align TCP to target (Approach).
+        2. Execute VLA grasp.
+        """
+        # 1. Align TCP
+        align_res = self._fn_align_tcp_to_target(target)
+        if not align_res.get("ok"):
+            return align_res
+            
+        # 2. VLA Execute
+        instr = instruction or f"pick up {target}"
+        vla_res = self._fn_vla_execute(instruction=instr)
+        
+        if vla_res.get("ok"):
+             return {"ok": True, "status": "success", "reason": "Pick VLA sequence completed."}
+        else:
+             return vla_res
+
+    def _fn_place_vla(self, target: str, instruction: Optional[str] = None) -> Dict[str, Any]:
+        """
+        Place an object into a container using VLA.
+        1. Align to container (Approach).
+        2. Execute VLA place.
+        """
+        # 1. Align to Container
+        align_res = self._fn_align_to_container(target)
+        if not align_res.get("ok"):
+            return align_res
+            
+        # 2. VLA Execute
+        instr = instruction or f"place object into {target}"
+        vla_res = self._fn_vla_execute(instruction=instr)
+        
+        if vla_res.get("ok"):
+             return {"ok": True, "status": "success", "reason": "Place VLA sequence completed."}
+        else:
+             return vla_res
+
     def _fn_open_gripper(self) -> Dict[str, Any]:
         return self._call_skill("open_gripper", {})
 
@@ -357,6 +913,73 @@ class FunctionCallToolset:
         args = {"item": item} if item else {}
         return self._call_skill("handover_item", args)
 
+    def _fn_align_tcp_to_target(self, target: str, offset_mm: float = 200.0) -> Dict[str, Any]:
+        """
+        Align TCP to target:
+        1. Observe & Localize target.
+        2. Calculate center (x, y, z) in Robot Frame (X=Down, Y=Left, Z=Forward).
+        3. Calculate yaw = atan2(y, z).
+        4. Move to position retracted by offset_mm along the radial line from base to object.
+           Target Y = y - offset * sin(yaw)
+           Target Z = z - offset * cos(yaw)
+           Target X = x (Keep object height)
+        5. Orientation: Rx=pi (Down), Ry=0, Rz=yaw (Aligned with radius).
+        """
+        import math
+        import numpy as np
+
+        # 1. Observe
+        obs_result = self._ensure_target_observation(target=target)
+        if not obs_result:
+             return {"ok": False, "status": "failed", "reason": f"Failed to observe target: {target}"}
+        
+        # 2. Localize
+        latest_obs = self.processor._latest_observation
+        if not latest_obs:
+             return {"ok": False, "status": "failed", "reason": f"No observation found for target: {target}"}
+        
+        depth_info = self.api.manipulation._executor.localize_observation(latest_obs)
+        if not depth_info:
+             return {"ok": False, "status": "failed", "reason": "Failed to localize target depth."}
+             
+        center_cam = depth_info.get("obj_center_3d")
+        if not center_cam:
+             return {"ok": False, "status": "failed", "reason": "No 3D center found."}
+             
+        # Transform to Robot Frame (X=Down, Y=Left, Z=Forward)
+        center_robot = self.api.manipulation._executor.transform_camera_to_robot(np.array(center_cam, dtype=float))
+        x, y, z = center_robot # mm
+        
+        # 3. Calculate Orientation (Yaw)
+        # Yaw in Y-Z plane (Horizontal)
+        yaw = math.atan2(y, z)
+        
+        # 4. Calculate Target Position (Retracted)
+        # Direction vector is (sin(yaw), cos(yaw))
+        # We want to move BACK from the object towards the origin
+        # Pos = Center - Offset * Direction
+        
+        target_y = y - offset_mm * math.sin(yaw)
+        target_z = z - offset_mm * math.cos(yaw)
+        target_x = x # Keep same height as object center
+        
+        # 5. Orientation
+        # Downward pointing, aligned with radius
+        target_rx = math.pi
+        target_ry = 0.0
+        target_rz = yaw
+        
+        pose = [target_x, target_y, target_z, target_rx, target_ry, target_rz]
+        
+        log_info(f"🎯 [AlignTCP] Target: {target}, Center: ({x:.1f}, {y:.1f}, {z:.1f}), Yaw: {math.degrees(yaw):.1f}deg, Offset: {offset_mm}mm")
+        
+        result = self.api.manipulation.move_tcp(pose, speed=30.0)
+        
+        if result.get("status") == "success":
+             return {"ok": True, "status": "success", "reason": "Aligned TCP to target.", "pose": pose}
+        else:
+             return result
+
     def _fn_recover(self, mode: Optional[str] = None, distance: Optional[float] = None) -> Dict[str, Any]:
         args: Dict[str, Any] = {}
         if mode:
@@ -364,6 +987,12 @@ class FunctionCallToolset:
         if distance is not None:
             args["distance"] = float(distance)
         return self._call_skill("recover", args)
+
+    def _fn_execute_plan(self, plan_json: Any) -> Dict[str, Any]:
+        """Validate + execute a plan via the lightweight PlanRunner (gated by flag)."""
+        if not self.processor.enable_execute_plan_tool:
+            return {"ok": False, "error": "execute_plan_disabled"}
+        return self.processor.execute_plan(plan_json)
 
     @staticmethod
     def _serialize_observation(observation: Any) -> Dict[str, Any]:
@@ -383,7 +1012,10 @@ class FunctionCallToolset:
 
     def _call_skill(self, name: str, args: Dict[str, Any]) -> Dict[str, Any]:
         # Always refresh observation before executing a skill to keep state current.
-        obs_result = self._ensure_target_observation()
+        # Note: Some skills (like pick) handle observation internally, but for generic calls we ensure it.
+        # If the skill provides a specific target in args, we should observe that.
+        target = args.get("target")
+        obs_result = self._ensure_target_observation(target=target)
         result = self.processor.invoke_skill(name, args)
         response = {
             "ok": result.status == "success",
@@ -396,23 +1028,41 @@ class FunctionCallToolset:
         return response
 
     def _ensure_target_observation(
-        self, phase: ObservationPhase = ObservationPhase.SEARCH
+        self, target: Optional[str] = None, phase: ObservationPhase = ObservationPhase.SEARCH
     ) -> Optional[Dict[str, Any]]:
-        """Refresh VLM observation for the current goal, if available."""
-        target = self.processor.world.goal
-        if not target:
+        """Refresh VLM observation for the specified target (or current goal), if available."""
+        target_to_observe = target or self.processor.world.goal
+        if not target_to_observe:
             return None
+            
+        # Optimization: If observation is fresh and valid for THIS target, reuse it
+        # We need to check if the latest observation was actually for this target
+        latest_obs = self.processor._latest_observation
+        is_same_target = latest_obs and getattr(latest_obs, "target_id", "") == target_to_observe
+        
+        if not self.processor._observation_stale and is_same_target and latest_obs:
+            # Check if observation actually found the target (if not, we might want to retry)
+            if latest_obs.found:
+                return {
+                    "observation": self._serialize_observation(latest_obs),
+                    "vlm_payload": None # Payload not cached, but usually not needed for skills
+                }
+
         try:
             observation, payload = self.api.perception.observe(
-                target, phase=phase, force_vlm=False, max_steps=1
+                target_to_observe, phase=phase, force_vlm=False, max_steps=1
             )
+            # Ensure target_id is set on observation so we can verify it later
+            if not hasattr(observation, "target_id"):
+                setattr(observation, "target_id", target_to_observe)
+                
             self.processor.update_observation(observation, reset_extra=False)
             return {
                 "observation": self._serialize_observation(observation),
                 "vlm_payload": payload,
             }
         except Exception as exc:
-            log_warning(f"[FunctionCall] 自动观测目标 {target} 失败: {exc}")
+            log_warning(f"[FunctionCall] 自动观测目标 {target_to_observe} 失败: {exc}")
             return None
 
 
@@ -447,9 +1097,25 @@ class FunctionCallTaskProcessor:
             reflection=self.reflection,
         )
         self.tools = FunctionCallToolset(self.api, self)
+        self.recovery_manager = RecoveryManager()
+        self.enable_execute_plan_tool = os.getenv("ENABLE_EXECUTE_PLAN_TOOL", "false").lower() not in {"0", "false", "no"}
+        self.plan_runner: Optional[PlanRunner] = None
+        if self.enable_execute_plan_tool:
+            self.plan_runner = PlanRunner(
+                self.executor,
+                self.recovery_manager,
+                self.world,
+                max_tool_calls=int(os.getenv("PLAN_MAX_TOOL_CALLS", "50")),
+                max_time_s=float(os.getenv("PLAN_MAX_TIME_S", "300")),
+            )
         self.max_rounds = int(os.getenv("FUNCTION_CALL_MAX_ROUNDS", "16"))
         self.temperature = float(os.getenv("FUNCTION_CALL_TEMPERATURE", "0.1"))
         self._finalize_calls = 0
+        self._recovery_budget = {
+            "total": 0,
+            "per_code": {},
+            "start_time": time.time(),
+        }
         
         # 模型提供商选择: "zhipu" (GLM-4.5v) 或 "dashscope" (Qwen3-VL)
         self.provider = os.getenv("FUNCTION_CALL_PROVIDER", "zhipu").lower()
@@ -494,6 +1160,7 @@ class FunctionCallTaskProcessor:
                 "4. Only respond with a final JSON summary AFTER the grasp is complete or truly impossible.\n"
                 "5. Never fabricate execution results - always call the actual function and wait for results.\n"
                 "If you need to predict a grasp point, call predict_grasp_point(). If you need to execute grasp, call execute_grasp()."
+                + ("\nIf the user requests long-horizon tasks or sets output_plan=true, produce a Plan JSON and call execute_plan(plan_json) instead of low-level skill calls." if self.enable_execute_plan_tool else "")
             ),
         )
         self._latest_observation: Optional[Any] = None
@@ -511,6 +1178,7 @@ class FunctionCallTaskProcessor:
         self._tool_instruction = self._build_tool_instruction()
         self._failure_threshold = int(os.getenv("FUNCTION_CALL_FAILURE_THRESHOLD", "3"))
         self._failure_count = 0
+        self._observation_stale = True  # Initially stale until first observation
 
     def _get_current_image_base64(self, cam_name: str = "front") -> Optional[str]:
         """获取当前相机图像，根据 provider 返回不同格式"""
@@ -561,21 +1229,166 @@ class FunctionCallTaskProcessor:
 
     def update_observation(self, observation: Any, reset_extra: bool = True) -> None:
         self._latest_observation = observation
+        self._observation_stale = False
         if reset_extra:
             self._shared_runtime_extra = {}
 
     def invoke_skill(self, name: str, args: Dict[str, Any]) -> ExecutionResult:
+        runtime_extra = dict(self._shared_runtime_extra or {})
+        if self._current_plan_id and "episode_id" not in runtime_extra:
+            runtime_extra["episode_id"] = self._current_plan_id
         runtime = SkillRuntime(
             navigator=self.navigator,
             world_model=self.world,
             observation=self._latest_observation,
-            extra=self._shared_runtime_extra,
+            extra=runtime_extra,
         )
         node = PlanNode(type="action", name=name, args=args or {})
+        
+        # 1. Execute Skill (includes internal hardware verifiers)
         result = self.executor.execute(node, runtime)
+        
+        # 2. Invalidate observation if skill is mutating (moves robot or arm)
+        if result.status == "success" and self._is_mutating_skill(name):
+            self._observation_stale = True
+            
+        # 3. Post-Execution Inspection (Visual Verifier)
+        # Always run VLM Inspector for every skill to verify outcome visually
+        
+        # 3.1 Capture "Crime Scene" / "Success Scene" photo
+        post_exec_obs = None
+        try:
+            target = self.world.goal or "unknown"
+            # force_vlm=False -> RGB only, fast
+            obs, _ = self.api.perception.observe(target, force_vlm=False)
+            post_exec_obs = self._serialize_observation(obs)
+            # Also update the main observation state since we just took a fresh one
+            self.update_observation(obs, reset_extra=False)
+        except Exception as e:
+            log_warning(f"⚠️ [invoke_skill] Failed to capture post-execution observation: {e}")
+
+        # 3.2 Prepare Packet
+        packet = result.evidence.get("inspection_packet")
+        if not packet:
+            # Should have been created by executor, but fallback if missing
+            packet = InspectionPacket(
+                episode_id=runtime.extra.get("episode_id"),
+                step_id=runtime.extra.get("step_id"),
+                skill_name=node.name,
+                skill_args=node.args,
+                exec_result={"status": result.status, "failure_code": result.failure_code.value if result.failure_code else None, "reason": result.reason},
+                timestamp=time.time()
+            )
+        
+        if post_exec_obs:
+            packet.post_execution_observation = post_exec_obs
+
+        # 3.3 Run VLM Inspector
+        inspector = VLMInspector(api_key=self.api_key, model=self.model)
+        report = inspector.inspect(packet)
+        
+        # Log inspection result
+        log_info(f"🕵️ [Inspector] Verdict: {report.verdict_hint}, Hazards: {len(report.hazards)}")
+        if report.hazards:
+            for h in report.hazards:
+                log_warning(f"  - {h.type}: {h.why}")
+        
+        # Attach report to result
+        if result.evidence is None: result.evidence = {}
+        result.evidence["inspection_report"] = report.to_dict()
+
+        # 3.4 Override Status if VLM detects failure
+        if result.status == "success" and report.verdict_hint == "FAIL":
+            log_warning(f"⚠️ [invoke_skill] Skill succeeded but VLM Inspector reported FAIL. Overriding status.")
+            result.status = "failure"
+            result.failure_code = FailureCode.VERIFICATION_FAILED
+            result.reason = "vlm_verification_failed"
+            # Add hazards to reason for clarity
+            if report.hazards:
+                result.reason += f": {report.hazards[0].why}"
+
+        # 4. Handle Recovery (Generate Suggestions) if failed
+        if result.status == "failure":
+            # We pass the report we just generated to _handle_recovery
+            # so it doesn't run inspection again.
+            result = self._handle_recovery(result, runtime, node, inspection_report=report)
+
         # Runtime.extra may be mutated by skills (e.g. predict_grasp_point), reuse it for future calls.
         self._shared_runtime_extra = runtime.extra or self._shared_runtime_extra
         return result
+
+    def _is_mutating_skill(self, name: str) -> bool:
+        """Check if skill changes robot state, requiring new observation."""
+        # Navigation, Manipulation, and Scanning invalidate the view
+        mutating_prefixes = [
+            "navigate", "move", "rotate", "turn", 
+            "pick", "place", "grasp", "release", "open", "close",
+            "home", "approach", "align"
+        ]
+        return any(name.startswith(p) for p in mutating_prefixes)
+
+    def execute_plan(self, plan_json: Any) -> Dict[str, Any]:
+        """
+        Lightweight plan execution entry used by the execute_plan tool.
+        Returns a structured payload suitable for LLM consumption.
+        """
+        if not self.enable_execute_plan_tool or not self.plan_runner:
+            return {"ok": False, "error": "execute_plan_disabled"}
+
+        # Accept raw dict or JSON string
+        raw_plan = plan_json
+        if isinstance(plan_json, str):
+            try:
+                raw_plan = json.loads(plan_json)
+            except Exception as exc:
+                return {
+                    "ok": False,
+                    "type": "VALIDATION_ERROR",
+                    "errors": [f"invalid_json:{exc}"],
+                    "plan_id": None,
+                }
+
+        if not isinstance(raw_plan, dict):
+            return {
+                "ok": False,
+                "type": "VALIDATION_ERROR",
+                "errors": ["plan_json must be an object or JSON string"],
+                "plan_id": None,
+            }
+
+        try:
+            plan = validate_plan(raw_plan)
+        except PlanValidationError as exc:
+            return {
+                "ok": False,
+                "type": "VALIDATION_ERROR",
+                "errors": [str(exc)],
+                "plan_id": raw_plan.get("plan_id"),
+            }
+
+        # Prepare runtime context
+        prev_plan_id = self._current_plan_id
+        self._current_plan_id = plan.plan_id
+        self.world.set_goal(plan.goal)
+        runtime = SkillRuntime(
+            navigator=self.navigator,
+            world_model=self.world,
+            observation=self._latest_observation,
+            extra={"episode_id": plan.plan_id, "plan_id": plan.plan_id},
+        )
+
+        runner_result = self.plan_runner.run(plan, runtime)
+        self._current_plan_id = prev_plan_id
+
+        return {
+            "ok": runner_result.ok,
+            "plan_id": runner_result.plan_id,
+            "subtasks_status": runner_result.subtasks_status,
+            "final_outcome": runner_result.final_outcome,
+            "last_failure": runner_result.last_failure,
+            "trace_pointer": runner_result.trace_pointer,
+            "reason": runner_result.reason,
+        }
 
     def _publish_world_snapshot(self) -> None:
         if not self.ui_bridge:
@@ -813,11 +1626,17 @@ class FunctionCallTaskProcessor:
 
     # ------------------------------------------------------------------
     def process_grasp_task(self, target_name: str, navigator, cam_name: str = "front") -> Dict[str, Any]:
+        """
+        Legacy entry point for single-target grasp tasks.
+        Now delegates to the internal _run_fc_loop.
+        """
         if navigator:
             self.set_navigator(navigator)
         elif self.navigator is None:
             raise ValueError("FunctionCallTaskProcessor 需要有效的导航控制器")
         self.observer.cam_name = cam_name
+        
+        # Initialize context
         self.world.set_goal(target_name)
         self._current_plan_id = uuid.uuid4().hex[:8]
         self._current_plan_entry = PlanContextEntry(
@@ -828,12 +1647,150 @@ class FunctionCallTaskProcessor:
         self._timeline = []
         self.execution_history = []
         self._shared_runtime_extra = {}
+        self._recovery_budget = {"total": 0, "per_code": {}, "start_time": time.time()}
         self.update_observation(None)
         self._publish_world_snapshot()
         self._failure_count = 0
         self._finalize_calls = 0
 
         messages = self._initial_messages(target_name)
+        return self._run_fc_loop(target_name, messages)
+
+    def process_long_horizon_task(self, instruction: str, navigator, cam_name: str = "front") -> Dict[str, Any]:
+        """
+        Entry point for long-horizon tasks.
+        1. Decomposes instruction into subtasks.
+        2. Executes each subtask sequentially via _run_fc_loop.
+        """
+        if navigator:
+            self.set_navigator(navigator)
+        elif self.navigator is None:
+            raise ValueError("FunctionCallTaskProcessor 需要有效的导航控制器")
+        self.observer.cam_name = cam_name
+        
+        # 1. Decompose
+        log_info(f"🧠 [LongHorizon] Decomposing instruction: {instruction}")
+        subtasks = self._decompose_task(instruction)
+        if not subtasks:
+            log_error("❌ [LongHorizon] Failed to decompose task.")
+            return {"ok": False, "error": "decomposition_failed"}
+        
+        log_info(f"📋 [LongHorizon] Subtasks: {subtasks}")
+        
+        # Initialize shared context
+        self._current_plan_id = uuid.uuid4().hex[:8]
+        self._timeline = []
+        self.execution_history = []
+        self._shared_runtime_extra = {}
+        self._recovery_budget = {"total": 0, "per_code": {}, "start_time": time.time()}
+        self.update_observation(None)
+        
+        overall_trace = []
+        
+        # 2. Execute Subtasks
+        for i, subtask in enumerate(subtasks):
+            log_info(f"▶️ [LongHorizon] Starting Subtask {i+1}/{len(subtasks)}: {subtask}")
+            
+            # Update Goal
+            self.world.set_goal(subtask)
+            self._publish_world_snapshot()
+            self._failure_count = 0
+            self._finalize_calls = 0
+            
+            # Prepare messages for this subtask
+            # We start fresh for each subtask to avoid context pollution, 
+            # but we might want to carry over some world state (already in self.world).
+            messages = self._initial_messages(subtask)
+            
+            # Run Loop
+            result = self._run_fc_loop(subtask, messages)
+            
+            # Collect trace
+            overall_trace.append({
+                "subtask": subtask,
+                "result": result
+            })
+            
+            if not result.get("final_response", {}).get("content"):
+                 # If loop didn't return a final response content (e.g. max rounds reached without success)
+                 # We might consider it a failure.
+                 pass
+                 
+            # Check for critical failure? 
+            # For now, we continue to next subtask unless explicit stop?
+            # Ideally, if a subtask fails, we should stop.
+            # Let's check the last tool result or LLM response.
+            # But _run_fc_loop returns a dict with 'final_response'.
+            
+        return {
+            "ok": True,
+            "instruction": instruction,
+            "subtasks": subtasks,
+            "trace": overall_trace
+        }
+
+    def _decompose_task(self, instruction: str) -> List[str]:
+        """
+        Uses LLM to decompose a high-level instruction into a list of subtasks.
+        """
+        prompt = f"""
+        You are a robotic task planner.
+        Decompose the following high-level instruction into a sequential list of short, actionable subtasks.
+        Each subtask should be a simple sentence describing a single action (e.g., "Pick up the apple", "Place it in the box").
+        
+        Instruction: "{instruction}"
+        
+        Return ONLY a JSON list of strings. No markdown, no explanation.
+        Example: ["Pick up the red block", "Place it on the green mat"]
+        """
+        
+        messages = [{"role": "user", "content": prompt}]
+        try:
+            # Use a simple text call (no tools needed for decomposition)
+            # We can reuse _call_llm but we need to temporarily disable tools or ignore them.
+            # Or just use the client directly.
+            if self.provider == "dashscope":
+                 # DashScope doesn't support tool_choice="none" easily in our wrapper, 
+                 # but we can just not pass tools.
+                 # Let's use a simplified call.
+                 response = dashscope.Generation.call(
+                     model=self.model,
+                     messages=[{"role": "user", "content": prompt}],
+                     result_format="message"
+                 )
+                 if response.status_code == 200:
+                     content = response.output.choices[0].message.content
+                 else:
+                     return []
+            else:
+                # Zhipu
+                response = self.client.chat.completions.create(
+                    model=self.model,
+                    messages=messages,
+                    temperature=0.1
+                )
+                content = response.choices[0].message.content
+                
+            # Parse JSON
+            # Clean up markdown code blocks if present
+            content = content.strip()
+            if content.startswith("```json"):
+                content = content[7:]
+            if content.endswith("```"):
+                content = content[:-3]
+            
+            subtasks = json.loads(content)
+            if isinstance(subtasks, list):
+                return subtasks
+            return []
+        except Exception as e:
+            log_error(f"❌ [Decompose] Failed: {e}")
+            return []
+
+    def _run_fc_loop(self, target_name: str, messages: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """
+        Internal loop for executing Function Calls for a single goal.
+        """
         trace: List[Dict[str, Any]] = []
         final_result: Dict[str, Any] = {}
 

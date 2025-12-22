@@ -1,0 +1,15 @@
+{
+  "episodes": 2,
+  "success_rate": 0.0,
+  "mean_tool_calls": 14.0,
+  "mean_time_sec": 1.82756,
+  "failure_code_top": [
+    [
+      "infra.skill_timeout",
+      10
+    ]
+  ],
+  "recovery_episode_rate": 1.0,
+  "recovery_success_rate": 1.0,
+  "planner_calls": 0
+}

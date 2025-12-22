@@ -166,7 +166,7 @@ class VLMObserver:
             raise ValueError("请设置Zhipu_real_demo_API_KEY环境变量用于DashScope调用")
         self.vlm_model = Config.VLM_NAME
         self.target_resolution = (1000, 1000)
-        self.tracker = TrackerManager(max_age=float(os.getenv("TRACKER_MAX_AGE", "2.5")))
+        # self.tracker = TrackerManager(max_age=float(os.getenv("TRACKER_MAX_AGE", "2.5"))) # Removed CSRT
         self._frame_lock = threading.RLock()
         self._latest_capture: Optional[VLMObserver.CaptureInfo] = None
         self._latest_frame: Optional[np.ndarray] = None
@@ -175,24 +175,26 @@ class VLMObserver:
         self._frame_interval = float(os.getenv("TRACKER_FRAME_INTERVAL", "0.25"))
 
     def _start_frame_loop(self) -> None:
-        if self._frame_thread and self._frame_thread.is_alive():
-            return
-        self._frame_stop.clear()
-        self._frame_thread = threading.Thread(target=self._frame_loop, name="vlm_frame_loop", daemon=True)
-        self._frame_thread.start()
+        pass # Disabled frame loop as tracker is removed
+        # if self._frame_thread and self._frame_thread.is_alive():
+        #     return
+        # self._frame_stop.clear()
+        # self._frame_thread = threading.Thread(target=self._frame_loop, name="vlm_frame_loop", daemon=True)
+        # self._frame_thread.start()
 
     def _frame_loop(self) -> None:
-        while not self._frame_stop.is_set():
-            capture = self._capture_image(self.cam_name)
-            if capture.path:
-                frame = self._load_frame_bgr(capture.path)
-                if frame is not None:
-                    capture.width = frame.shape[1]
-                    capture.height = frame.shape[0]
-                self._update_cached_frame(capture, frame)
-                if frame is not None:
-                    self.tracker.update(frame)
-            time.sleep(max(0.05, self._frame_interval))
+        pass # Disabled
+        # while not self._frame_stop.is_set():
+        #     capture = self._capture_image(self.cam_name)
+        #     if capture.path:
+        #         frame = self._load_frame_bgr(capture.path)
+        #         if frame is not None:
+        #             capture.width = frame.shape[1]
+        #             capture.height = frame.shape[0]
+        #         self._update_cached_frame(capture, frame)
+        #         if frame is not None:
+        #             self.tracker.update(frame)
+        #     time.sleep(max(0.05, self._frame_interval))
 
     def _update_cached_frame(self, capture: "VLMObserver.CaptureInfo", frame: Optional[np.ndarray]) -> None:
         with self._frame_lock:
@@ -214,70 +216,67 @@ class VLMObserver:
         force_vlm: bool = False,
         analysis_request: Optional[str] = None,
     ) -> Tuple[ObservationResult, Dict[str, Any]]:
-        """Capture, optionally reuse tracker, otherwise call VLM for structured observation."""
-        self._start_frame_loop()
-        image_capture, frame_bgr = self._get_latest_frame()
-        if force_vlm or image_capture is None or not image_capture.path:
-            image_capture = self._capture_image(self.cam_name)
-            if not image_capture.path:
-                raise RuntimeError("采集图片失败")
-            frame_bgr = self._load_frame_bgr(image_capture.path)
-            if frame_bgr is not None:
-                image_capture.width = frame_bgr.shape[1]
-                image_capture.height = frame_bgr.shape[0]
-            self._update_cached_frame(image_capture, frame_bgr)
-            if frame_bgr is not None:
-                self.tracker.update(frame_bgr)
+        """
+        Capture image and perform observation.
+        If force_vlm=True (default for detection), call VLM.
+        If force_vlm=False, return RGB image only (no detection).
+        """
+        # 1. Capture Image
+        image_capture = self._capture_image(self.cam_name)
+        if not image_capture.path:
+            raise RuntimeError("采集图片失败")
+        
+        # 2. If force_vlm=False, return "Capture Only" result (RGB only)
+        if not force_vlm:
+            # Return a minimal result with the image path, but no detection info
+            observation = ObservationResult(
+                found=False, # Not checked
+                confidence=0.0,
+                bbox=None,
+                source="capture_only",
+                original_image_path=image_capture.path,
+                processed_image_path=image_capture.path,
+                timestamp=time.time(),
+                target_id=target_name
+            )
+            # Try to get depth snapshot if available, but don't fail hard
+            try:
+                observation.depth_snapshot = fetch_snapshot()
+            except Exception:
+                pass
+                
+            observation.robot_pose = navigator.get_current_pose()
+            return observation, {}
+
+        # 3. Full VLM Detection (force_vlm=True)
+        prep_info = self._prepare_image_for_vlm(image_capture.path)
+        processed_path = prep_info["path"]
+        original_size = prep_info["original_size"]
+        processed_size = prep_info["processed_size"]
+        
+        image_url = upload_file_and_get_url(
+            api_key=self.vlm_api_key,
+            model_name=self.vlm_model,
+            file_path=processed_path,
+        )
+
+        prompt = self._build_prompt(target_name, phase, context, analysis_request=analysis_request)
+        response = self._call_vlm(image_url, prompt)
+        observation, parsed_payload = self._parse_response(
+            response,
+            processed_size,
+            original_size,
+            processed_path,
+            image_capture.path,
+        )
+        observation.source = "vlm"
+        
+        # Get depth snapshot for 3D localization
         depth_snapshot = fetch_snapshot()
         if not depth_snapshot:
-            raise RuntimeError("采集深度快照失败")
-        tracker_bbox: Optional[Tuple[int, int, int, int]] = None
-        if not force_vlm and self.tracker.is_active():
-            tracker_bbox = self.tracker.last_bbox
-
-        parsed_payload: Dict[str, Any]
-        processed_size: List[int]
-        if tracker_bbox is not None:
-            width = frame_bgr.shape[1] if frame_bgr is not None else image_capture.width
-            height = frame_bgr.shape[0] if frame_bgr is not None else image_capture.height
-            if not width:
-                width = self.target_resolution[0]
-            if not height:
-                height = self.target_resolution[1]
-            frame_shape = (width, height)
-            observation, parsed_payload, processed_size = self._build_tracker_observation(
-                tracker_bbox, image_capture.path, frame_shape
-            )
-        else:
-            prep_info = self._prepare_image_for_vlm(image_capture.path)
-            processed_path = prep_info["path"]
-            original_size = prep_info["original_size"]
-            processed_size = prep_info["processed_size"]
-            image_url = upload_file_and_get_url(
-                api_key=self.vlm_api_key,
-                model_name=self.vlm_model,
-                file_path=processed_path,
-            )
-
-            prompt = self._build_prompt(target_name, phase, context, analysis_request=analysis_request)
-            response = self._call_vlm(image_url, prompt)
-            observation, parsed_payload = self._parse_response(
-                response,
-                processed_size,
-                original_size,
-                processed_path,
-                image_capture.path,
-            )
-            observation.source = "vlm"
-            if observation.found and observation.bbox:
-                if frame_bgr is None:
-                    frame_bgr = self._load_frame_bgr(image_capture.path)
-                if frame_bgr is not None:
-                    self.tracker.reset(frame_bgr, observation.bbox)
-                else:
-                    self.tracker.invalidate()
-            else:
-                self.tracker.invalidate()
+            log_warning("⚠️ [Observer] 采集深度快照失败，无法进行3D定位")
+        observation.depth_snapshot = depth_snapshot
+        observation.robot_pose = navigator.get_current_pose()
 
         payload = self._build_frontend_payload(
             observation, parsed_payload, processed_size
@@ -285,8 +284,7 @@ class VLMObserver:
 
         if payload:
             self._push_detection_to_frontend(payload)
-        observation.depth_snapshot = depth_snapshot
-        observation.robot_pose = navigator.get_current_pose()
+            
         return observation, payload
 
     # ------------------------------------------------------------------
@@ -430,6 +428,7 @@ class VLMObserver:
             '  "bbox": [x_min, y_max, x_max, y_min],',
             '  "confidence": number (0-1),',
             '  "surface_points": [[x, y], ...] // 1-2个背景平面点，一般是指承载目标物体的平面，注意，点一定要打在平面上，不要打在平面之外',
+            '  "description": "string" // 简要描述物体的外观、材质（如soft, rigid, metal, plastic等）',
             "}",
         ]
         if analysis_request:
@@ -512,6 +511,13 @@ class VLMObserver:
             analysis_text = analysis_text.strip()
         else:
             analysis_text = None
+        
+        description = result.get("description")
+        if isinstance(description, str):
+            description = description.strip()
+        else:
+            description = None
+
         observation = ObservationResult(
             found=found,
             bbox=final_bbox,
@@ -522,6 +528,7 @@ class VLMObserver:
             processed_image_path=processed_path,
             original_image_path=original_path,
             analysis=analysis_text,
+            description=description,
         )
         observation.source = "vlm"
         boxes_for_ui = [final_bbox] if final_bbox else []

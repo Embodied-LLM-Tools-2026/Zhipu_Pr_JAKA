@@ -1,0 +1,9 @@
+{"episode_id": "ep_0o7bvx1e", "step_id": 1, "skill_name": "observe_scene", "inputs": {}, "precheck": {}, "exec_status": "error", "elapsed_ms": 292.456, "verified": null, "failure_code": "contract.verification_failed", "evidence": {}}
+{"episode_id": "ep_0o7bvx1e", "step_id": 2, "skill_name": "finalize_target_pose", "inputs": {}, "precheck": {}, "exec_status": "ok", "elapsed_ms": 354.837, "verified": null, "failure_code": null, "evidence": {}}
+{"episode_id": "ep_0o7bvx1e", "step_id": 3, "skill_name": "predict_grasp_point", "inputs": {}, "precheck": {}, "exec_status": "ok", "elapsed_ms": 359.708, "verified": null, "failure_code": null, "evidence": {}}
+{"episode_id": "ep_0o7bvx1e", "step_id": 4, "skill_name": "execute_grasp", "inputs": {}, "precheck": {}, "exec_status": "error", "elapsed_ms": 209.181, "verified": null, "failure_code": "manip.grasp_fail", "evidence": {}}
+{"episode_id": "ep_0o7bvx1e", "step_id": 5, "skill_name": "navigate_area", "inputs": {}, "precheck": {}, "exec_status": "ok", "elapsed_ms": 351.996, "verified": null, "failure_code": null, "evidence": {}}
+{"episode_id": "ep_zeofwpxq", "step_id": 1, "skill_name": "observe_scene", "inputs": {}, "precheck": {}, "exec_status": "ok", "elapsed_ms": 202.56, "verified": null, "failure_code": null, "evidence": {}}
+{"episode_id": "ep_zeofwpxq", "step_id": 2, "skill_name": "finalize_target_pose", "inputs": {}, "precheck": {}, "exec_status": "ok", "elapsed_ms": 390.104, "verified": null, "failure_code": null, "evidence": {}}
+{"episode_id": "ep_zeofwpxq", "step_id": 3, "skill_name": "predict_grasp_point", "inputs": {}, "precheck": {}, "exec_status": "error", "elapsed_ms": 361.369, "verified": null, "failure_code": "manip.grasp_fail", "evidence": {}}
+{"episode_id": "ep_zeofwpxq", "step_id": 4, "skill_name": "execute_grasp", "inputs": {}, "precheck": {}, "exec_status": "error", "elapsed_ms": 396.336, "verified": null, "failure_code": "manip.grasp_fail", "evidence": {}}

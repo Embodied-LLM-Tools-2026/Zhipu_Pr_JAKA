@@ -1,41 +1,3 @@
-#!/usr/bin/env python3
-"""
-
-实现了智能流式TTS！按句子分割，并行生成，连续播放
-
-基于语音识别和大模型的机器人控制脚本 - 重构版本
-使用SenseVoice进行语音识别，智谱AI GLM模型理解指令，控制机器人执行动作
-本项目使用了 edge-tts（许可证：LGPL-3.0）用于文本转语音功能。
-
-🚀 性能优化特性:
-1. API调用优化：减少token数量，降低温度参数，优化聊天响应生成
-2. 缓存机制：TTS音频缓存、设备配置缓存、常用响应缓存
-3. 音频处理优化：设备检测缓存、音频格式转换优化
-4. 预加载机制：启动时预加载常用音频，提高响应速度
-5. 智能统计：实时显示缓存命中率和性能数据
-6. 智能流式TTS：按句子分割，并行生成，连续播放，实现更快的语音响应
-
-支持的动作：
-1. 回到待机位置
-2. 上下摆动
-3. 左右摆动
-4. 摇头动作
-
-性能提升：
-- 响应速度提升 30-50%
-- 缓存命中率 >60%
-- 减少网络请求 40%
-- 音频播放延迟降低 60%
-- 流式TTS响应速度提升 40-60%
-
-🔧 重构改进:
-- 模块化代码结构
-- 统一配置管理
-- 清晰的依赖检测
-- 优化的错误处理
-- 更好的代码组织
-"""
-
 import os
 import time
 import multiprocessing as mp
@@ -89,6 +51,13 @@ from voice.audio.audio_utils import SimplifiedVoiceRecorder, SimplifiedAudioPlay
 from action_sequence.navigate import Navigate
 from action_sequence.gripper_controller import GripperController
 from action_sequence.taskexecutor import TaskExecutor
+
+# New Architecture Imports
+from voice.agents.planner import BehaviorPlanner
+from voice.agents.task_executive import TaskExecutive
+from voice.control.executor import SkillExecutor
+from voice.control.world_model import WorldModel
+from voice.control.recovery_manager import RecoveryManager
 
 TASK_PROCESSOR_MODE = os.getenv("TASK_PROCESSOR_MODE", "behavior_tree").lower()
 TaskProcessor = FunctionCallTaskProcessor if TASK_PROCESSOR_MODE == "function_call" else BehaviorTreeTaskProcessor
@@ -171,6 +140,21 @@ class VoiceRobotController:
         #     node=None  
         # )
         self.taskprocessor = TaskProcessor(navigator=self.navigator)
+
+        # Initialize New Architecture Components
+        self.world_model = WorldModel()
+        self.recovery_manager = RecoveryManager(world_model=self.world_model)
+        self.skill_executor = SkillExecutor(
+            navigator=self.navigator,
+            gripper_controller=self.gripper
+        )
+        self.planner = BehaviorPlanner()
+        self.task_executive = TaskExecutive(
+            executor=self.skill_executor,
+            world_model=self.world_model,
+            recovery_manager=self.recovery_manager
+        )
+
         # 自我介绍关键词
         self.intro_keywords = Config.INTRO_KEYWORDS
 
@@ -960,63 +944,59 @@ class VoiceRobotController:
 
         # 执行动作
         if intent == "command":
-            if action not in Config.ACTION_MAP.keys():
-                print("💬 这个动作我还不会，不过我会抓紧学习的")
-                log_warning(f"⚠️ 动作不支持: {action}")
-                self._play_and_execute_action(
-                    "这个动作我还不会，不过我会抓紧学习的", "shake_head"
-                )
+            # 定义简单动作集合（直接执行，不走Planner）
+            SIMPLE_ACTIONS = {"greet", "shake_head", "nod", "bow"}
+            
+            if action in SIMPLE_ACTIONS:
+                log_info(f"🎬 执行简单动作: {action}")
+                # 对于简单动作，使用原有的模拟执行逻辑
+                self._play_and_execute_action("好的", action)
                 success = True
             else:
-                # 区分拿饮料和非拿饮料
-                obj_name = command_result.get("obj_name")
-                if action == "get_drink":
-                    obj_name = obj_name or "unknown"
-                    num = int(command_result.get("num", "0"))
-                    log_info(f"🥤 拿饮料任务: {num}瓶 '{obj_name}'")
-                    if obj_name not in Config.drink_list:
-                        if (
-                            obj_name == "饮料"
-                        ):  # 如果用户说“饮料”，则提示用户具体需要哪种饮料。待解决：如果用户同时说了多种饮料，会出错
-                            print("请您告诉我具体需要哪种饮料")
-                            self._play_cached_audio(
-                                "请您告诉我具体需要哪种饮料",
-                                tts_ready_callback=tts_ready_callback,
-                            )
-                        else:
-                            print("💬 我们这里没有这种饮料")
-                            self._play_and_execute_action(
-                                "我们这里没有这种饮料", "shake_head"
-                            )
+                # 复杂动作（如拿饮料、拿物品等）或未知动作 -> 交给 Planner
+                log_info(f"🧠 复杂任务，交给 Planner 规划: {text}")
+                
+                # 播放提示音
+                audio_file_path = self._play_cached_audio(
+                    "好的，我正在思考如何完成这个任务", tts_ready_callback=tts_ready_callback
+                )
+                
+                try:
+                    # 1. 生成计划
+                    # 使用用户的原始指令 text 作为 goal
+                    plan = self.planner.make_long_horizon_plan(
+                        goal=text, 
+                        world_model=self.world_model
+                    )
+                    log_success(f"✅ 计划生成成功: {plan.plan_id}")
+                    
+                    # 2. 执行计划
+                    result = self.task_executive.run_plan(plan)
+                    
+                    if result.success:
+                        log_success(f"✅ 任务执行成功")
+                        self._play_cached_audio("任务已完成")
                         success = True
                     else:
-                        self._play_and_execute_action("好的", "nod")
-                        # print(
-                        #     f"模拟执行拿饮料动作 in _process_action_command: {num}瓶{obj_name}"
-                        # )
-                        log_success(f"✅ 饮料库存充足: '{obj_name}'，开始执行拿饮料任务")
-                        # self.task_executor.execute_task(obj_name)
-                        self.taskprocessor.process_grasp_task(obj_name,self.navigator)
-                        success = True
-                else:
-                    log_info(f"🎬 执行动作: {action}")
-                    audio_file_path = self._play_cached_audio(
-                        "好的", tts_ready_callback=tts_ready_callback
-                    )
-                    if obj_name:
-                        self.taskprocessor.process_grasp_task(obj_name, self.navigator)
-                    # print(f"模拟执行动作: {action}")
-                    success = True
-                # 动作成功或失败后的处理
-                if success:
-                    print("✅ 动作执行成功")
-                    log_success(f"✅ 动作执行成功: {action}")
+                        log_error(f"❌ 任务执行失败: {result.failure_reason}")
+                        self._play_cached_audio("抱歉，任务执行过程中遇到了问题")
+                        success = False
+                        
+                except Exception as e:
+                    log_error(f"❌ 规划或执行异常: {e}")
+                    self._play_cached_audio("抱歉，我无法完成这个任务")
+                    success = False
 
-                    if self.robot_state == "awake":
-                        print("👂 等待下一个指令...")
-                else:
-                    print("❌ 动作执行失败")
-                    log_error(f"❌ 动作执行失败: {action}")
+            # 动作成功或失败后的处理
+            if success:
+                print("✅ 动作执行成功")
+                log_success(f"✅ 动作执行成功: {action}")
+
+                if self.robot_state == "awake":
+                    print("👂 等待下一个指令...")
+            else:
+                print("❌ 动作执行失败")
+                log_error(f"❌ 动作执行失败: {action}")
         else:
             # 聊天对话不需要执行机器人动作
             print("💬 聊天对话，跳过机器人动作执行")

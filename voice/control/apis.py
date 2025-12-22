@@ -111,6 +111,11 @@ class PerceptionAPI:
             force_vlm=force_vlm,
             analysis_request=analysis_request,
         )
+        
+        # If this was a capture-only observation (force_vlm=False), do NOT update world model
+        if not force_vlm:
+            return observation, payload
+
         pose_info = self._executor.estimate_observation_pose(observation, self._navigator)
         if pose_info:
             observation.camera_center = pose_info.get("camera_center")
@@ -210,7 +215,7 @@ class ManipulationAPI:
             timeout=timeout,
         )
 
-    def move_tcp_linear(
+    def move_tcp(
         self,
         pose: Sequence[float],
         *,
@@ -219,7 +224,7 @@ class ManipulationAPI:
         timeout: Optional[float] = None,
         ref_joint: Optional[Sequence[float]] = None,
     ) -> Dict[str, Any]:
-        return self._executor.primitive_move_tcp_linear(
+        return self._executor.primitive_move_tcp(
             pose,
             speed=speed,
             acc=acc,

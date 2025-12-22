@@ -48,6 +48,60 @@ class Config:
         "你是做什么的",
     ]
 
+    # ================================
+    # Reproducibility & Benchmarking
+    # ================================
+    SEED = int(os.getenv("SEED", "42"))
+    SCENARIO_ID = os.getenv("SCENARIO_ID", "default")
+    
+    # Timeouts (seconds)
+    SKILL_TIMEOUT_S = float(os.getenv("SKILL_TIMEOUT_S", "30.0"))
+    EPISODE_TIMEOUT_S = float(os.getenv("EPISODE_TIMEOUT_S", "300.0"))
+
+    # ================================
+    # Execution Control / Ablation Settings
+    # ================================
+    # Mode: "tool_use_only", "bt_only", "ours_full"
+    EXECUTION_MODE = os.getenv("EXECUTION_MODE", "ours_full")
+
+    # Default values based on mode
+    _mode_defaults = {
+        "tool_use_only": {"verifier": False, "recovery": False},
+        "bt_only": {"verifier": True, "recovery": False}, # Assuming BT handles its own flow, but for now similar to tool_use? Or maybe BT has its own recovery. User said "tool_use_only" and "ours_full" are priority.
+        "ours_full": {"verifier": True, "recovery": True},
+    }
+    _defaults = _mode_defaults.get(EXECUTION_MODE, _mode_defaults["ours_full"])
+
+    ENABLE_TRACE = os.getenv("ENABLE_TRACE", "true").lower() == "true"
+    ENABLE_FAILURE_TAXONOMY = os.getenv("ENABLE_FAILURE_TAXONOMY", "true").lower() == "true"
+    
+    # Allow env vars to override mode defaults
+    ENABLE_VERIFIER = os.getenv("ENABLE_VERIFIER", str(_defaults["verifier"])).lower() == "true"
+    ENABLE_RECOVERY = os.getenv("ENABLE_RECOVERY", str(_defaults["recovery"])).lower() == "true"
+    
+    RECOVERY_MAX_TOTAL_ATTEMPTS = int(os.getenv("RECOVERY_MAX_TOTAL_ATTEMPTS", "3"))
+
+    # ================================
+    # Stress Testing / Fault Injection
+    # ================================
+    # Probability [0.0, 1.0] to inject failures
+    STRESS_PERCEPTION_FAILURE_RATE = float(os.getenv("STRESS_PERCEPTION_FAILURE_RATE", "0.0"))
+    STRESS_GRASP_FAILURE_RATE = float(os.getenv("STRESS_GRASP_FAILURE_RATE", "0.0"))
+    
+    # S1: Burst Blindness
+    STRESS_BLIND_BURST_PROB = float(os.getenv("STRESS_BLIND_BURST_PROB", "0.0"))
+    STRESS_BLIND_BURST_LEN = int(os.getenv("STRESS_BLIND_BURST_LEN", "3"))
+    
+    # S2: IK Reachable Illusion
+    STRESS_IK_OOB_PROB = float(os.getenv("STRESS_IK_OOB_PROB", "0.0"))
+
+    # ================================
+    # VLA Router Settings
+    # ================================
+    ENABLE_VLA_ROUTER = os.getenv("ENABLE_VLA_ROUTER", "false").lower() == "true"
+    VLA_TRIGGER_KEYWORDS = ["soft", "sponge", "plush", "complex", "deformable"]
+
+
     # 常用音频短语
     COMMON_PHRASES = [
         "你好，我是家卡同学，很高兴见到你！",

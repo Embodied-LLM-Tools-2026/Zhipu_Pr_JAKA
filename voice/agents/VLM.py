@@ -26,6 +26,7 @@ from ..control.task_structures import (
     ReflectionEntry,
     ExecutionResult,
 )
+from ..control.recovery_manager import RecoveryManager, RecoveryContext
 from ..perception.catalog_worker import SceneCatalogWorker
 from ..control.apis import RobotAPI
 from ..control.action_registry import ActionRegistry, ActionEntry, ActionTicket
@@ -503,6 +504,8 @@ class TaskProcessor:
         self._last_action_name: Optional[str] = None
         self._timeline: List[Dict[str, Any]] = []
         self._timeline_limit = int(os.getenv("EXEC_TIMELINE_LIMIT", "30"))
+        self.recovery_manager = RecoveryManager()
+        self._recovery_budget: Dict[str, Any] = {"total": 0, "per_code": {}, "start_time": time.time()}
         self._last_vlm_ts = 0.0
         self._last_tracker_ts = 0.0
         self._vlm_refresh_interval = float(os.getenv("VLM_REFRESH_INTERVAL", "3.0"))
@@ -831,6 +834,112 @@ class TaskProcessor:
         if not self.reflection_log:
             return None
         return self.reflection_log[-1].to_dict()
+
+    def _maybe_recover_bt(
+        self, action_node: PlanNode, result: ExecutionResult, runtime: SkillRuntime, step: int
+    ) -> Optional[ExecutionResult]:
+        """Invoke RecoveryManager for BT failures and optionally retry the original action."""
+        failure_code = result.failure_code or FailureCode.UNKNOWN
+        budget = {
+            "total": self._recovery_budget.get("total", 0),
+            "per_code": self._recovery_budget.get("per_code", {}),
+            "elapsed_s": time.time() - self._recovery_budget.get("start_time", time.time()),
+        }
+        history_tail = [
+            {"node": t.node, "status": t.status, "detail": t.detail}
+            for t in self.execution_history[-5:]
+        ]
+        ctx = RecoveryContext(
+            episode_id=self._current_plan_id,
+            step_id=step,
+            task_goal=self.world.goal,
+            world_snapshot=None,
+            history_tail=history_tail,
+            budget=budget,
+        )
+        decision = self.recovery_manager.handle_failure(failure_code, ctx)
+        # update budgets
+        per_code = self._recovery_budget.setdefault("per_code", {})
+        per_code[failure_code.value] = per_code.get(failure_code.value, 0) + 1
+        self._recovery_budget["total"] = self._recovery_budget.get("total", 0) + 1
+
+        if decision.kind == "EXECUTE_ACTIONS":
+            all_ok = True
+            last_rec_result: Optional[ExecutionResult] = None
+            for idx, action in enumerate(decision.actions, start=1):
+                rec_runtime = SkillRuntime(
+                    navigator=runtime.navigator,
+                    world_model=runtime.world_model,
+                    observation=runtime.observation,
+                    extra=dict(runtime.extra or {}),
+                )
+                rec_runtime.extra.update(
+                    {
+                        "recovery_level": decision.level,
+                        "recovery_attempt_idx": idx,
+                        "recovery_policy": decision.reason,
+                        "recovery_triggered": True,
+                    }
+                )
+                rec_node = PlanNode(type="action", name=action["skill_name"], args=action.get("args", {}))
+                rec_result = self.executor.execute(rec_node, rec_runtime)
+                last_rec_result = rec_result
+                self._record_timeline_event(
+                    stage="recovery",
+                    node=action["skill_name"],
+                    status=rec_result.status,
+                    detail=f"{decision.level}:{decision.reason}",
+                    elapsed=rec_result.elapsed,
+                )
+                self._append_execution_turn(
+                    stage="recovery",
+                    node=action["skill_name"],
+                    status=rec_result.status,
+                    detail=rec_result.reason or decision.reason,
+                    evidence=rec_result.evidence,
+                )
+                if rec_result.status != "success":
+                    all_ok = False
+                    if result.evidence is None:
+                        result.evidence = {}
+                    result.evidence["recovery_side_effect_failure_code"] = (
+                        rec_result.failure_code.value if rec_result.failure_code else None
+                    )
+                    break
+            if all_ok:
+                retry_runtime = SkillRuntime(
+                    navigator=runtime.navigator,
+                    world_model=runtime.world_model,
+                    observation=runtime.observation,
+                    extra=dict(runtime.extra or {}),
+                )
+                retry_runtime.extra["recovery_level"] = decision.level
+                retry_runtime.extra["recovery_policy"] = decision.reason
+                retry_result = self.executor.execute(action_node, retry_runtime)
+                if retry_result.evidence is None:
+                    retry_result.evidence = {}
+                retry_result.evidence["recovery_decision"] = decision.evidence
+                retry_result.evidence["recovery_success"] = True
+                return retry_result
+            if result.evidence is None:
+                result.evidence = {}
+            result.evidence["recovery_decision"] = decision.evidence
+            result.evidence["recovery_success"] = False
+            return last_rec_result or result
+
+        if decision.kind == "ESCALATE_L3":
+            if result.evidence is None:
+                result.evidence = {}
+            result.evidence["recovery_decision"] = decision.evidence
+            result.reason = result.reason or "escalate_L3"
+            return result
+
+        # ABORT
+        if result.evidence is None:
+            result.evidence = {}
+        result.evidence["recovery_decision"] = decision.evidence
+        result.reason = result.reason or "recovery_abort"
+        return result
 
     @staticmethod
     def _json_safe(value: Any) -> Any:
@@ -1184,6 +1293,8 @@ class TaskProcessor:
                 "step": step,
                 "node": node_name,
             }
+            if self._current_plan_id:
+                runtime_extra["episode_id"] = self._current_plan_id
             if current_observation is not None:
                 runtime_extra["observation_source"] = getattr(current_observation, "source", "unknown")
                 runtime_extra["observation_found"] = bool(getattr(current_observation, "found", False))
@@ -1255,11 +1366,40 @@ class TaskProcessor:
             log_entry = dict(exec_record)
             log_entry["evidence"] = self._json_safe(log_entry.get("evidence"))
             self._active_plan_log.append(log_entry)
+            if not result.success:
+                recovered = self._maybe_recover_bt(action_node, result, runtime, step)
+                if recovered and recovered.status == "success":
+                    result = recovered
+                    exec_record = {
+                        "node": node_name,
+                        "status": result.status,
+                        "reason": result.reason,
+                        "evidence": result.evidence,
+                    }
+                    self._record_timeline_event(
+                        stage="skill",
+                        node=node_name,
+                        status=result.status,
+                        detail=detail,
+                        elapsed=result.elapsed,
+                    )
+                    self._append_execution_turn(
+                        stage="skill",
+                        node=node_name,
+                        status=result.status,
+                        observation=observation_text,
+                        action=node_name,
+                        detail=result.reason or detail,
+                        evidence=result.evidence,
+                    )
+                else:
+                    self.plan_runner.apply_action_result(action_node, False)
+                    self._publish_world_snapshot()
+                    self._publish_plan_state()
+                    continue
             self.plan_runner.apply_action_result(action_node, result.success)
             self._publish_world_snapshot()
             self._publish_plan_state()
-            if not result.success:
-                continue
 
         log_error("❌ 达到最大探索次数，未完成任务")
         self._finalize_plan_iteration("failed", "max_steps_exceeded")

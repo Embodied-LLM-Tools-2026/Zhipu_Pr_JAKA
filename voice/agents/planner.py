@@ -19,6 +19,7 @@ import requests
 from tools.logging.task_logger import log_error, log_info, log_success, log_warning  # type: ignore
 
 from ..control.task_structures import CompiledPlan, PlanNode, PlanContextEntry, ExecutionTurn
+from .task_plan.schema import Plan, validate_plan, PlanValidationError as SchemaValidationError
 
 
 class PlanValidationError(Exception):
@@ -73,6 +74,124 @@ class BehaviorPlanner:
         return CompiledPlan(root=root, steps=steps, metadata=metadata)
 
     # ------------------------------------------------------------------
+    # Long-Horizon Planning (TaskExecutive Mode)
+    # ------------------------------------------------------------------
+    def make_long_horizon_plan(self, goal: str, world_model, plan_context: Optional[List[Dict[str, Any]]] = None) -> Plan:
+        """
+        Generates a structured long-horizon Plan (list of subtasks) for TaskExecutive.
+        """
+        if not self.llm_api_key:
+            raise RuntimeError("LLM API key is required for planning")
+
+        last_error: Optional[Exception] = None
+        validation_feedback: Optional[str] = None
+
+        for attempt in range(1, self.max_retries + 1):
+            start_time = time.time()
+            log_info(f"🧠 [Planner] Generating Long-Horizon Plan (Attempt {attempt}/{self.max_retries}): {goal}")
+            
+            try:
+                plan_dict = self._request_long_horizon_plan(goal, world_model.snapshot(), plan_context, validation_feedback)
+                
+                # Validate using strict schema
+                plan_obj = validate_plan(plan_dict)
+                
+                duration = time.time() - start_time
+                log_success(f"✅ [Planner] Plan generated & validated in {duration:.2f}s")
+                return plan_obj
+
+            except SchemaValidationError as exc:
+                duration = time.time() - start_time
+                log_warning(f"⚠️ [Planner] Validation Failed (Attempt {attempt}): {exc}")
+                last_error = exc
+                validation_feedback = f"Previous plan failed validation: {str(exc)}. Please fix and retry."
+            except Exception as exc:
+                duration = time.time() - start_time
+                log_error(f"❌ [Planner] LLM Error (Attempt {attempt}): {exc}")
+                last_error = exc
+                # For generic errors, maybe just retry without specific feedback or simple feedback
+                validation_feedback = f"Previous attempt failed with error: {str(exc)}"
+
+        raise RuntimeError(f"Failed to generate valid plan after {self.max_retries} attempts. Last error: {last_error}")
+
+    def _request_long_horizon_plan(
+        self, 
+        goal: str, 
+        world_snapshot: Dict[str, Any], 
+        plan_context: Optional[List[Dict[str, Any]]] = None,
+        feedback: Optional[str] = None
+    ) -> Dict[str, Any]:
+        
+        prompt = {
+            "role": "You are a high-level robot task planner. Output a JSON plan.",
+            "goal": goal,
+            "world_context": world_snapshot,
+            "schema_requirements": {
+                "root": "Must be a JSON object with 'goal', 'plan_id', 'subtasks' (list).",
+                "subtask_fields": ["id (unique string)", "type (enum)", "params (dict)", "depends_on (list of ids)", "done_if (predicate string)"],
+                "allowed_types": [
+                    "fetch_place (params: object, from, to)",
+                    "fetch_only (params: object, from)",
+                    "place_only (params: object, to)",
+                    "navigate (params: target)",
+                    "observe (params: target)",
+                    "wait (params: duration_s)",
+                    "operate (params: action)"
+                ],
+                "predicates": ["at(location)", "holding(object)", "on_table(object)", "area_clear(table)"]
+            },
+            "examples": [
+                {
+                    "goal": "Move apple from table to desk",
+                    "plan": {
+                        "goal": "Move apple from table to desk",
+                        "plan_id": "p_001",
+                        "subtasks": [
+                            {"id": "1", "type": "fetch_place", "params": {"object": "apple", "from": "table", "to": "desk"}, "done_if": "on_table(apple)"}
+                        ]
+                    }
+                },
+                {
+                    "goal": "Go to kitchen and wait",
+                    "plan": {
+                        "goal": "Go to kitchen and wait",
+                        "plan_id": "p_002",
+                        "subtasks": [
+                            {"id": "t1", "type": "navigate", "params": {"target": "kitchen"}, "done_if": "at(kitchen)"},
+                            {"id": "t2", "type": "wait", "params": {"duration_s": 5}, "depends_on": ["t1"]}
+                        ]
+                    }
+                }
+            ]
+        }
+        
+        if feedback:
+            prompt["feedback_from_previous_attempt"] = feedback
+            
+        messages = [
+            {"role": "system", "content": "You are a robot task planner. Output ONLY valid JSON conforming to the schema."},
+            {"role": "user", "content": json.dumps(prompt, ensure_ascii=False)}
+        ]
+
+        url = f"{self.llm_api_base.rstrip('/')}/chat/completions"
+        headers = {
+            "Authorization": f"Bearer {self.llm_api_key}",
+            "Content-Type": "application/json",
+        }
+        payload = {
+            "model": self.llm_model,
+            "messages": messages,
+            "temperature": 0.1,
+            "response_format": {"type": "json_object"},
+        }
+
+        response = requests.post(url, headers=headers, json=payload, timeout=30)
+        response.raise_for_status()
+        
+        content = response.json()["choices"][0]["message"]["content"]
+        return json.loads(content)
+
+    # ------------------------------------------------------------------
     # LLM interaction & validation
     # ------------------------------------------------------------------
     def _request_plan(
@@ -124,6 +243,7 @@ class BehaviorPlanner:
                 "如需在局部重复执行动作直到条件满足，可使用 repeat_until 节点，其children为需要循环的子树，cond为退出条件",
                 "当需要切换到另一个区域/工作站时先使用 navigate_area，再继续观察与操作",
                 "需要向用户递交物品时：close_gripper→(移动/导航)→handover_item→open_gripper",
+                "在填写 action 的 args['target'] 时，如果已知目标物体的材质或物理属性（如 soft, sponge, plush, rigid 等），请务必包含在 target 描述中（例如 'soft toy' 而非仅 'toy'），以便底层控制器选择正确的抓取策略。",
             ],
             "notes": [
                 "行为树只接受 type ∈ {sequence, selector, check, action, repeat_until}，且每个节点必须显式写出 type。",

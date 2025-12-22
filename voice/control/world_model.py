@@ -128,6 +128,8 @@ class WorldModel:
                 obj.attrs["range_estimate"] = observation.range_estimate
             if observation.surface_points:
                 obj.attrs["surface_points"] = observation.surface_points
+            if observation.description:
+                obj.attrs["description"] = observation.description
             if observation.camera_center:
                 obj.camera_center = observation.camera_center
             if observation.robot_center:

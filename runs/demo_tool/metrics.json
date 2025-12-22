@@ -1,0 +1,19 @@
+{
+  "episodes": 2,
+  "success_rate": 0.0,
+  "mean_tool_calls": 4.5,
+  "mean_time_sec": 1.4592735000000001,
+  "failure_code_top": [
+    [
+      "manip.grasp_fail",
+      3
+    ],
+    [
+      "contract.verification_failed",
+      1
+    ]
+  ],
+  "recovery_episode_rate": 0.0,
+  "recovery_success_rate": 0.0,
+  "planner_calls": 0
+}
