@@ -14,6 +14,12 @@
 
 ## 🛠️ 环境准备 (Installation)
 
+### 0. 获取代码
+```bash
+git clone -b rss https://github.com/haitaoshen66/Zhipu_Pr_JAKA.git
+cd Zhipu_Pr_JAKA
+```
+
 ### 1. 基础环境
 建议使用 Conda 管理环境：
 
@@ -113,5 +119,3 @@ python objectLocalization/objectDectection/example_usage.py
 1. 选择 `3. 交互模式`。
 2. 选择 `2. 标定新饮料位置`。
 3. 按照提示调整相机角度并使用 SAM 进行交互式分割标注。
-
-
