@@ -23,6 +23,7 @@ pypinyin==0.55.0
 
 # LLM依赖
 zhipuai==2.1.5.20250717  # 智谱AI GLM-4-Air
+dashscope>=1.14.0  # 阿里通义千问 (VLM备选)
 
 # 深度学习依赖
 --find-links https://download.pytorch.org/whl/cu128
@@ -34,6 +35,7 @@ torchaudio
 scipy==1.11.4
 matplotlib==3.8.4
 zarr==2.13.3
+msgpack>=1.0.5
 
 # VAD依赖 (V.py和V_sense.py使用)
 # silero-vad==5.1.2
