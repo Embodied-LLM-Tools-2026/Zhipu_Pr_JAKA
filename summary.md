@@ -67,13 +67,13 @@
 
 > 现阶段 SkillExecutor 暴露的是“任务级技能”，虽然对 Planner 来说像原语，但内部仍然把底层运动/传感逻辑封装在黑盒里，尚未拆解为 TCP 位姿/力控等真正的最低层接口。
 
-| 类别 | 技能举例 | 覆盖任务 |
-| --- | --- | --- |
+| 类别      | 技能举例                                                                                            | 覆盖任务                                     |
+| --------- | --------------------------------------------------------------------------------------------------- | -------------------------------------------- |
 | 底盘/导航 | `rotate_scan`, `search_area`, `navigate_area`, `return_home`, `approach_far`, `recover` | 原地旋转、扫描、导航到 marker/pose、后退恢复 |
-| 观测/感知 | `perception.observe`, `WorldModel.update_from_observation` | VLM + 深度观测、世界模型更新 |
-| 抓取 | `finalize_target_pose`, `predict_grasp_point`, `execute_grasp` | ZeroGrasp 抓取流程 |
-| 夹爪 | `open_gripper`, `close_gripper`, `handover_item` | 开合/递交 |
-| 规划/反思 | `BehaviorPlanner.make_plan`, `ReflectionAdvisor.reflect` | DeepSeek 行为树规划 + 失败诊断 |
+| 观测/感知 | `perception.observe`, `WorldModel.update_from_observation`                                      | VLM + 深度观测、世界模型更新                 |
+| 抓取      | `finalize_target_pose`, `predict_grasp_point`, `execute_grasp`                                | ZeroGrasp 抓取流程                           |
+| 夹爪      | `open_gripper`, `close_gripper`, `handover_item`                                              | 开合/递交                                    |
+| 规划/反思 | `BehaviorPlanner.make_plan`, `ReflectionAdvisor.reflect`                                        | DeepSeek 行为树规划 + 失败诊断               |
 
 > 目前能完成“定位杯子→抓取→递交”的标准流程，但缺少通用的机械臂 TCP/Joints 控制、路径跟随、力控、夹爪姿态等原语，无法直接执行“倾倒水”“擦桌子”“开抽屉”等复杂操作，需要在 SkillExecutor/RobotAPI 中补充更细粒度的原子能力。
 
@@ -82,17 +82,17 @@
 ## 3. 近期讨论与结论
 
 1. **Think-Do-Think 实现**：已经用 `plan_context + execution_history + reflection_log` 构建了“计划→执行→反思”闭环。但 LLM 尚未在动作失败后进行“专项诊断”，下一步可添加 Reflection LLM（已经预留）并将诊断推送到对话/UI。
-
 2. **动态 Action/Engineer 流程**：
+
    - 当 SkillExecutor 缺少某个技能时，会创建 ticket 并（可选）交给 Engineer。
    - 启用 DeepSeek 后，EngineerAgent 会生成 `actions/<name>.py`（含模板注释）和简易测试；测试仍需人工或 CI 执行，当前代码未自动跑 pytest。
    - DynamicActionRunner 会在行为树执行时加载这些动作。
-
 3. **原语 vs 任务特化函数**：
+
    - 决定优先构建“有限且通用”的原语（如 `move_tcp`, `set_gripper`, `observe` 等），所有高阶动作都从这些积木组合，不针对单一任务写专用接口。
    - Engineer 包已记录现有原语；后续在补充新的运动/感知能力时，也应进入原语集合。
-
 4. **做更复杂任务（例如倒水、开抽屉）**：
+
    - 需要新增机械臂原语（TCP/Joints 控制、路径跟随、Apply force）、感知原语（抽屉开度、触觉/力反馈），以及稳健的安全守卫。
    - 考虑将这些拆分为底层 API，通过 RobotAPI 暴露，LLM 再组合出行动。
 
@@ -100,29 +100,30 @@
 
 ## 4. TODO / 下一步建议
 
-1. **完善原语集合**  
-   - 数据：增加 `capture_depth()`, `get_contact_state()`, `read_sensor(sensor_id)` 等；  
-   - 行为：实现 `move_tcp`, `move_joint`, `shift_tcp`, `follow_path`, `apply_force`, `set_gripper(position/force)` 等通用接口；  
+1. **完善原语集合**
+
+   - 数据：增加 `capture_depth()`, `get_contact_state()`, `read_sensor(sensor_id)` 等；
+   - 行为：实现 `move_tcp`, `move_joint`, `shift_tcp`, `follow_path`, `apply_force`, `set_gripper(position/force)` 等通用接口；
    - 安全：加入速度/范围限制、碰撞/力控回调，封装为 RobotAPI 原语。
+2. **示例 Action & 测试**
 
-2. **示例 Action & 测试**  
-   - 手写至少一个 `actions/demo_*` 示例，验证 DynamicActionRunner 全链路；  
+   - 手写至少一个 `actions/demo_*` 示例，验证 DynamicActionRunner 全链路；
    - 在 CI 或脚本中运行 `pytest tests/actions`，确保生成的 action 被验证。
+3. **Engineer Prompt 加强**
 
-3. **Engineer Prompt 加强**  
-   - 在 `EngineerAgent._generate_action_code` 中注入 `docs/engineer_reference.md` 内容（API 说明、模板示例、硬件注意事项）；  
+   - 在 `EngineerAgent._generate_action_code` 中注入 `docs/engineer_reference.md` 内容（API 说明、模板示例、硬件注意事项）；
    - 提供更多真实代码片段/日志，使 DeepSeek 熟悉系统风格。
+4. **UI/CLI 支持**
 
-4. **UI/CLI 支持**  
-   - 开发命令或网页查看 `ActionRegistry`、pending tickets、执行历史；  
+   - 开发命令或网页查看 `ActionRegistry`、pending tickets、执行历史；
    - 提供 `cli request-action --name foo --desc ...` 之类的工具，方便人工操作。
+5. **Planner 反思的对话反馈**
 
-5. **Planner 反思的对话反馈**  
-   - 将 `reflection` 字段传回对话系统，让机器人能向用户解释失败原因；  
+   - 将 `reflection` 字段传回对话系统，让机器人能向用户解释失败原因；
    - 在 Planner prompt 中利用 `adjustment_hint`，减少重复错误。
+6. **知识库更新**
 
-6. **知识库更新**  
-   - 持续完善 `docs/engineer_reference.md`，包括更详细的硬件协议、坐标系、动作示例、常见坑；  
+   - 持续完善 `docs/engineer_reference.md`，包括更详细的硬件协议、坐标系、动作示例、常见坑；
    - 一旦有新的原语或传感器，要在文档中记录，确保 LLM 始终看到最新信息。
 
 ---
@@ -143,33 +144,34 @@
 
 ## 6. 原语拆解方案（建议路线）
 
-1. **抽离基础机械臂接口**  
-   - `move_joint(joint_positions, speed, acc)`：直接发送关节角命令，可用于校准、抬升、避障。  
-   - `move_tcp_linear(pose, speed, acc)`：直线插补到绝对 TCP 姿态。  
-   - `shift_tcp(delta_xyz, delta_rpy, reference="tool"|"world")`：做小范围相对平移/姿态微调。  
-   - `follow_tcp_path(waypoints, mode="linear"|"blend")`：执行擦拭、划圈等多段路径。  
+1. **抽离基础机械臂接口**
+
+   - `move_joint(joint_positions, speed, acc)`：直接发送关节角命令，可用于校准、抬升、避障。
+   - `move_tcp_linear(pose, speed, acc)`：直线插补到绝对 TCP 姿态。
+   - `shift_tcp(delta_xyz, delta_rpy, reference="tool"|"world")`：做小范围相对平移/姿态微调。
+   - `follow_tcp_path(waypoints, mode="linear"|"blend")`：执行擦拭、划圈等多段路径。
    - `set_compliance(frame, stiffness, damping)` / `apply_force(axis, force, duration)`：支持推/拉/按压等力控动作。
+2. **拆分抓取流程**
 
-2. **拆分抓取流程**  
-   - `estimate_grasp_pose(observation)`：负责感知推理，只返回姿态/分值，不做运动。  
-   - `move_to_pregrasp(grasp_pose, offset_mm)`：根据生成的姿态移动到抓取前安全点。  
-   - `descend_to_grasp(grasp_pose, approach_mm)`：沿抓取方向平移接近。  
+   - `estimate_grasp_pose(observation)`：负责感知推理，只返回姿态/分值，不做运动。
+   - `move_to_pregrasp(grasp_pose, offset_mm)`：根据生成的姿态移动到抓取前安全点。
+   - `descend_to_grasp(grasp_pose, approach_mm)`：沿抓取方向平移接近。
    - `execute_retreat(retreat_vector, speed)`：抓取后撤离，用于搬运或过渡。
+3. **夹爪/末端原语**
 
-3. **夹爪/末端原语**  
-   - `set_gripper(width_mm, force)`：精确控制开口和力度，支持夹持不同物体。  
-   - `rotate_wrist(angle_deg)` 或 `set_wrist_pose(rpy)`：支持旋钮、倒水等需要末端旋转的动作。  
+   - `set_gripper(width_mm, force)`：精确控制开口和力度，支持夹持不同物体。
+   - `rotate_wrist(angle_deg)` 或 `set_wrist_pose(rpy)`：支持旋钮、倒水等需要末端旋转的动作。
    - `read_gripper_state()`：返回当前开度、电流，供力反馈/碰撞判断。
+4. **感知/环境反馈**
 
-4. **感知/环境反馈**  
-   - `capture_depth_patch(bbox)`、`get_surface_normal(point)`：为擦桌子等任务提供表面参数。  
-   - `detect_contact(axis)`：通过力矩或夹爪电流判断接触，用于擦拭/关阀门。  
+   - `capture_depth_patch(bbox)`、`get_surface_normal(point)`：为擦桌子等任务提供表面参数。
+   - `detect_contact(axis)`：通过力矩或夹爪电流判断接触，用于擦拭/关阀门。
    - `update_world_object(id, pose/attributes)`：低层操作后同步世界模型。
+5. **集成步骤**
 
-5. **集成步骤**  
-   - 在 `SkillExecutor` 中新增上述 `_primitive_*` 方法，并通过 `RobotAPI.manipulation` 暴露。  
-   - 让现有 `_skill_execute_grasp`、`handover_item` 等高阶动作改为调用这些 primitive 的组合；Planner/动态 action 也只能使用公开的 primitive API。  
-   - ActionRegistry 的 `PrimitiveEntry` 用于记录这些接口（signature/安全说明），Engineer prompt 注入最新列表，确保 LLM 了解可用积木。  
+   - 在 `SkillExecutor` 中新增上述 `_primitive_*` 方法，并通过 `RobotAPI.manipulation` 暴露。
+   - 让现有 `_skill_execute_grasp`、`handover_item` 等高阶动作改为调用这些 primitive 的组合；Planner/动态 action 也只能使用公开的 primitive API。
+   - ActionRegistry 的 `PrimitiveEntry` 用于记录这些接口（signature/安全说明），Engineer prompt 注入最新列表，确保 LLM 了解可用积木。
    - 增加最小化示例（如 `actions/demo_wipe_table`）演示如何用 `move_tcp_linear + shift_tcp + set_gripper + apply_force` 拼出新任务，同时编写 pytest 覆盖 API 拼装顺序。
 
 ---
